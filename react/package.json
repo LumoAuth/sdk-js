@@ -1,0 +1,63 @@
+{
+    "name": "@lumoauth/react",
+    "version": "1.0.0",
+    "description": "Official LumoAuth React SDK — Drop-in authentication components and hooks for React & Next.js applications.",
+    "main": "dist/index.js",
+    "module": "dist/index.mjs",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.mjs",
+            "require": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsup",
+        "dev": "tsup --watch",
+        "typecheck": "tsc --noEmit",
+        "prepublishOnly": "npm run build"
+    },
+    "keywords": [
+        "lumoauth",
+        "react",
+        "nextjs",
+        "authentication",
+        "authorization",
+        "sign-in",
+        "oauth",
+        "oidc",
+        "rbac",
+        "abac",
+        "zanzibar",
+        "drop-in",
+        "components"
+    ],
+    "author": "LumoAuth",
+    "license": "MIT",
+    "dependencies": {
+        "@lumoauth/sdk": "file:../typescript",
+        "zod": "^3.24.0"
+    },
+    "devDependencies": {
+        "@types/react": "^18.0.0",
+        "@types/react-dom": "^18.0.0",
+        "react": "^18.0.0",
+        "react-dom": "^18.0.0",
+        "tsup": "^8.0.0",
+        "typescript": "^5.5.0"
+    },
+    "peerDependencies": {
+        "react": ">=18.0.0",
+        "react-dom": ">=18.0.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "sideEffects": false
+}

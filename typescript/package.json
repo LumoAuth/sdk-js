@@ -1,0 +1,53 @@
+{
+    "name": "@lumoauth/sdk",
+    "version": "1.0.0",
+    "description": "Official LumoAuth TypeScript SDK — Permission checks, Zanzibar (ReBAC), and ABAC policy evaluation for any JavaScript/TypeScript application.",
+    "main": "dist/index.js",
+    "module": "dist/index.mjs",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.mjs",
+            "require": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+        "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint src/",
+        "prepublishOnly": "npm run build"
+    },
+    "keywords": [
+        "lumoauth",
+        "authorization",
+        "permissions",
+        "rbac",
+        "abac",
+        "zanzibar",
+        "rebac",
+        "access-control",
+        "oauth",
+        "typescript"
+    ],
+    "author": "LumoAuth",
+    "license": "MIT",
+    "dependencies": {
+        "zod": "^3.24.0"
+    },
+    "devDependencies": {
+        "tsup": "^8.0.0",
+        "typescript": "^5.5.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "peerDependencies": {},
+    "sideEffects": false
+}
