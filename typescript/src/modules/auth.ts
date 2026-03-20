@@ -61,6 +61,34 @@ export interface UserInfo {
     [key: string]: unknown;
 }
 
+/** Options for requesting a passwordless magic sign-in link. */
+export interface MagicLinkOptions {
+    /** The user's email address */
+    email: string;
+    /** Optional redirect URI to send the user to after clicking the link */
+    redirectUri?: string;
+}
+
+/**
+ * Result of a magic link request.
+ * `sent` is always `true` — the server never reveals whether the email exists
+ * in order to prevent user enumeration.
+ */
+export interface MagicLinkResult {
+    /** Whether the request was accepted (always true — server never reveals if email exists) */
+    sent: boolean;
+}
+
+/**
+ * Result of an email-existence check.
+ * `exists` is `false` on network failure as well as when no account is found,
+ * so callers should handle both cases gracefully.
+ */
+export interface EmailCheckResult {
+    /** Whether an account with this email exists in the tenant */
+    exists: boolean;
+}
+
 // ─── Auth Module ──────────────────────────────────────────────────────
 
 /**
@@ -92,12 +120,16 @@ export interface UserInfo {
  */
 export class AuthModule {
     private readonly baseApiUrl: string;
+    private readonly baseUrl: string;
+    private readonly tenantSlug: string;
     private readonly clientId: string;
     private readonly fetchFn: typeof globalThis.fetch;
 
     constructor(config: AuthModuleConfig) {
         const base = config.baseUrl.replace(/\/+$/, '');
         const safeTenantSlug = encodeURIComponent(config.tenantSlug);
+        this.baseUrl = base;
+        this.tenantSlug = config.tenantSlug;
         this.baseApiUrl = `${base}/t/${safeTenantSlug}/api/v1`;
         this.clientId = config.clientId;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
@@ -236,6 +268,90 @@ export class AuthModule {
         }
 
         return (await res.json()) as UserInfo;
+    }
+
+    // ── Magic Link ───────────────────────────────────────────────────
+
+    /**
+     * Request a magic sign-in link for the given email.
+     *
+     * The server always returns a success response regardless of whether
+     * the email exists, to prevent user enumeration. The link is sent to
+     * the user's inbox and redirects back to the tenant login flow.
+     *
+     * @example
+     * ```ts
+     * await auth.requestMagicLink({ email: 'user@example.com' });
+     * // Show "Check your inbox" UI — server handles the rest
+     * ```
+     */
+    async requestMagicLink(options: MagicLinkOptions): Promise<MagicLinkResult> {
+        const safeTenantSlug = encodeURIComponent(this.tenantSlug);
+        const url = `${this.baseUrl}/t/${safeTenantSlug}/magic-link`;
+
+        const body = new URLSearchParams({ email: options.email });
+        if (options.redirectUri) {
+            body.set('_target_path', options.redirectUri);
+        }
+
+        try {
+            const res = await this.fetchFn(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body,
+            });
+            // The server renders an HTML page on success — any non-network
+            // response (including 200 HTML) counts as "sent".
+            return { sent: res.ok };
+        } catch (error) {
+            throw new LumoAuthNetworkError(
+                `Magic link request failed: ${error instanceof Error ? error.message : String(error)}`,
+                error
+            );
+        }
+    }
+
+    // ── Email-First: check if account exists ─────────────────────────
+
+    /**
+     * Check whether an account with the given email exists in the tenant.
+     * Used to implement email-first login flows (show password/magic-link
+     * step only after confirming the email is registered).
+     *
+     * The server always responds with a boolean to avoid leaking whether
+     * the check itself errored — treat a network failure as `exists: false`
+     * and handle gracefully.
+     *
+     * @example
+     * ```ts
+     * const { exists } = await auth.checkEmailExists('user@example.com');
+     * if (exists) {
+     *   // Show password / magic-link step
+     * } else {
+     *   // Show "no account found" message or sign-up prompt
+     * }
+     * ```
+     */
+    async checkEmailExists(email: string): Promise<EmailCheckResult> {
+        const safeTenantSlug = encodeURIComponent(this.tenantSlug);
+        const url = `${this.baseUrl}/t/${safeTenantSlug}/check-email`;
+
+        try {
+            const res = await this.fetchFn(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ email }),
+            });
+
+            if (!res.ok) {
+                return { exists: false };
+            }
+
+            const data = await res.json() as { exists?: boolean };
+            return { exists: data.exists === true };
+        } catch {
+            return { exists: false };
+        }
     }
 
     // ── Internal ─────────────────────────────────────────────────────

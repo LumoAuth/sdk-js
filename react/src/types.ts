@@ -206,6 +206,46 @@ export interface RedirectToSignInProps {
     signInUrl?: string;
 }
 
+// ─── Magic Link & Email-First ──────────────────────────────────────────
+
+/**
+ * Return type of the {@link useMagicLink} hook.
+ * Provides the `sendMagicLink` action plus loading/sent/error state.
+ */
+export interface UseMagicLinkReturn {
+    /**
+     * Send a magic sign-in link to the given email.
+     * The server never reveals whether the email exists.
+     */
+    sendMagicLink: (email: string, redirectUri?: string) => Promise<void>;
+    /** True while the request is in-flight */
+    isLoading: boolean;
+    /** True after the request completes (link was dispatched) */
+    isSent: boolean;
+    /** Error message if the request failed */
+    error: string | null;
+    /** Reset sent/error state back to idle */
+    reset: () => void;
+}
+
+/**
+ * Return type of the {@link useEmailFirst} hook.
+ * Provides the `checkEmail` action plus loading/result state.
+ */
+export interface UseEmailFirstReturn {
+    /**
+     * Check if an account with this email exists in the tenant.
+     * Used to decide whether to show the password/magic-link step.
+     */
+    checkEmail: (email: string) => Promise<boolean>;
+    /** True while the check is in-flight */
+    isLoading: boolean;
+    /** Result of the last check, or null if not yet checked */
+    exists: boolean | null;
+    /** Reset state back to idle */
+    reset: () => void;
+}
+
 // ─── Internal Token State ─────────────────────────────────────────────
 
 export interface TokenState {
@@ -241,6 +281,17 @@ export interface LumoAuthContextValue extends AuthState {
     getToken: () => Promise<string | null>;
     /** Handle the OAuth callback — exchange code for tokens */
     handleCallback: () => Promise<void>;
+    /**
+     * Request a magic sign-in link for the given email.
+     * Shows a "Check your inbox" page — works for both email-first and
+     * magic-link-only tenant configurations.
+     */
+    sendMagicLink: (email: string, redirectUri?: string) => Promise<void>;
+    /**
+     * Check whether an account with the given email exists in the tenant.
+     * Used to implement email-first login flows.
+     */
+    checkEmail: (email: string) => Promise<boolean>;
     /** The authentication strategy in use */
     authStrategy: 'pkce' | 'password';
     /** Provider configuration */

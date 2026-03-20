@@ -919,6 +919,8 @@ var AuthModule = class {
   constructor(config) {
     const base = config.baseUrl.replace(/\/+$/, "");
     const safeTenantSlug = encodeURIComponent(config.tenantSlug);
+    this.baseUrl = base;
+    this.tenantSlug = config.tenantSlug;
     this.baseApiUrl = `${base}/t/${safeTenantSlug}/api/v1`;
     this.clientId = config.clientId;
     this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
@@ -1028,6 +1030,79 @@ var AuthModule = class {
       );
     }
     return await res.json();
+  }
+  // ── Magic Link ───────────────────────────────────────────────────
+  /**
+   * Request a magic sign-in link for the given email.
+   *
+   * The server always returns a success response regardless of whether
+   * the email exists, to prevent user enumeration. The link is sent to
+   * the user's inbox and redirects back to the tenant login flow.
+   *
+   * @example
+   * ```ts
+   * await auth.requestMagicLink({ email: 'user@example.com' });
+   * // Show "Check your inbox" UI — server handles the rest
+   * ```
+   */
+  async requestMagicLink(options) {
+    const safeTenantSlug = encodeURIComponent(this.tenantSlug);
+    const url = `${this.baseUrl}/t/${safeTenantSlug}/magic-link`;
+    const body = new URLSearchParams({ email: options.email });
+    if (options.redirectUri) {
+      body.set("_target_path", options.redirectUri);
+    }
+    try {
+      const res = await this.fetchFn(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body
+      });
+      return { sent: res.ok };
+    } catch (error) {
+      throw new LumoAuthNetworkError(
+        `Magic link request failed: ${error instanceof Error ? error.message : String(error)}`,
+        error
+      );
+    }
+  }
+  // ── Email-First: check if account exists ─────────────────────────
+  /**
+   * Check whether an account with the given email exists in the tenant.
+   * Used to implement email-first login flows (show password/magic-link
+   * step only after confirming the email is registered).
+   *
+   * The server always responds with a boolean to avoid leaking whether
+   * the check itself errored — treat a network failure as `exists: false`
+   * and handle gracefully.
+   *
+   * @example
+   * ```ts
+   * const { exists } = await auth.checkEmailExists('user@example.com');
+   * if (exists) {
+   *   // Show password / magic-link step
+   * } else {
+   *   // Show "no account found" message or sign-up prompt
+   * }
+   * ```
+   */
+  async checkEmailExists(email) {
+    const safeTenantSlug = encodeURIComponent(this.tenantSlug);
+    const url = `${this.baseUrl}/t/${safeTenantSlug}/check-email`;
+    try {
+      const res = await this.fetchFn(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ email })
+      });
+      if (!res.ok) {
+        return { exists: false };
+      }
+      const data = await res.json();
+      return { exists: data.exists === true };
+    } catch {
+      return { exists: false };
+    }
   }
   // ── Internal ─────────────────────────────────────────────────────
   async postTokenRequest(body) {

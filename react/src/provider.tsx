@@ -427,6 +427,19 @@ export function LumoAuthProvider({
         await signIn(params.email, params.password);
     }, [authStrategy, domain, tenantSlug, clientId, resolvedRedirectUri, signIn]);
 
+    // ── Magic Link ───────────────────────────────────────────────────
+
+    const sendMagicLink = useCallback(async (email: string, redirectUri?: string) => {
+        await authModule.requestMagicLink({ email, redirectUri });
+    }, [authModule]);
+
+    // ── Email-First: check email existence ───────────────────────────
+
+    const checkEmail = useCallback(async (email: string): Promise<boolean> => {
+        const result = await authModule.checkEmailExists(email);
+        return result.exists;
+    }, [authModule]);
+
     // ── Sign Out ─────────────────────────────────────────────────────
 
     const signOut = useCallback(async () => {
@@ -537,6 +550,8 @@ export function LumoAuthProvider({
         signOut,
         getToken,
         handleCallback,
+        sendMagicLink,
+        checkEmail,
         authStrategy,
         config: {
             domain,
@@ -547,7 +562,7 @@ export function LumoAuthProvider({
             afterSignUpUrl,
             afterSignOutUrl,
         },
-    }), [state, signIn, signInWithRedirect, signInWithSocial, signUp, signOut, getToken, handleCallback, authStrategy, domain, tenantSlug, clientId, resolvedRedirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl]);
+    }), [state, signIn, signInWithRedirect, signInWithSocial, signUp, signOut, getToken, handleCallback, sendMagicLink, checkEmail, authStrategy, domain, tenantSlug, clientId, resolvedRedirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl]);
 
     return (
         <LumoAuthContext.Provider value={contextValue}>

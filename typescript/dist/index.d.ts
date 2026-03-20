@@ -948,6 +948,20 @@ interface UserInfo {
     picture?: string;
     [key: string]: unknown;
 }
+interface MagicLinkOptions {
+    /** The user's email address */
+    email: string;
+    /** Optional redirect URI to send the user to after clicking the link */
+    redirectUri?: string;
+}
+interface MagicLinkResult {
+    /** Whether the request was accepted (always true — server never reveals if email exists) */
+    sent: boolean;
+}
+interface EmailCheckResult {
+    /** Whether an account with this email exists in the tenant */
+    exists: boolean;
+}
 /**
  * Handles OAuth 2.0 Authorization Code + PKCE flow, token exchange,
  * refresh, revocation, and user info retrieval.
@@ -977,6 +991,8 @@ interface UserInfo {
  */
 declare class AuthModule {
     private readonly baseApiUrl;
+    private readonly baseUrl;
+    private readonly tenantSlug;
     private readonly clientId;
     private readonly fetchFn;
     constructor(config: AuthModuleConfig);
@@ -1007,6 +1023,40 @@ declare class AuthModule {
      * Fetch user info from the OIDC userinfo endpoint.
      */
     getUserInfo(accessToken: string): Promise<UserInfo>;
+    /**
+     * Request a magic sign-in link for the given email.
+     *
+     * The server always returns a success response regardless of whether
+     * the email exists, to prevent user enumeration. The link is sent to
+     * the user's inbox and redirects back to the tenant login flow.
+     *
+     * @example
+     * ```ts
+     * await auth.requestMagicLink({ email: 'user@example.com' });
+     * // Show "Check your inbox" UI — server handles the rest
+     * ```
+     */
+    requestMagicLink(options: MagicLinkOptions): Promise<MagicLinkResult>;
+    /**
+     * Check whether an account with the given email exists in the tenant.
+     * Used to implement email-first login flows (show password/magic-link
+     * step only after confirming the email is registered).
+     *
+     * The server always responds with a boolean to avoid leaking whether
+     * the check itself errored — treat a network failure as `exists: false`
+     * and handle gracefully.
+     *
+     * @example
+     * ```ts
+     * const { exists } = await auth.checkEmailExists('user@example.com');
+     * if (exists) {
+     *   // Show password / magic-link step
+     * } else {
+     *   // Show "no account found" message or sign-up prompt
+     * }
+     * ```
+     */
+    checkEmailExists(email: string): Promise<EmailCheckResult>;
     private postTokenRequest;
 }
 
@@ -1167,4 +1217,4 @@ declare class LumoAuthNetworkError extends LumoAuthError {
     constructor(message: string, cause?: unknown);
 }
 
-export { type AbacAttributeDefinition, AbacAttributeDefinitionSchema, type AbacBulkCheckRequest, AbacBulkCheckRequestSchema, type AbacBulkCheckResponse, AbacBulkCheckResponseSchema, type AbacCheckRequest, AbacCheckRequestSchema, type AbacCheckResponse, AbacCheckResponseSchema, type AbacCondition, AbacConditionSchema, type AbacGroupCondition, type AbacLeafCondition, AbacMatchedPolicySchema, AbacModule, type AbacResourceAttributesResponse, AbacResourceAttributesResponseSchema, type AbacUserAttributesResponse, AbacUserAttributesResponseSchema, type ApiErrorResponse, ApiErrorResponseSchema, AuthModule, type AuthModuleConfig, type AuthorizationUrlOptions, type AuthorizationUrlResult, type CacheOptions, type CheckBulkRequest, CheckBulkRequestSchema, type CheckBulkResponse, CheckBulkResponseSchema, type CheckMultipleRequest, CheckMultipleRequestSchema, type CheckMultipleResponse, CheckMultipleResponseSchema, type CheckPermissionRequest, CheckPermissionRequestSchema, type CheckPermissionResponse, CheckPermissionResponseSchema, type ListPermissionsResponse, ListPermissionsResponseSchema, LumoAuth, LumoAuthApiError, LumoAuthAuthError, type LumoAuthConfig, LumoAuthConfigError, LumoAuthError, LumoAuthNetworkError, LumoAuthValidationError, PermissionCache, type PermissionObject, PermissionObjectSchema, PermissionsModule, type PermissionsModuleOptions, type TokenExchangeOptions, type TokenResponse, type UserInfo, type ZanzibarCheckRequest, ZanzibarCheckRequestSchema, type ZanzibarCheckResponse, ZanzibarCheckResponseSchema, ZanzibarModule, generateCodeChallenge, generateCodeVerifier, generateState };
+export { type AbacAttributeDefinition, AbacAttributeDefinitionSchema, type AbacBulkCheckRequest, AbacBulkCheckRequestSchema, type AbacBulkCheckResponse, AbacBulkCheckResponseSchema, type AbacCheckRequest, AbacCheckRequestSchema, type AbacCheckResponse, AbacCheckResponseSchema, type AbacCondition, AbacConditionSchema, type AbacGroupCondition, type AbacLeafCondition, AbacMatchedPolicySchema, AbacModule, type AbacResourceAttributesResponse, AbacResourceAttributesResponseSchema, type AbacUserAttributesResponse, AbacUserAttributesResponseSchema, type ApiErrorResponse, ApiErrorResponseSchema, AuthModule, type AuthModuleConfig, type AuthorizationUrlOptions, type AuthorizationUrlResult, type CacheOptions, type CheckBulkRequest, CheckBulkRequestSchema, type CheckBulkResponse, CheckBulkResponseSchema, type CheckMultipleRequest, CheckMultipleRequestSchema, type CheckMultipleResponse, CheckMultipleResponseSchema, type CheckPermissionRequest, CheckPermissionRequestSchema, type CheckPermissionResponse, CheckPermissionResponseSchema, type EmailCheckResult, type ListPermissionsResponse, ListPermissionsResponseSchema, LumoAuth, LumoAuthApiError, LumoAuthAuthError, type LumoAuthConfig, LumoAuthConfigError, LumoAuthError, LumoAuthNetworkError, LumoAuthValidationError, type MagicLinkOptions, type MagicLinkResult, PermissionCache, type PermissionObject, PermissionObjectSchema, PermissionsModule, type PermissionsModuleOptions, type TokenExchangeOptions, type TokenResponse, type UserInfo, type ZanzibarCheckRequest, ZanzibarCheckRequestSchema, type ZanzibarCheckResponse, ZanzibarCheckResponseSchema, ZanzibarModule, generateCodeChallenge, generateCodeVerifier, generateState };

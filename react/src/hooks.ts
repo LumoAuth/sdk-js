@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { LumoAuth } from '@lumoauth/sdk';
 import type { ZanzibarCheckRequest, AbacCheckRequest } from '@lumoauth/sdk';
 import { useLumoAuthContext } from './provider';
-import type { LumoAuthContextValue, LumoAuthUser } from './types';
+import type { LumoAuthContextValue, LumoAuthUser, UseMagicLinkReturn, UseEmailFirstReturn } from './types';
 
 // ─── useAuth ──────────────────────────────────────────────────────────
 
@@ -265,4 +265,103 @@ export function useAbac(request: AbacCheckRequest): { allowed: boolean; isLoadin
     }, [client, requestKey, isSignedIn, isLoaded]);
 
     return { allowed, isLoading };
+}
+
+// ─── useMagicLink ─────────────────────────────────────────────────────
+
+/**
+ * Hook for requesting a magic sign-in link.
+ *
+ * Handles loading/sent/error state so you can build a fully-controlled
+ * "passwordless sign-in" form without any extra local state.
+ *
+ * @example
+ * ```tsx
+ * const { sendMagicLink, isLoading, isSent, error, reset } = useMagicLink();
+ *
+ * if (isSent) return <p>Check your inbox!</p>;
+ *
+ * return (
+ *   <form onSubmit={e => { e.preventDefault(); sendMagicLink(email); }}>
+ *     <input value={email} onChange={e => setEmail(e.target.value)} type="email" />
+ *     <button type="submit" disabled={isLoading}>
+ *       {isLoading ? 'Sending…' : 'Send sign-in link'}
+ *     </button>
+ *     {error && <p>{error}</p>}
+ *   </form>
+ * );
+ * ```
+ */
+export function useMagicLink(): UseMagicLinkReturn {
+    const { sendMagicLink: sendMagicLinkCtx } = useLumoAuthContext();
+    const [isLoading, setIsLoading] = useState(false);
+    const [isSent, setIsSent] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const sendMagicLink = useCallback(async (email: string, redirectUri?: string) => {
+        setIsLoading(true);
+        setError(null);
+        try {
+            await sendMagicLinkCtx(email, redirectUri);
+            setIsSent(true);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to send magic link');
+        } finally {
+            setIsLoading(false);
+        }
+    }, [sendMagicLinkCtx]);
+
+    const reset = useCallback(() => {
+        setIsSent(false);
+        setError(null);
+        setIsLoading(false);
+    }, []);
+
+    return { sendMagicLink, isLoading, isSent, error, reset };
+}
+
+// ─── useEmailFirst ────────────────────────────────────────────────────
+
+/**
+ * Hook for email-first login flows.
+ *
+ * Checks whether an account exists for the given email before showing
+ * the password or magic-link step.
+ *
+ * @example
+ * ```tsx
+ * const { checkEmail, isLoading, exists, reset } = useEmailFirst();
+ *
+ * async function handleEmailSubmit(email: string) {
+ *   const found = await checkEmail(email);
+ *   if (found) {
+ *     // show password / magic-link step
+ *   } else {
+ *     // show "no account found" or sign-up prompt
+ *   }
+ * }
+ * ```
+ */
+export function useEmailFirst(): UseEmailFirstReturn {
+    const { checkEmail: checkEmailCtx } = useLumoAuthContext();
+    const [isLoading, setIsLoading] = useState(false);
+    const [exists, setExists] = useState<boolean | null>(null);
+
+    const checkEmail = useCallback(async (email: string): Promise<boolean> => {
+        setIsLoading(true);
+        try {
+            const result = await checkEmailCtx(email);
+            setExists(result);
+            return result;
+        } finally {
+            setIsLoading(false);
+        }
+    }, [checkEmailCtx]);
+
+    const reset = useCallback(() => {
+        setExists(null);
+        setIsLoading(false);
+    }, []);
+
+    return { checkEmail, isLoading, exists, reset };
 }

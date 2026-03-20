@@ -286,6 +286,89 @@ const defs = await client.abac.getAttributeDefinitions('user');
 
 ---
 
+## Passwordless Authentication
+
+The `AuthModule` provides methods for magic-link (passwordless) sign-in and email-first login flows. It is separate from the `LumoAuth` authorization client and is intended for use in your own authentication UI or server-side integrations.
+
+### Setup
+
+```ts
+import { AuthModule } from '@lumoauth/sdk';
+
+const auth = new AuthModule({
+  baseUrl: 'https://auth.example.com',
+  tenantSlug: 'acme-corp',
+  clientId: 'your-client-id',
+});
+```
+
+### `auth.requestMagicLink(options)`
+
+Send a passwordless sign-in link to the user's email. The server **never reveals** whether the email is registered — the response is always `{ sent: true }` to prevent user enumeration.
+
+```ts
+await auth.requestMagicLink({ email: 'user@example.com' });
+// → { sent: true }
+
+// Optional: specify where to redirect after the user clicks the link
+await auth.requestMagicLink({
+  email: 'user@example.com',
+  redirectUri: 'https://myapp.com/dashboard',
+});
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `options.email` | `string` | The user's email address |
+| `options.redirectUri` | `string?` | Where to redirect after the link is clicked |
+
+**Returns:** `Promise<MagicLinkResult>` — `{ sent: boolean }`
+
+**Throws:** `LumoAuthNetworkError` on network failure.
+
+### `auth.checkEmailExists(email)`
+
+Check whether an account with the given email exists in the tenant. Use this to implement an **email-first** login flow — show the password or magic-link step only after confirming the email is registered.
+
+Network failures return `{ exists: false }` rather than throwing, so the caller can degrade gracefully.
+
+```ts
+const { exists } = await auth.checkEmailExists('user@example.com');
+
+if (exists) {
+  // Show password field or magic-link option
+} else {
+  // Show "no account found" message or sign-up prompt
+}
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `email` | `string` | The email to check |
+
+**Returns:** `Promise<EmailCheckResult>` — `{ exists: boolean }`
+
+### Types
+
+```ts
+import type { MagicLinkOptions, MagicLinkResult, EmailCheckResult } from '@lumoauth/sdk';
+
+interface MagicLinkOptions {
+  email: string;
+  redirectUri?: string;      // optional post-click redirect
+}
+
+interface MagicLinkResult {
+  sent: boolean;             // always true — server never rejects
+}
+
+interface EmailCheckResult {
+  exists: boolean;           // false on network error too
+}
+```
+
+---
+
 ## Framework Integration
 
 ### React

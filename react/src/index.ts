@@ -29,6 +29,8 @@ export {
     usePermission,
     useZanzibar,
     useAbac,
+    useMagicLink,
+    useEmailFirst,
 } from './hooks';
 
 // Types
@@ -52,4 +54,6 @@ export type {
     SignUpButtonProps,
     SignOutButtonProps,
     RedirectToSignInProps,
+    UseMagicLinkReturn,
+    UseEmailFirstReturn,
 } from './types';

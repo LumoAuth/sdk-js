@@ -432,6 +432,102 @@ const { allowed, isLoading } = useAbac({
 });
 ```
 
+### `useMagicLink()`
+
+Manages the full state machine for sending a passwordless magic-link email. Handles in-flight loading, success, and error states so you can build a controlled form without any extra local state.
+
+```tsx
+import { useMagicLink } from '@lumoauth/react';
+
+function PasswordlessForm() {
+  const [email, setEmail] = useState('');
+  const { sendMagicLink, isLoading, isSent, error, reset } = useMagicLink();
+
+  if (isSent) {
+    return (
+      <div>
+        <p>Check your inbox — we sent a sign-in link to <strong>{email}</strong>.</p>
+        <button onClick={reset}>Use a different email</button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); sendMagicLink(email); }}>
+      <input
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="you@example.com"
+      />
+      <button type="submit" disabled={isLoading}>
+        {isLoading ? 'Sending…' : 'Send sign-in link'}
+      </button>
+      {error && <p className="error">{error}</p>}
+    </form>
+  );
+}
+```
+
+#### Return value
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `sendMagicLink` | `(email, redirectUri?) => Promise<void>` | Send the magic link; sets `isSent` on success |
+| `isLoading` | `boolean` | True while the request is in-flight |
+| `isSent` | `boolean` | True after a successful request |
+| `error` | `string \| null` | Error message if the request failed |
+| `reset` | `() => void` | Reset back to idle state |
+
+### `useEmailFirst()`
+
+Checks whether an account exists for a given email before revealing the next step (password field, magic-link option, or sign-up prompt). Useful for building a single email-input screen that adapts to whether the user already has an account.
+
+```tsx
+import { useEmailFirst } from '@lumoauth/react';
+
+function EmailStep({ onKnownUser, onNewUser }: {
+  onKnownUser: () => void;
+  onNewUser: () => void;
+}) {
+  const [email, setEmail] = useState('');
+  const { checkEmail, isLoading, exists, reset } = useEmailFirst();
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const found = await checkEmail(email);
+    if (found) {
+      onKnownUser();   // show password / magic-link step
+    } else {
+      onNewUser();     // show sign-up prompt
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="you@example.com"
+      />
+      <button type="submit" disabled={isLoading}>
+        {isLoading ? 'Checking…' : 'Continue'}
+      </button>
+    </form>
+  );
+}
+```
+
+#### Return value
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `checkEmail` | `(email) => Promise<boolean>` | Returns `true` if account exists |
+| `isLoading` | `boolean` | True while the check is in-flight |
+| `exists` | `boolean \| null` | Result of last check (`null` = not yet checked) |
+| `reset` | `() => void` | Reset state back to idle |
+
 ---
 
 ## Authorization
@@ -685,6 +781,8 @@ Enables the inline email/password form. Not recommended for production SPAs.
 | `usePermission(slug)` | RBAC permission check |
 | `useZanzibar(req)` | ReBAC relationship check |
 | `useAbac(req)` | ABAC policy check |
+| `useMagicLink()` | Send passwordless magic-link email |
+| `useEmailFirst()` | Check if email account exists (email-first flow) |
 
 ---
 

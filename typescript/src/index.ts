@@ -13,6 +13,9 @@ export {
     type TokenResponse,
     type TokenExchangeOptions,
     type UserInfo,
+    type MagicLinkOptions,
+    type MagicLinkResult,
+    type EmailCheckResult,
 } from './modules/auth';
 
 // ─── PKCE Utilities ───────────────────────────────────────────────────
