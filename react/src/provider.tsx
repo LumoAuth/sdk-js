@@ -19,7 +19,7 @@ export function useLumoAuthContext(): LumoAuthContextValue {
     if (!ctx) {
         throw new Error(
             'useLumoAuthContext must be used within <LumoAuthProvider>. ' +
-            'Wrap your application with <LumoAuthProvider domain="..." tenantSlug="..." clientId="...">.'
+            'Wrap your application with <LumoAuthProvider domain="..." orgId="..." clientId="...">.'
         );
     }
     return ctx;
@@ -149,7 +149,7 @@ function parseUserFromUserInfo(data: Record<string, unknown>): LumoAuthUser {
 
 export function LumoAuthProvider({
     domain,
-    tenantSlug,
+    orgId,
     clientId,
     authStrategy = 'pkce',
     redirectUri,
@@ -170,10 +170,10 @@ export function LumoAuthProvider({
     const authModule = useMemo(
         () => new AuthModule({
             baseUrl: domain,
-            tenantSlug,
+            orgId,
             clientId,
         }),
-        [domain, tenantSlug, clientId]
+        [domain, orgId, clientId]
     );
 
     // Resolved redirect URI for PKCE callbacks
@@ -388,8 +388,8 @@ export function LumoAuthProvider({
     }) => {
         if (authStrategy === 'pkce') {
             // In PKCE mode, redirect to hosted signup page
-            const safeTenantSlug = encodeURIComponent(tenantSlug);
-            const signUpUrl = `${domain.replace(/\/+$/, '')}/t/${safeTenantSlug}/register?` +
+            const safeOrgId = encodeURIComponent(orgId);
+            const signUpUrl = `${domain.replace(/\/+$/, '')}/orgs/${safeOrgId}/register?` +
                 new URLSearchParams({
                     client_id: clientId,
                     redirect_uri: resolvedRedirectUri,
@@ -405,8 +405,8 @@ export function LumoAuthProvider({
         // Password mode — inline registration
         dispatch({ type: 'LOADING' });
 
-        const safeTenantSlug = encodeURIComponent(tenantSlug);
-        const registerRes = await fetch(`${domain.replace(/\/+$/, '')}/t/${safeTenantSlug}/api/v1/auth/register`, {
+        const safeOrgId = encodeURIComponent(orgId);
+        const registerRes = await fetch(`${domain.replace(/\/+$/, '')}/orgs/${safeOrgId}/api/v1/auth/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -425,7 +425,7 @@ export function LumoAuthProvider({
 
         // Auto sign-in after registration
         await signIn(params.email, params.password);
-    }, [authStrategy, domain, tenantSlug, clientId, resolvedRedirectUri, signIn]);
+    }, [authStrategy, domain, orgId, clientId, resolvedRedirectUri, signIn]);
 
     // ── Magic Link ───────────────────────────────────────────────────
 
@@ -555,14 +555,14 @@ export function LumoAuthProvider({
         authStrategy,
         config: {
             domain,
-            tenantSlug,
+            orgId,
             clientId,
             redirectUri: resolvedRedirectUri,
             afterSignInUrl,
             afterSignUpUrl,
             afterSignOutUrl,
         },
-    }), [state, signIn, signInWithRedirect, signInWithSocial, signUp, signOut, getToken, handleCallback, sendMagicLink, checkEmail, authStrategy, domain, tenantSlug, clientId, resolvedRedirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl]);
+    }), [state, signIn, signInWithRedirect, signInWithSocial, signUp, signOut, getToken, handleCallback, sendMagicLink, checkEmail, authStrategy, domain, orgId, clientId, resolvedRedirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl]);
 
     return (
         <LumoAuthContext.Provider value={contextValue}>

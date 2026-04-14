@@ -37,7 +37,9 @@ __export(index_exports, {
   UserProfile: () => UserProfile,
   useAbac: () => useAbac,
   useAuth: () => useAuth,
+  useEmailFirst: () => useEmailFirst,
   useLumoAuth: () => useLumoAuth,
+  useMagicLink: () => useMagicLink,
   usePermission: () => usePermission,
   useSession: () => useSession,
   useSignIn: () => useSignIn,
@@ -871,7 +873,7 @@ function useLumoAuthContext() {
   const ctx = (0, import_react.useContext)(LumoAuthContext);
   if (!ctx) {
     throw new Error(
-      'useLumoAuthContext must be used within <LumoAuthProvider>. Wrap your application with <LumoAuthProvider domain="..." tenantSlug="..." clientId="...">.'
+      'useLumoAuthContext must be used within <LumoAuthProvider>. Wrap your application with <LumoAuthProvider domain="..." orgId="..." clientId="...">.'
     );
   }
   return ctx;
@@ -971,7 +973,7 @@ function parseUserFromUserInfo(data) {
 }
 function LumoAuthProvider({
   domain,
-  tenantSlug,
+  orgId,
   clientId,
   authStrategy = "pkce",
   redirectUri,
@@ -990,10 +992,10 @@ function LumoAuthProvider({
   const authModule = (0, import_react.useMemo)(
     () => new import_sdk.AuthModule({
       baseUrl: domain,
-      tenantSlug,
+      orgId,
       clientId
     }),
-    [domain, tenantSlug, clientId]
+    [domain, orgId, clientId]
   );
   const resolvedRedirectUri = (0, import_react.useMemo)(() => {
     if (redirectUri) return redirectUri;
@@ -1150,8 +1152,8 @@ function LumoAuthProvider({
   }, [authModule, resolvedRedirectUri, fetchUser, scheduleRefresh]);
   const signUp = (0, import_react.useCallback)(async (params) => {
     if (authStrategy === "pkce") {
-      const safeTenantSlug2 = encodeURIComponent(tenantSlug);
-      const signUpUrl = `${domain.replace(/\/+$/, "")}/t/${safeTenantSlug2}/register?` + new URLSearchParams({
+      const safeOrgId2 = encodeURIComponent(orgId);
+      const signUpUrl = `${domain.replace(/\/+$/, "")}/orgs/${safeOrgId2}/register?` + new URLSearchParams({
         client_id: clientId,
         redirect_uri: resolvedRedirectUri,
         response_type: "code",
@@ -1163,8 +1165,8 @@ function LumoAuthProvider({
       return;
     }
     dispatch({ type: "LOADING" });
-    const safeTenantSlug = encodeURIComponent(tenantSlug);
-    const registerRes = await fetch(`${domain.replace(/\/+$/, "")}/t/${safeTenantSlug}/api/v1/auth/register`, {
+    const safeOrgId = encodeURIComponent(orgId);
+    const registerRes = await fetch(`${domain.replace(/\/+$/, "")}/orgs/${safeOrgId}/api/v1/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1180,7 +1182,14 @@ function LumoAuthProvider({
       throw new Error(errorData.error || "Registration failed");
     }
     await signIn(params.email, params.password);
-  }, [authStrategy, domain, tenantSlug, clientId, resolvedRedirectUri, signIn]);
+  }, [authStrategy, domain, orgId, clientId, resolvedRedirectUri, signIn]);
+  const sendMagicLink = (0, import_react.useCallback)(async (email, redirectUri2) => {
+    await authModule.requestMagicLink({ email, redirectUri: redirectUri2 });
+  }, [authModule]);
+  const checkEmail = (0, import_react.useCallback)(async (email) => {
+    const result = await authModule.checkEmailExists(email);
+    return result.exists;
+  }, [authModule]);
   const signOut = (0, import_react.useCallback)(async () => {
     const { accessToken } = tokensRef.current;
     if (accessToken) {
@@ -1265,17 +1274,19 @@ function LumoAuthProvider({
     signOut,
     getToken,
     handleCallback,
+    sendMagicLink,
+    checkEmail,
     authStrategy,
     config: {
       domain,
-      tenantSlug,
+      orgId,
       clientId,
       redirectUri: resolvedRedirectUri,
       afterSignInUrl,
       afterSignUpUrl,
       afterSignOutUrl
     }
-  }), [state, signIn, signInWithRedirect, signInWithSocial, signUp, signOut, getToken, handleCallback, authStrategy, domain, tenantSlug, clientId, resolvedRedirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl]);
+  }), [state, signIn, signInWithRedirect, signInWithSocial, signUp, signOut, getToken, handleCallback, sendMagicLink, checkEmail, authStrategy, domain, orgId, clientId, resolvedRedirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl]);
   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(LumoAuthContext.Provider, { value: contextValue, children });
 }
 
@@ -2135,11 +2146,11 @@ function useLumoAuth() {
   const client = (0, import_react7.useMemo)(
     () => new import_sdk2.LumoAuth({
       baseUrl: config.domain,
-      tenantSlug: config.tenantSlug,
+      orgId: config.orgId,
       clientId: config.clientId,
       token: () => getToken().then((t) => t || "")
     }),
-    [config.domain, config.tenantSlug, config.clientId, getToken]
+    [config.domain, config.orgId, config.clientId, getToken]
   );
   return client;
 }
@@ -2234,6 +2245,50 @@ function useAbac(request) {
     };
   }, [client, requestKey, isSignedIn, isLoaded]);
   return { allowed, isLoading };
+}
+function useMagicLink() {
+  const { sendMagicLink: sendMagicLinkCtx } = useLumoAuthContext();
+  const [isLoading, setIsLoading] = (0, import_react7.useState)(false);
+  const [isSent, setIsSent] = (0, import_react7.useState)(false);
+  const [error, setError] = (0, import_react7.useState)(null);
+  const sendMagicLink = (0, import_react7.useCallback)(async (email, redirectUri) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await sendMagicLinkCtx(email, redirectUri);
+      setIsSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send magic link");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [sendMagicLinkCtx]);
+  const reset = (0, import_react7.useCallback)(() => {
+    setIsSent(false);
+    setError(null);
+    setIsLoading(false);
+  }, []);
+  return { sendMagicLink, isLoading, isSent, error, reset };
+}
+function useEmailFirst() {
+  const { checkEmail: checkEmailCtx } = useLumoAuthContext();
+  const [isLoading, setIsLoading] = (0, import_react7.useState)(false);
+  const [exists, setExists] = (0, import_react7.useState)(null);
+  const checkEmail = (0, import_react7.useCallback)(async (email) => {
+    setIsLoading(true);
+    try {
+      const result = await checkEmailCtx(email);
+      setExists(result);
+      return result;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [checkEmailCtx]);
+  const reset = (0, import_react7.useCallback)(() => {
+    setExists(null);
+    setIsLoading(false);
+  }, []);
+  return { checkEmail, isLoading, exists, reset };
 }
 
 // src/components/Protect.tsx
@@ -2433,7 +2488,9 @@ function RedirectToSignIn({ signInUrl }) {
   UserProfile,
   useAbac,
   useAuth,
+  useEmailFirst,
   useLumoAuth,
+  useMagicLink,
   usePermission,
   useSession,
   useSignIn,

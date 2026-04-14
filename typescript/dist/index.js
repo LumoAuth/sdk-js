@@ -978,10 +978,10 @@ function sha256(data) {
 var AuthModule = class {
   constructor(config) {
     const base = config.baseUrl.replace(/\/+$/, "");
-    const safeTenantSlug = encodeURIComponent(config.tenantSlug);
+    const safeOrgId = encodeURIComponent(config.orgId);
     this.baseUrl = base;
-    this.tenantSlug = config.tenantSlug;
-    this.baseApiUrl = `${base}/t/${safeTenantSlug}/api/v1`;
+    this.orgId = config.orgId;
+    this.baseApiUrl = `${base}/orgs/${safeOrgId}/api/v1`;
     this.clientId = config.clientId;
     this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
   }
@@ -1097,7 +1097,7 @@ var AuthModule = class {
    *
    * The server always returns a success response regardless of whether
    * the email exists, to prevent user enumeration. The link is sent to
-   * the user's inbox and redirects back to the tenant login flow.
+   * the user's inbox and redirects back to the organization login flow.
    *
    * @example
    * ```ts
@@ -1106,8 +1106,8 @@ var AuthModule = class {
    * ```
    */
   async requestMagicLink(options) {
-    const safeTenantSlug = encodeURIComponent(this.tenantSlug);
-    const url = `${this.baseUrl}/t/${safeTenantSlug}/magic-link`;
+    const safeOrgId = encodeURIComponent(this.orgId);
+    const url = `${this.baseUrl}/orgs/${safeOrgId}/magic-link`;
     const body = new URLSearchParams({ email: options.email });
     if (options.redirectUri) {
       body.set("_target_path", options.redirectUri);
@@ -1128,7 +1128,7 @@ var AuthModule = class {
   }
   // ── Email-First: check if account exists ─────────────────────────
   /**
-   * Check whether an account with the given email exists in the tenant.
+   * Check whether an account with the given email exists in the organization.
    * Used to implement email-first login flows (show password/magic-link
    * step only after confirming the email is registered).
    *
@@ -1147,8 +1147,8 @@ var AuthModule = class {
    * ```
    */
   async checkEmailExists(email) {
-    const safeTenantSlug = encodeURIComponent(this.tenantSlug);
-    const url = `${this.baseUrl}/t/${safeTenantSlug}/check-email`;
+    const safeOrgId = encodeURIComponent(this.orgId);
+    const url = `${this.baseUrl}/orgs/${safeOrgId}/check-email`;
     try {
       const res = await this.fetchFn(url, {
         method: "POST",
@@ -1214,7 +1214,7 @@ var LumoAuth = class {
     this.abac = new AbacModule(this.http);
     const authConfig = {
       baseUrl: config.baseUrl,
-      tenantSlug: config.tenantSlug ?? "",
+      orgId: config.orgId ?? "",
       clientId: config.clientId ?? "",
       fetch: config.fetch
     };

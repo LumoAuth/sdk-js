@@ -187,7 +187,7 @@ function SignInPassword({
 }: {
     signIn: (email?: string, password?: string) => Promise<void> | void;
     signInWithSocial: (provider: string) => void;
-    config: { domain: string; tenantSlug: string; clientId: string };
+    config: { domain: string; orgId: string; clientId: string };
     resolvedAfterSignInUrl: string;
     resolvedSignUpUrl: string;
     themeClass: string;

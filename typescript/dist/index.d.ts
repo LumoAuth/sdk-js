@@ -899,8 +899,8 @@ declare class AbacModule {
 interface AuthModuleConfig {
     /** Base URL of the LumoAuth instance (e.g. "https://auth.example.com") */
     baseUrl: string;
-    /** Tenant slug */
-    tenantSlug: string;
+    /** Organization ID */
+    orgId: string;
     /** OAuth client ID */
     clientId: string;
     /** Custom fetch implementation */
@@ -948,18 +948,29 @@ interface UserInfo {
     picture?: string;
     [key: string]: unknown;
 }
+/** Options for requesting a passwordless magic sign-in link. */
 interface MagicLinkOptions {
     /** The user's email address */
     email: string;
     /** Optional redirect URI to send the user to after clicking the link */
     redirectUri?: string;
 }
+/**
+ * Result of a magic link request.
+ * `sent` is always `true` — the server never reveals whether the email exists
+ * in order to prevent user enumeration.
+ */
 interface MagicLinkResult {
     /** Whether the request was accepted (always true — server never reveals if email exists) */
     sent: boolean;
 }
+/**
+ * Result of an email-existence check.
+ * `exists` is `false` on network failure as well as when no account is found,
+ * so callers should handle both cases gracefully.
+ */
 interface EmailCheckResult {
-    /** Whether an account with this email exists in the tenant */
+    /** Whether an account with this email exists in the organization */
     exists: boolean;
 }
 /**
@@ -970,7 +981,7 @@ interface EmailCheckResult {
  * ```ts
  * const auth = new AuthModule({
  *   baseUrl: 'https://auth.example.com',
- *   tenantSlug: 'acme-corp',
+ *   orgId: 'acme-corp',
  *   clientId: 'my-client-id',
  * });
  *
@@ -992,7 +1003,7 @@ interface EmailCheckResult {
 declare class AuthModule {
     private readonly baseApiUrl;
     private readonly baseUrl;
-    private readonly tenantSlug;
+    private readonly orgId;
     private readonly clientId;
     private readonly fetchFn;
     constructor(config: AuthModuleConfig);
@@ -1028,7 +1039,7 @@ declare class AuthModule {
      *
      * The server always returns a success response regardless of whether
      * the email exists, to prevent user enumeration. The link is sent to
-     * the user's inbox and redirects back to the tenant login flow.
+     * the user's inbox and redirects back to the organization login flow.
      *
      * @example
      * ```ts
@@ -1038,7 +1049,7 @@ declare class AuthModule {
      */
     requestMagicLink(options: MagicLinkOptions): Promise<MagicLinkResult>;
     /**
-     * Check whether an account with the given email exists in the tenant.
+     * Check whether an account with the given email exists in the organization.
      * Used to implement email-first login flows (show password/magic-link
      * step only after confirming the email is registered).
      *
@@ -1089,10 +1100,10 @@ interface LumoAuthConfig {
      */
     authStrategy?: 'pkce' | 'password';
     /**
-     * Your tenant slug (e.g. "acme-corp").
+     * Your organization ID (e.g. "acme-corp").
      * Required for building authorization URLs.
      */
-    tenantSlug?: string;
+    orgId?: string;
     /**
      * OAuth client ID.
      * Required when using the auth module.
@@ -1122,7 +1133,7 @@ interface LumoAuthConfig {
  * // PKCE mode (recommended)
  * const client = new LumoAuth({
  *   baseUrl: 'https://auth.example.com',
- *   tenantSlug: 'acme-corp',
+ *   orgId: 'acme-corp',
  *   clientId: 'my-client-id',
  * });
  *

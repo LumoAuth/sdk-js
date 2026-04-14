@@ -41,8 +41,8 @@ interface AuthState {
 interface LumoAuthProviderProps {
     /** Your LumoAuth instance domain (e.g. "https://auth.example.com") */
     domain: string;
-    /** Your tenant slug (e.g. "acme-corp") */
-    tenantSlug: string;
+    /** Your organization ID (e.g. "acme-corp") */
+    orgId: string;
     /** OAuth client ID */
     clientId: string;
     /**
@@ -181,6 +181,42 @@ interface RedirectToSignInProps {
     /** Override sign-in URL */
     signInUrl?: string;
 }
+/**
+ * Return type of the {@link useMagicLink} hook.
+ * Provides the `sendMagicLink` action plus loading/sent/error state.
+ */
+interface UseMagicLinkReturn {
+    /**
+     * Send a magic sign-in link to the given email.
+     * The server never reveals whether the email exists.
+     */
+    sendMagicLink: (email: string, redirectUri?: string) => Promise<void>;
+    /** True while the request is in-flight */
+    isLoading: boolean;
+    /** True after the request completes (link was dispatched) */
+    isSent: boolean;
+    /** Error message if the request failed */
+    error: string | null;
+    /** Reset sent/error state back to idle */
+    reset: () => void;
+}
+/**
+ * Return type of the {@link useEmailFirst} hook.
+ * Provides the `checkEmail` action plus loading/result state.
+ */
+interface UseEmailFirstReturn {
+    /**
+     * Check if an account with this email exists in the organization.
+     * Used to decide whether to show the password/magic-link step.
+     */
+    checkEmail: (email: string) => Promise<boolean>;
+    /** True while the check is in-flight */
+    isLoading: boolean;
+    /** Result of the last check, or null if not yet checked */
+    exists: boolean | null;
+    /** Reset state back to idle */
+    reset: () => void;
+}
 interface LumoAuthContextValue extends AuthState {
     /**
      * Sign in.
@@ -205,12 +241,23 @@ interface LumoAuthContextValue extends AuthState {
     getToken: () => Promise<string | null>;
     /** Handle the OAuth callback — exchange code for tokens */
     handleCallback: () => Promise<void>;
+    /**
+     * Request a magic sign-in link for the given email.
+     * Shows a "Check your inbox" page — works for both email-first and
+     * magic-link-only organization configurations.
+     */
+    sendMagicLink: (email: string, redirectUri?: string) => Promise<void>;
+    /**
+     * Check whether an account with the given email exists in the organization.
+     * Used to implement email-first login flows.
+     */
+    checkEmail: (email: string) => Promise<boolean>;
     /** The authentication strategy in use */
     authStrategy: 'pkce' | 'password';
     /** Provider configuration */
     config: {
         domain: string;
-        tenantSlug: string;
+        orgId: string;
         clientId: string;
         redirectUri?: string;
         afterSignInUrl?: string;
@@ -219,7 +266,7 @@ interface LumoAuthContextValue extends AuthState {
     };
 }
 
-declare function LumoAuthProvider({ domain, tenantSlug, clientId, authStrategy, redirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl, children, }: LumoAuthProviderProps): react_jsx_runtime.JSX.Element;
+declare function LumoAuthProvider({ domain, orgId, clientId, authStrategy, redirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl, children, }: LumoAuthProviderProps): react_jsx_runtime.JSX.Element;
 
 /**
  * Drop-in sign-in component.
@@ -529,5 +576,50 @@ declare function useAbac(request: AbacCheckRequest): {
     allowed: boolean;
     isLoading: boolean;
 };
+/**
+ * Hook for requesting a magic sign-in link.
+ *
+ * Handles loading/sent/error state so you can build a fully-controlled
+ * "passwordless sign-in" form without any extra local state.
+ *
+ * @example
+ * ```tsx
+ * const { sendMagicLink, isLoading, isSent, error, reset } = useMagicLink();
+ *
+ * if (isSent) return <p>Check your inbox!</p>;
+ *
+ * return (
+ *   <form onSubmit={e => { e.preventDefault(); sendMagicLink(email); }}>
+ *     <input value={email} onChange={e => setEmail(e.target.value)} type="email" />
+ *     <button type="submit" disabled={isLoading}>
+ *       {isLoading ? 'Sending…' : 'Send sign-in link'}
+ *     </button>
+ *     {error && <p>{error}</p>}
+ *   </form>
+ * );
+ * ```
+ */
+declare function useMagicLink(): UseMagicLinkReturn;
+/**
+ * Hook for email-first login flows.
+ *
+ * Checks whether an account exists for the given email before showing
+ * the password or magic-link step.
+ *
+ * @example
+ * ```tsx
+ * const { checkEmail, isLoading, exists, reset } = useEmailFirst();
+ *
+ * async function handleEmailSubmit(email: string) {
+ *   const found = await checkEmail(email);
+ *   if (found) {
+ *     // show password / magic-link step
+ *   } else {
+ *     // show "no account found" or sign-up prompt
+ *   }
+ * }
+ * ```
+ */
+declare function useEmailFirst(): UseEmailFirstReturn;
 
-export { type AppearanceProps, AuthCallback, type AuthCallbackProps, type AuthState, type AuthStatus, type LumoAuthContextValue, LumoAuthProvider, type LumoAuthProviderProps, type LumoAuthUser, Protect, type ProtectProps, RedirectToSignIn, type RedirectToSignInProps, SignIn, SignInButton, type SignInButtonProps, type SignInProps, SignOutButton, type SignOutButtonProps, SignUp, SignUpButton, type SignUpButtonProps, type SignUpProps, SignedIn, type SignedInProps, SignedOut, type SignedOutProps, UserAvatar, type UserAvatarProps, UserButton, type UserButtonProps, UserProfile, type UserProfileProps, useAbac, useAuth, useLumoAuth, usePermission, useSession, useSignIn, useUser, useZanzibar };
+export { type AppearanceProps, AuthCallback, type AuthCallbackProps, type AuthState, type AuthStatus, type LumoAuthContextValue, LumoAuthProvider, type LumoAuthProviderProps, type LumoAuthUser, Protect, type ProtectProps, RedirectToSignIn, type RedirectToSignInProps, SignIn, SignInButton, type SignInButtonProps, type SignInProps, SignOutButton, type SignOutButtonProps, SignUp, SignUpButton, type SignUpButtonProps, type SignUpProps, SignedIn, type SignedInProps, SignedOut, type SignedOutProps, type UseEmailFirstReturn, type UseMagicLinkReturn, UserAvatar, type UserAvatarProps, UserButton, type UserButtonProps, UserProfile, type UserProfileProps, useAbac, useAuth, useEmailFirst, useLumoAuth, useMagicLink, usePermission, useSession, useSignIn, useUser, useZanzibar };
