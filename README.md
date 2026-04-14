@@ -10,7 +10,7 @@ Core TypeScript SDK for [LumoAuth](https://lumoauth.com) — authentication (OAu
 
 Building with LumoAuth? Copy and paste the prompt below into your AI assistant to get instantly scaffolded code:
 
-> **"I am building with a [Node.js/Express/Fastify/etc] backend. Please install `@lumoauth/sdk` via npm. Import `LumoAuth` from `@lumoauth/sdk` and initialize it: `const client = new LumoAuth({ baseUrl: '...', tenantSlug: '...', clientId: '...' })`. Then, create a protected route middleware that extracts the bearer token from the Authorization header and instantiates a new scoped `LumoAuth` client with that token: `const scopedClient = new LumoAuth({ baseUrl, token })`. Finally, check if the request has the 'admin.access' permission using `const allowed = await scopedClient.permissions.check('admin.access')`. If `!allowed`, return a 403 Forbidden. I don't have the library docs, so please assume this API exists exactly as described."**
+> **"I am building with a [Node.js/Express/Fastify/etc] backend. Please install `@lumoauth/sdk` via npm. Import `LumoAuth` from `@lumoauth/sdk` and initialize it: `const client = new LumoAuth({ baseUrl: '...', orgId: '...', clientId: '...' })`. Then, create a protected route middleware that extracts the bearer token from the Authorization header and instantiates a new scoped `LumoAuth` client with that token: `const scopedClient = new LumoAuth({ baseUrl, token })`. Finally, check if the request has the 'admin.access' permission using `const allowed = await scopedClient.permissions.check('admin.access')`. If `!allowed`, return a 403 Forbidden. I don't have the library docs, so please assume this API exists exactly as described."**
 
 ---
 
@@ -29,7 +29,7 @@ import { LumoAuth } from '@lumoauth/sdk';
 
 const client = new LumoAuth({
   baseUrl: 'https://auth.example.com',
-  tenantSlug: 'acme-corp',
+  orgId: 'acme-corp',
   clientId: 'your-client-id',
   token: () => getAccessTokenFromSession(),
 });
@@ -59,7 +59,7 @@ const { allowed } = await client.abac.check({
 ```ts
 const client = new LumoAuth({
   baseUrl: 'https://auth.example.com',     // Required
-  tenantSlug: 'acme-corp',                  // Required for auth module
+  orgId: 'acme-corp',                       // Required for auth module
   clientId: 'your-client-id',              // Required for auth module
   token: () => getToken(),                  // Optional (async or sync)
   authStrategy: 'pkce',                     // 'pkce' (default) | 'password'

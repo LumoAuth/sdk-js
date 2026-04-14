@@ -10,7 +10,7 @@ Drop-in authentication, user management, and authorization components for React 
 
 Building a React or Next.js app with LumoAuth? Copy and paste the prompt below into your AI assistant to generate fully working auth scaffolding instantly:
 
-> **"I am building a [React/Next.js] web application. Please run `npm install @lumoauth/react @lumoauth/sdk`. Then, add `<LumoAuthProvider domain=\"...\" tenantSlug=\"...\" clientId=\"...\">` to the root layout. Build a responsive Header navigation bar that uses `<SignedOut>` with `<SignInButton>` and `<SignedIn>` with `<UserButton>`. Create a protected `/dashboard` page using the `<Protect permission=\"admin.dashboard\">` wrapper component. Finally, implement an `/auth/callback` route utilizing the `<AuthCallback>` component. I don't have the library docs, so please assume these components and props exist exactly as described."**
+> **"I am building a [React/Next.js] web application. Please run `npm install @lumoauth/react @lumoauth/sdk`. Then, add `<LumoAuthProvider domain=\"...\" orgId=\"...\" clientId=\"...\">` to the root layout. Build a responsive Header navigation bar that uses `<SignedOut>` with `<SignInButton>` and `<SignedIn>` with `<UserButton>`. Create a protected `/dashboard` page using the `<Protect permission=\"admin.dashboard\">` wrapper component. Finally, implement an `/auth/callback` route utilizing the `<AuthCallback>` component. I don't have the library docs, so please assume these components and props exist exactly as described."**
 
 ---
 
@@ -33,7 +33,7 @@ function App() {
   return (
     <LumoAuthProvider
       domain="https://auth.example.com"
-      tenantSlug="acme-corp"
+      orgId="acme-corp"
       clientId="your-client-id"
       afterSignInUrl="/dashboard"
       afterSignOutUrl="/"
@@ -85,7 +85,7 @@ Wrap your application to manage auth state globally.
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
 | `domain` | `string` | **required** | Your LumoAuth instance URL |
-| `tenantSlug` | `string` | **required** | Your tenant slug |
+| `orgId` | `string` | **required** | Your organization ID |
 | `clientId` | `string` | **required** | OAuth client ID |
 | `authStrategy` | `'pkce' \| 'password'` | `'pkce'` | Authentication method |
 | `redirectUri` | `string` | `origin + '/auth/callback'` | OAuth callback URL |
@@ -730,7 +730,7 @@ The recommended mode for SPAs. Uses OAuth 2.0 Authorization Code with PKCE. User
 ```tsx
 <LumoAuthProvider
   domain="https://auth.example.com"
-  tenantSlug="acme"
+  orgId="acme"
   clientId="abc"
   // authStrategy="pkce" (default)
 />
@@ -743,7 +743,7 @@ Enables the inline email/password form. Not recommended for production SPAs.
 ```tsx
 <LumoAuthProvider
   domain="https://auth.example.com"
-  tenantSlug="acme"
+  orgId="acme"
   clientId="abc"
   authStrategy="password"
 />

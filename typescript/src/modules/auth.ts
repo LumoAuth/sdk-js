@@ -6,8 +6,8 @@ import { LumoAuthApiError, LumoAuthNetworkError } from '../errors';
 export interface AuthModuleConfig {
     /** Base URL of the LumoAuth instance (e.g. "https://auth.example.com") */
     baseUrl: string;
-    /** Tenant slug */
-    tenantSlug: string;
+    /** Organization ID */
+    orgId: string;
     /** OAuth client ID */
     clientId: string;
     /** Custom fetch implementation */
@@ -85,7 +85,7 @@ export interface MagicLinkResult {
  * so callers should handle both cases gracefully.
  */
 export interface EmailCheckResult {
-    /** Whether an account with this email exists in the tenant */
+    /** Whether an account with this email exists in the organization */
     exists: boolean;
 }
 
@@ -99,7 +99,7 @@ export interface EmailCheckResult {
  * ```ts
  * const auth = new AuthModule({
  *   baseUrl: 'https://auth.example.com',
- *   tenantSlug: 'acme-corp',
+ *   orgId: 'acme-corp',
  *   clientId: 'my-client-id',
  * });
  *
@@ -121,16 +121,16 @@ export interface EmailCheckResult {
 export class AuthModule {
     private readonly baseApiUrl: string;
     private readonly baseUrl: string;
-    private readonly tenantSlug: string;
+    private readonly orgId: string;
     private readonly clientId: string;
     private readonly fetchFn: typeof globalThis.fetch;
 
     constructor(config: AuthModuleConfig) {
         const base = config.baseUrl.replace(/\/+$/, '');
-        const safeTenantSlug = encodeURIComponent(config.tenantSlug);
+        const safeOrgId = encodeURIComponent(config.orgId);
         this.baseUrl = base;
-        this.tenantSlug = config.tenantSlug;
-        this.baseApiUrl = `${base}/t/${safeTenantSlug}/api/v1`;
+        this.orgId = config.orgId;
+        this.baseApiUrl = `${base}/orgs/${safeOrgId}/api/v1`;
         this.clientId = config.clientId;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
     }
@@ -277,7 +277,7 @@ export class AuthModule {
      *
      * The server always returns a success response regardless of whether
      * the email exists, to prevent user enumeration. The link is sent to
-     * the user's inbox and redirects back to the tenant login flow.
+     * the user's inbox and redirects back to the organization login flow.
      *
      * @example
      * ```ts
@@ -286,8 +286,8 @@ export class AuthModule {
      * ```
      */
     async requestMagicLink(options: MagicLinkOptions): Promise<MagicLinkResult> {
-        const safeTenantSlug = encodeURIComponent(this.tenantSlug);
-        const url = `${this.baseUrl}/t/${safeTenantSlug}/magic-link`;
+        const safeOrgId = encodeURIComponent(this.orgId);
+        const url = `${this.baseUrl}/orgs/${safeOrgId}/magic-link`;
 
         const body = new URLSearchParams({ email: options.email });
         if (options.redirectUri) {
@@ -314,7 +314,7 @@ export class AuthModule {
     // ── Email-First: check if account exists ─────────────────────────
 
     /**
-     * Check whether an account with the given email exists in the tenant.
+     * Check whether an account with the given email exists in the organization.
      * Used to implement email-first login flows (show password/magic-link
      * step only after confirming the email is registered).
      *
@@ -333,8 +333,8 @@ export class AuthModule {
      * ```
      */
     async checkEmailExists(email: string): Promise<EmailCheckResult> {
-        const safeTenantSlug = encodeURIComponent(this.tenantSlug);
-        const url = `${this.baseUrl}/t/${safeTenantSlug}/check-email`;
+        const safeOrgId = encodeURIComponent(this.orgId);
+        const url = `${this.baseUrl}/orgs/${safeOrgId}/check-email`;
 
         try {
             const res = await this.fetchFn(url, {

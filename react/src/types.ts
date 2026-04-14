@@ -47,8 +47,8 @@ export interface AuthState {
 export interface LumoAuthProviderProps {
     /** Your LumoAuth instance domain (e.g. "https://auth.example.com") */
     domain: string;
-    /** Your tenant slug (e.g. "acme-corp") */
-    tenantSlug: string;
+    /** Your organization ID (e.g. "acme-corp") */
+    orgId: string;
     /** OAuth client ID */
     clientId: string;
     /**
@@ -234,7 +234,7 @@ export interface UseMagicLinkReturn {
  */
 export interface UseEmailFirstReturn {
     /**
-     * Check if an account with this email exists in the tenant.
+     * Check if an account with this email exists in the organization.
      * Used to decide whether to show the password/magic-link step.
      */
     checkEmail: (email: string) => Promise<boolean>;
@@ -284,11 +284,11 @@ export interface LumoAuthContextValue extends AuthState {
     /**
      * Request a magic sign-in link for the given email.
      * Shows a "Check your inbox" page — works for both email-first and
-     * magic-link-only tenant configurations.
+     * magic-link-only organization configurations.
      */
     sendMagicLink: (email: string, redirectUri?: string) => Promise<void>;
     /**
-     * Check whether an account with the given email exists in the tenant.
+     * Check whether an account with the given email exists in the organization.
      * Used to implement email-first login flows.
      */
     checkEmail: (email: string) => Promise<boolean>;
@@ -297,7 +297,7 @@ export interface LumoAuthContextValue extends AuthState {
     /** Provider configuration */
     config: {
         domain: string;
-        tenantSlug: string;
+        orgId: string;
         clientId: string;
         redirectUri?: string;
         afterSignInUrl?: string;

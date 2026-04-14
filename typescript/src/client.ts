@@ -39,10 +39,10 @@ export interface LumoAuthConfig {
     authStrategy?: 'pkce' | 'password';
 
     /**
-     * Your tenant slug (e.g. "acme-corp").
+     * Your organization ID (e.g. "acme-corp").
      * Required for building authorization URLs.
      */
-    tenantSlug?: string;
+    orgId?: string;
 
     /**
      * OAuth client ID.
@@ -80,7 +80,7 @@ export interface LumoAuthConfig {
  * // PKCE mode (recommended)
  * const client = new LumoAuth({
  *   baseUrl: 'https://auth.example.com',
- *   tenantSlug: 'acme-corp',
+ *   orgId: 'acme-corp',
  *   clientId: 'my-client-id',
  * });
  *
@@ -138,7 +138,7 @@ export class LumoAuth {
         // Auth module
         const authConfig: AuthModuleConfig = {
             baseUrl: config.baseUrl,
-            tenantSlug: config.tenantSlug ?? '',
+            orgId: config.orgId ?? '',
             clientId: config.clientId ?? '',
             fetch: config.fetch,
         };

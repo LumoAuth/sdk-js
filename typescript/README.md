@@ -297,7 +297,7 @@ import { AuthModule } from '@lumoauth/sdk';
 
 const auth = new AuthModule({
   baseUrl: 'https://auth.example.com',
-  tenantSlug: 'acme-corp',
+  orgId: 'acme-corp',
   clientId: 'your-client-id',
 });
 ```
@@ -328,7 +328,7 @@ await auth.requestMagicLink({
 
 ### `auth.checkEmailExists(email)`
 
-Check whether an account with the given email exists in the tenant. Use this to implement an **email-first** login flow — show the password or magic-link step only after confirming the email is registered.
+Check whether an account with the given email exists in the organization. Use this to implement an **email-first** login flow — show the password or magic-link step only after confirming the email is registered.
 
 Network failures return `{ exists: false }` rather than throwing, so the caller can degrade gracefully.
 
