@@ -938,6 +938,7 @@ function LumoAuthProvider({
   const tokensRef = useRef(loadTokens());
   const refreshTimerRef = useRef(null);
   const callbackHandledRef = useRef(false);
+  const callbackInflightRef = useRef(null);
   useEffect(() => {
     injectStyles();
   }, []);
@@ -1055,52 +1056,66 @@ function LumoAuthProvider({
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
-    const returnedState = params.get("state");
-    const error = params.get("error");
-    const errorDescription = params.get("error_description");
-    if (error) {
-      dispatch({ type: "ERROR", error: errorDescription || error });
-      throw new Error(errorDescription || error);
+    if (code && callbackInflightRef.current?.code === code) {
+      return callbackInflightRef.current.promise;
     }
-    if (!code) {
-      dispatch({ type: "ERROR", error: "No authorization code found in callback URL" });
-      throw new Error("No authorization code found in callback URL");
-    }
-    const { codeVerifier, state: savedState } = loadPkceParams();
-    if (!savedState || savedState !== returnedState) {
-      clearPkceParams();
-      dispatch({ type: "ERROR", error: "Invalid state parameter \u2014 possible CSRF attack" });
-      throw new Error("Invalid state parameter \u2014 possible CSRF attack");
-    }
-    if (!codeVerifier) {
-      clearPkceParams();
-      dispatch({ type: "ERROR", error: "No PKCE code verifier found" });
-      throw new Error("No PKCE code verifier found");
-    }
-    dispatch({ type: "LOADING" });
-    try {
-      const data = await authModule.exchangeCodeForTokens({
-        code,
-        codeVerifier,
-        redirectUri: resolvedRedirectUri
+    const promise = (async () => {
+      const returnedState = params.get("state");
+      const error = params.get("error");
+      const errorDescription = params.get("error_description");
+      if (error) {
+        dispatch({ type: "ERROR", error: errorDescription || error });
+        throw new Error(errorDescription || error);
+      }
+      if (!code) {
+        dispatch({ type: "ERROR", error: "No authorization code found in callback URL" });
+        throw new Error("No authorization code found in callback URL");
+      }
+      const { codeVerifier, state: savedState } = loadPkceParams();
+      if (!savedState || savedState !== returnedState) {
+        clearPkceParams();
+        dispatch({ type: "ERROR", error: "Invalid state parameter \u2014 possible CSRF attack" });
+        throw new Error("Invalid state parameter \u2014 possible CSRF attack");
+      }
+      if (!codeVerifier) {
+        clearPkceParams();
+        dispatch({ type: "ERROR", error: "No PKCE code verifier found" });
+        throw new Error("No PKCE code verifier found");
+      }
+      dispatch({ type: "LOADING" });
+      try {
+        const data = await authModule.exchangeCodeForTokens({
+          code,
+          codeVerifier,
+          redirectUri: resolvedRedirectUri
+        });
+        clearPkceParams();
+        const expiresAt = Date.now() + (data.expires_in || 3600) * 1e3;
+        tokensRef.current = {
+          accessToken: data.access_token,
+          refreshToken: data.refresh_token || null,
+          expiresAt,
+          idToken: data.id_token || null
+        };
+        saveTokens(tokensRef.current);
+        scheduleRefresh(expiresAt);
+        const user = await fetchUser(data.access_token);
+        dispatch({ type: "AUTHENTICATED", user });
+      } catch (err) {
+        clearPkceParams();
+        dispatch({ type: "ERROR", error: err instanceof Error ? err.message : "Token exchange failed" });
+        throw err;
+      }
+    })();
+    if (code) {
+      callbackInflightRef.current = { code, promise };
+      promise.catch(() => {
+        if (callbackInflightRef.current?.promise === promise) {
+          callbackInflightRef.current = null;
+        }
       });
-      clearPkceParams();
-      const expiresAt = Date.now() + (data.expires_in || 3600) * 1e3;
-      tokensRef.current = {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token || null,
-        expiresAt,
-        idToken: data.id_token || null
-      };
-      saveTokens(tokensRef.current);
-      scheduleRefresh(expiresAt);
-      const user = await fetchUser(data.access_token);
-      dispatch({ type: "AUTHENTICATED", user });
-    } catch (err) {
-      clearPkceParams();
-      dispatch({ type: "ERROR", error: err instanceof Error ? err.message : "Token exchange failed" });
-      throw err;
     }
+    return promise;
   }, [authModule, resolvedRedirectUri, fetchUser, scheduleRefresh]);
   const signUp = useCallback(async (params) => {
     if (authStrategy === "pkce") {
