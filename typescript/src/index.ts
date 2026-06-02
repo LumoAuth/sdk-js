@@ -6,6 +6,12 @@ export { PermissionsModule, type PermissionsModuleOptions } from './modules/perm
 export { ZanzibarModule } from './modules/zanzibar';
 export { AbacModule } from './modules/abac';
 export {
+    AgentModule,
+    type RequireApprovalRequest,
+    type ApprovalResult,
+    type ApprovalImpact,
+} from './modules/agent';
+export {
     AuthModule,
     type AuthModuleConfig,
     type AuthorizationUrlOptions,

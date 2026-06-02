@@ -3,6 +3,7 @@ import { PermissionsModule, type PermissionsModuleOptions } from './modules/perm
 import { ZanzibarModule } from './modules/zanzibar';
 import { AbacModule } from './modules/abac';
 import { AuthModule, type AuthModuleConfig } from './modules/auth';
+import { AgentModule } from './modules/agent';
 import { LumoAuthConfigError } from './errors';
 
 // ─── Config ───────────────────────────────────────────────────────────
@@ -108,6 +109,8 @@ export class LumoAuth {
     public readonly abac: AbacModule;
     /** OAuth 2.0 authentication — PKCE flow, token exchange, refresh. */
     public readonly auth: AuthModule;
+    /** Agent identity, JIT permissions, and push-approval-for-actions. */
+    public readonly agent: AgentModule;
 
     private readonly http: HttpClient;
 
@@ -143,6 +146,10 @@ export class LumoAuth {
             fetch: config.fetch,
         };
         this.auth = new AuthModule(authConfig);
+
+        // Agent module — push-approval-for-actions, JIT. Org-scoped, so it
+        // needs `orgId`; the guard fires lazily when a method is called.
+        this.agent = new AgentModule(this.http, config.orgId ?? '');
     }
 
     /**
