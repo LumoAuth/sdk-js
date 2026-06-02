@@ -275,8 +275,12 @@ export interface LumoAuthContextValue extends AuthState {
         firstName?: string;
         lastName?: string;
     }) => Promise<void>;
-    /** Sign out the current user */
-    signOut: () => Promise<void>;
+    /**
+     * Sign out the current user. Revokes the access token, clears local
+     * tokens, and redirects the browser through the OIDC RP-initiated
+     * logout endpoint so the IdP session cookie is also invalidated.
+     */
+    signOut: (options?: { afterSignOutUrl?: string }) => Promise<void>;
     /** Get the current access token (refreshes if expired) */
     getToken: () => Promise<string | null>;
     /** Handle the OAuth callback — exchange code for tokens */

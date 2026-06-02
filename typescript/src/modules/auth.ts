@@ -48,6 +48,13 @@ export interface TokenExchangeOptions {
     codeVerifier: string;
     /** The redirect URI used during authorization (must match) */
     redirectUri: string;
+    /**
+     * Optional client_secret for confidential (server-side) clients. Sent
+     * in the request body alongside `client_id` per RFC 6749 §2.3.1's
+     * client_secret_post method. Public (browser) clients should omit
+     * this and rely on PKCE alone.
+     */
+    clientSecret?: string;
 }
 
 export interface UserInfo {
@@ -179,6 +186,9 @@ export class AuthModule {
             client_id: this.clientId,
             code_verifier: options.codeVerifier,
         });
+        if (options.clientSecret) {
+            body.set('client_secret', options.clientSecret);
+        }
 
         return this.postTokenRequest(body);
     }

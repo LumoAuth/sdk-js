@@ -464,17 +464,58 @@ export function LumoAuthProvider({
 
     // ── Sign Out ─────────────────────────────────────────────────────
 
-    const signOut = useCallback(async () => {
-        const { accessToken } = tokensRef.current;
+    const signOut = useCallback(async (options?: { afterSignOutUrl?: string }) => {
+        const { accessToken, idToken } = tokensRef.current;
+
+        // SSR/non-browser: there's no IdP redirect to do, so just clear local
+        // state and exit. Everything below requires `window`.
+        if (typeof window === 'undefined') {
+            if (accessToken) {
+                authModule.revokeToken(accessToken, accessToken).catch(() => { });
+            }
+            if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+            tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
+            saveTokens(tokensRef.current);
+            dispatch({ type: 'UNAUTHENTICATED' });
+            return;
+        }
+
+        // Build the IdP logout URL using the *current* idToken before
+        // anything else — once we clear it, we can't supply id_token_hint.
+        const targetUrl = options?.afterSignOutUrl || afterSignOutUrl || '/';
+        const postLogoutRedirectUri = new URL(targetUrl, window.location.origin).toString();
+        const safeOrgId = encodeURIComponent(orgId);
+        const params = new URLSearchParams({
+            post_logout_redirect_uri: postLogoutRedirectUri,
+        });
+        if (idToken) {
+            params.set('id_token_hint', idToken);
+        }
+        const logoutUrl = `${domain.replace(/\/+$/, '')}/orgs/${safeOrgId}/api/v1/oauth/logout?${params.toString()}`;
+
+        // Clear local tokens *before* navigating so they don't survive in
+        // sessionStorage if the navigation is somehow cancelled. We do NOT
+        // dispatch UNAUTHENTICATED here: doing so would re-render the tree,
+        // mount any <SignedOut><RedirectToSignIn /></SignedOut> guard, and
+        // its effect would race a second `window.location.href = authorizeUrl`
+        // assignment that overwrites our pending logout navigation — sending
+        // the user straight back to /authorize where the IdP session is still
+        // alive and silently re-issues a code (defeating logout entirely).
         if (accessToken) {
             authModule.revokeToken(accessToken, accessToken).catch(() => { });
         }
-
         if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
         tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
         saveTokens(tokensRef.current);
-        dispatch({ type: 'UNAUTHENTICATED' });
-    }, [authModule]);
+
+        // Use replace() so the dashboard URL doesn't sit in browser history
+        // as the back-target after logout.
+        window.location.replace(logoutUrl);
+
+        // Block forever — the page is unloading. This guarantees no caller
+        // code runs after signOut() resolves and tries to navigate elsewhere.
+        await new Promise<void>(() => { });
+    }, [authModule, domain, orgId, afterSignOutUrl]);
 
     // ── Initialize (check for existing session) ──────────────────────
 

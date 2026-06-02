@@ -51,10 +51,7 @@ export function UserButton({
 
     const handleSignOut = useCallback(async () => {
         setIsOpen(false);
-        await signOut();
-        if (typeof window !== 'undefined') {
-            window.location.href = sanitizeRedirectUrl(resolvedSignOutUrl);
-        }
+        await signOut({ afterSignOutUrl: sanitizeRedirectUrl(resolvedSignOutUrl) });
     }, [signOut, resolvedSignOutUrl]);
 
     if (!isSignedIn || !user) {

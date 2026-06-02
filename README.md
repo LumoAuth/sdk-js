@@ -1,6 +1,6 @@
 # @lumoauth/sdk
 
-Core TypeScript SDK for [LumoAuth](https://lumoauth.com) — authentication (OAuth 2.0 PKCE), permissions (RBAC), Zanzibar (ReBAC), and ABAC.
+Core TypeScript SDK for [LumoAuth](https://lumoauth.dev) — authentication (OAuth 2.0 PKCE), permissions (RBAC), Zanzibar (ReBAC), and ABAC.
 
 > **Framework-agnostic.** Works in browsers, Node.js 18+, and edge runtimes. For React/Next.js, use [`@lumoauth/react`](../react/README.md) instead.
 

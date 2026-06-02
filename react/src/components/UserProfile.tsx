@@ -79,10 +79,7 @@ export function UserProfile({
 
     const handleSignOut = useCallback(async () => {
         setSigningOut(true);
-        await signOut();
-        if (typeof window !== 'undefined') {
-            window.location.href = resolvedSignOutUrl;
-        }
+        await signOut({ afterSignOutUrl: resolvedSignOutUrl });
     }, [signOut, resolvedSignOutUrl]);
 
     if (!isLoaded) {

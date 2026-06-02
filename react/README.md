@@ -1,6 +1,6 @@
 # @lumoauth/react
 
-Drop-in authentication, user management, and authorization components for React & Next.js — powered by [LumoAuth](https://lumoauth.com).
+Drop-in authentication, user management, and authorization components for React & Next.js — powered by [LumoAuth](https://lumoauth.dev).
 
 > Built following [Clerk SDK](https://clerk.com/docs) patterns. Uses **OAuth 2.0 Authorization Code + PKCE** by default.
 

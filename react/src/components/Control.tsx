@@ -139,11 +139,8 @@ export function SignOutButton({ children, afterSignOutUrl, className }: SignOutB
     const { signOut, config } = useLumoAuthContext();
 
     const handleClick = async () => {
-        await signOut();
         const redirectUrl = afterSignOutUrl || config.afterSignOutUrl || '/';
-        if (typeof window !== 'undefined') {
-            window.location.href = sanitizeRedirectUrl(redirectUrl);
-        }
+        await signOut({ afterSignOutUrl: sanitizeRedirectUrl(redirectUrl) });
     };
 
     if (children) {
