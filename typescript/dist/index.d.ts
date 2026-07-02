@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export { L as LumoAuthApiError, a as LumoAuthAuthError, b as LumoAuthConfigError, c as LumoAuthError, d as LumoAuthNetworkError, e as LumoAuthValidationError } from './errors-BALg-anN.js';
 
 interface HttpClientConfig {
     baseUrl: string;
@@ -937,6 +938,13 @@ interface TokenExchangeOptions {
     codeVerifier: string;
     /** The redirect URI used during authorization (must match) */
     redirectUri: string;
+    /**
+     * Optional client_secret for confidential (server-side) clients. Sent
+     * in the request body alongside `client_id` per RFC 6749 §2.3.1's
+     * client_secret_post method. Public (browser) clients should omit
+     * this and rely on PKCE alone.
+     */
+    clientSecret?: string;
 }
 interface UserInfo {
     sub: string;
@@ -1071,6 +1079,55 @@ declare class AuthModule {
     private postTokenRequest;
 }
 
+/**
+ * Agent module — agent identity, JIT permissions, and push-approval-for-actions.
+ *
+ * The headline primitive is `requireApproval()`: when an agent is about to do
+ * something irreversible (wire money, delete data, send email to customers),
+ * it calls this and a push lands on the user's phone with the action context.
+ * The user taps approve/deny in the LumoAuth mobile app, and `requireApproval`
+ * resolves with the approval status.
+ */
+type ApprovalImpact = 'low' | 'medium' | 'high' | 'critical';
+interface RequireApprovalRequest {
+    /** Stable identifier for the task the agent is operating against. */
+    taskId: string;
+    /** Human-readable description shown on the user's phone. */
+    reason: string;
+    /** Severity tier — drives the visual treatment on the approval screen. */
+    impact?: ApprovalImpact;
+    /** Subject (user) the agent is acting on behalf of. Email or numeric user_id. */
+    onBehalfOf: string;
+    /** Free-form structured fields (vendor, amount, etc.) shown to the user. */
+    meta?: Record<string, unknown>;
+    /** Polling cadence (ms). Default: 1500. */
+    pollIntervalMs?: number;
+    /** Hard timeout (ms). Default: 90000 (PushAuthRequest TTL is 120s). */
+    timeoutMs?: number;
+}
+interface ApprovalResult {
+    status: 'approved' | 'denied' | 'expired' | 'pending';
+    token: string;
+    taskId: string;
+    impact: ApprovalImpact | null;
+    reason: string | null;
+    respondedAt: string | null;
+    approvedBy: {
+        userId: number;
+        email: string;
+    } | null;
+}
+declare class AgentModule {
+    private readonly http;
+    private readonly orgId;
+    constructor(http: HttpClient, orgId: string);
+    /**
+     * Request human approval for an agent action and wait for the user's
+     * decision. Returns once approved/denied/expired, or after `timeoutMs`.
+     */
+    requireApproval(req: RequireApprovalRequest): Promise<ApprovalResult>;
+}
+
 interface LumoAuthConfig {
     /**
      * Base URL of your LumoAuth instance.
@@ -1161,6 +1218,8 @@ declare class LumoAuth {
     readonly abac: AbacModule;
     /** OAuth 2.0 authentication — PKCE flow, token exchange, refresh. */
     readonly auth: AuthModule;
+    /** Agent identity, JIT permissions, and push-approval-for-actions. */
+    readonly agent: AgentModule;
     private readonly http;
     constructor(config: LumoAuthConfig);
     /**
@@ -1186,46 +1245,4 @@ declare function generateCodeChallenge(verifier: string): Promise<string>;
  */
 declare function generateState(length?: number): string;
 
-/**
- * Base error for all LumoAuth SDK errors.
- */
-declare class LumoAuthError extends Error {
-    readonly code: string;
-    readonly statusCode?: number | undefined;
-    readonly cause?: unknown | undefined;
-    constructor(message: string, code: string, statusCode?: number | undefined, cause?: unknown | undefined);
-}
-/**
- * Thrown when the server returns a 4xx or 5xx response.
- */
-declare class LumoAuthApiError extends LumoAuthError {
-    readonly body?: unknown | undefined;
-    constructor(message: string, code: string, statusCode: number, body?: unknown | undefined);
-}
-/**
- * Thrown when the access token is missing or invalid.
- */
-declare class LumoAuthAuthError extends LumoAuthError {
-    constructor(message?: string);
-}
-/**
- * Thrown when Zod validation of a response fails.
- */
-declare class LumoAuthValidationError extends LumoAuthError {
-    readonly issues: unknown[];
-    constructor(message: string, issues: unknown[]);
-}
-/**
- * Thrown when a required config option is missing.
- */
-declare class LumoAuthConfigError extends LumoAuthError {
-    constructor(message: string);
-}
-/**
- * Thrown when a network request fails (timeout, DNS, etc.).
- */
-declare class LumoAuthNetworkError extends LumoAuthError {
-    constructor(message: string, cause?: unknown);
-}
-
-export { type AbacAttributeDefinition, AbacAttributeDefinitionSchema, type AbacBulkCheckRequest, AbacBulkCheckRequestSchema, type AbacBulkCheckResponse, AbacBulkCheckResponseSchema, type AbacCheckRequest, AbacCheckRequestSchema, type AbacCheckResponse, AbacCheckResponseSchema, type AbacCondition, AbacConditionSchema, type AbacGroupCondition, type AbacLeafCondition, AbacMatchedPolicySchema, AbacModule, type AbacResourceAttributesResponse, AbacResourceAttributesResponseSchema, type AbacUserAttributesResponse, AbacUserAttributesResponseSchema, type ApiErrorResponse, ApiErrorResponseSchema, AuthModule, type AuthModuleConfig, type AuthorizationUrlOptions, type AuthorizationUrlResult, type CacheOptions, type CheckBulkRequest, CheckBulkRequestSchema, type CheckBulkResponse, CheckBulkResponseSchema, type CheckMultipleRequest, CheckMultipleRequestSchema, type CheckMultipleResponse, CheckMultipleResponseSchema, type CheckPermissionRequest, CheckPermissionRequestSchema, type CheckPermissionResponse, CheckPermissionResponseSchema, type EmailCheckResult, type ListPermissionsResponse, ListPermissionsResponseSchema, LumoAuth, LumoAuthApiError, LumoAuthAuthError, type LumoAuthConfig, LumoAuthConfigError, LumoAuthError, LumoAuthNetworkError, LumoAuthValidationError, type MagicLinkOptions, type MagicLinkResult, PermissionCache, type PermissionObject, PermissionObjectSchema, PermissionsModule, type PermissionsModuleOptions, type TokenExchangeOptions, type TokenResponse, type UserInfo, type ZanzibarCheckRequest, ZanzibarCheckRequestSchema, type ZanzibarCheckResponse, ZanzibarCheckResponseSchema, ZanzibarModule, generateCodeChallenge, generateCodeVerifier, generateState };
+export { type AbacAttributeDefinition, AbacAttributeDefinitionSchema, type AbacBulkCheckRequest, AbacBulkCheckRequestSchema, type AbacBulkCheckResponse, AbacBulkCheckResponseSchema, type AbacCheckRequest, AbacCheckRequestSchema, type AbacCheckResponse, AbacCheckResponseSchema, type AbacCondition, AbacConditionSchema, type AbacGroupCondition, type AbacLeafCondition, AbacMatchedPolicySchema, AbacModule, type AbacResourceAttributesResponse, AbacResourceAttributesResponseSchema, type AbacUserAttributesResponse, AbacUserAttributesResponseSchema, AgentModule, type ApiErrorResponse, ApiErrorResponseSchema, type ApprovalImpact, type ApprovalResult, AuthModule, type AuthModuleConfig, type AuthorizationUrlOptions, type AuthorizationUrlResult, type CacheOptions, type CheckBulkRequest, CheckBulkRequestSchema, type CheckBulkResponse, CheckBulkResponseSchema, type CheckMultipleRequest, CheckMultipleRequestSchema, type CheckMultipleResponse, CheckMultipleResponseSchema, type CheckPermissionRequest, CheckPermissionRequestSchema, type CheckPermissionResponse, CheckPermissionResponseSchema, type EmailCheckResult, type ListPermissionsResponse, ListPermissionsResponseSchema, LumoAuth, type LumoAuthConfig, type MagicLinkOptions, type MagicLinkResult, PermissionCache, type PermissionObject, PermissionObjectSchema, PermissionsModule, type PermissionsModuleOptions, type RequireApprovalRequest, type TokenExchangeOptions, type TokenResponse, type UserInfo, type ZanzibarCheckRequest, ZanzibarCheckRequestSchema, type ZanzibarCheckResponse, ZanzibarCheckResponseSchema, ZanzibarModule, generateCodeChallenge, generateCodeVerifier, generateState };

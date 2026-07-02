@@ -631,6 +631,42 @@ app.delete('/api/documents/:id', requirePermission('document.delete'), async (re
 
 ---
 
+## AAuth — AI Agent Identity (`@lumoauth/sdk/aauth`)
+
+Cryptographic agent identity for AI agents (LangChain.js, Vercel AI SDK, MCP TypeScript servers): Ed25519/RSA keypairs, RFC 9421 HTTP Message Signatures, proof-of-possession tokens, and the full AAuth token dance (`auth` / `code` / `exchange` / `refresh`). **Node.js ≥ 18 only** (uses `node:crypto`) — imported via its own subpath so the package root stays browser-safe.
+
+```ts
+import { AAuthClient, generateKeypair, verifyAuthToken } from '@lumoauth/sdk/aauth';
+
+// One-time: generate a keypair, register the JWKS with your LumoAuth org
+const { privateKeyPem, jwks } = generateKeypair();
+
+// At runtime: mint proof-of-possession auth tokens and call resources
+const agent = new AAuthClient({
+  agentIdentifier: 'https://my-agent.example.com',
+  privateKeyPem: process.env.AGENT_PRIVATE_KEY!,
+  baseUrl: 'https://app.lumoauth.dev',
+  orgId: 'acme-corp',
+});
+
+const result = await agent.requestAuthToken({ resourceToken, scope: 'read write', agentToken });
+if (!('authorizationRequired' in result)) {
+  const resp = await agent.signedRequest('GET', 'https://api.example.com/v1/data', {
+    authToken: result.authToken,
+  });
+}
+
+// Resource-server side: verify incoming auth+jwt tokens against the org JWKS
+const claims = await verifyAuthToken(bearer, {
+  issuer: 'https://app.lumoauth.dev/orgs/acme-corp/api/v1',
+  resource: 'https://api.example.com',
+});
+```
+
+Also exported: `exchangeCode` (consent flow), `exchangeToken` (multi-hop agent→agent), `refresh`, `revoke`, discovery helpers (`discoverIssuer` / `discoverAgents` / `discoverResource`), `jwkThumbprint`, and the raw RFC 9421 signing primitives (`signRequest`, `buildSignatureBase`, `verifySignatureBase`, `contentDigestSha256`). See the AAuth Quickstart — JavaScript/Node.js in the product docs for the full walkthrough.
+
+---
+
 ## Caching
 
 The SDK caches permission check results in memory (5-minute TTL by default). This dramatically reduces API calls in UI apps.

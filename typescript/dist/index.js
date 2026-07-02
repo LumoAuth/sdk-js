@@ -30,6 +30,7 @@ __export(index_exports, {
   AbacModule: () => AbacModule,
   AbacResourceAttributesResponseSchema: () => AbacResourceAttributesResponseSchema,
   AbacUserAttributesResponseSchema: () => AbacUserAttributesResponseSchema,
+  AgentModule: () => AgentModule,
   ApiErrorResponseSchema: () => ApiErrorResponseSchema,
   AuthModule: () => AuthModule,
   CheckBulkRequestSchema: () => CheckBulkRequestSchema,
@@ -1020,6 +1021,9 @@ var AuthModule = class {
       client_id: this.clientId,
       code_verifier: options.codeVerifier
     });
+    if (options.clientSecret) {
+      body.set("client_secret", options.clientSecret);
+    }
     return this.postTokenRequest(body);
   }
   /**
@@ -1192,6 +1196,64 @@ var AuthModule = class {
   }
 };
 
+// src/modules/agent.ts
+var AgentModule = class {
+  constructor(http, orgId) {
+    this.http = http;
+    this.orgId = orgId;
+  }
+  /**
+   * Request human approval for an agent action and wait for the user's
+   * decision. Returns once approved/denied/expired, or after `timeoutMs`.
+   */
+  async requireApproval(req) {
+    if (!this.orgId) {
+      throw new Error(
+        "agent.requireApproval requires `orgId` \u2014 pass it to the LumoAuth constructor: new LumoAuth({ baseUrl, orgId, token })"
+      );
+    }
+    const created = await this.http.post(
+      `/orgs/${this.orgId}/api/v1/agents/me/approvals`,
+      {
+        task_id: req.taskId,
+        reason: req.reason,
+        impact: req.impact ?? "medium",
+        on_behalf_of: req.onBehalfOf,
+        meta: req.meta ?? null
+      }
+    );
+    const interval = req.pollIntervalMs ?? 1500;
+    const deadline = Date.now() + (req.timeoutMs ?? 9e4);
+    while (Date.now() < deadline) {
+      await sleep(interval);
+      const status = await this.http.get(
+        `/orgs/${this.orgId}/api/v1/agents/me/approvals/${encodeURIComponent(created.approval_token)}/status`
+      );
+      if (status.status !== "pending") {
+        return mapStatus(status);
+      }
+    }
+    const final = await this.http.get(
+      `/orgs/${this.orgId}/api/v1/agents/me/approvals/${encodeURIComponent(created.approval_token)}/status`
+    );
+    return mapStatus(final);
+  }
+};
+function mapStatus(s) {
+  return {
+    status: s.status,
+    token: s.approval_token,
+    taskId: s.task_id,
+    impact: s.impact,
+    reason: s.reason,
+    respondedAt: s.responded_at,
+    approvedBy: s.approved_by ? { userId: s.approved_by.user_id, email: s.approved_by.email } : null
+  };
+}
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 // src/client.ts
 var LumoAuth = class {
   constructor(config) {
@@ -1219,6 +1281,7 @@ var LumoAuth = class {
       fetch: config.fetch
     };
     this.auth = new AuthModule(authConfig);
+    this.agent = new AgentModule(this.http, config.orgId ?? "");
   }
   /**
    * Clear all client-side caches.
@@ -1240,6 +1303,7 @@ var LumoAuth = class {
   AbacModule,
   AbacResourceAttributesResponseSchema,
   AbacUserAttributesResponseSchema,
+  AgentModule,
   ApiErrorResponseSchema,
   AuthModule,
   CheckBulkRequestSchema,

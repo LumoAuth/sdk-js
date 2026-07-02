@@ -15,6 +15,11 @@
             "types": "./dist/express/index.d.ts",
             "import": "./dist/express/index.mjs",
             "require": "./dist/express/index.js"
+        },
+        "./aauth": {
+            "types": "./dist/aauth/index.d.ts",
+            "import": "./dist/aauth/index.mjs",
+            "require": "./dist/aauth/index.js"
         }
     },
     "files": [
@@ -23,9 +28,10 @@
         "LICENSE"
     ],
     "scripts": {
-        "build": "tsup src/index.ts src/express/index.ts --format cjs,esm --dts --clean",
-        "dev": "tsup src/index.ts src/express/index.ts --format cjs,esm --dts --watch",
+        "build": "tsup src/index.ts src/express/index.ts src/aauth/index.ts --format cjs,esm --dts --clean",
+        "dev": "tsup src/index.ts src/express/index.ts src/aauth/index.ts --format cjs,esm --dts --watch",
         "typecheck": "tsc --noEmit",
+        "test": "npm run build && node --test tests/",
         "lint": "eslint src/",
         "prepublishOnly": "npm run build"
     },
@@ -47,12 +53,12 @@
         "zod": "^3.24.0"
     },
     "devDependencies": {
+        "@types/node": "^20.19.43",
         "tsup": "^8.0.0",
         "typescript": "^5.5.0"
     },
     "engines": {
         "node": ">=18.0.0"
     },
-    "peerDependencies": {},
     "sideEffects": false
 }

@@ -1205,8 +1205,29 @@ function LumoAuthProvider({
     const result = await authModule.checkEmailExists(email);
     return result.exists;
   }, [authModule]);
-  const signOut = (0, import_react.useCallback)(async () => {
-    const { accessToken } = tokensRef.current;
+  const signOut = (0, import_react.useCallback)(async (options) => {
+    const { accessToken, idToken } = tokensRef.current;
+    if (typeof window === "undefined") {
+      if (accessToken) {
+        authModule.revokeToken(accessToken, accessToken).catch(() => {
+        });
+      }
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
+      saveTokens(tokensRef.current);
+      dispatch({ type: "UNAUTHENTICATED" });
+      return;
+    }
+    const targetUrl = options?.afterSignOutUrl || afterSignOutUrl || "/";
+    const postLogoutRedirectUri = new URL(targetUrl, window.location.origin).toString();
+    const safeOrgId = encodeURIComponent(orgId);
+    const params = new URLSearchParams({
+      post_logout_redirect_uri: postLogoutRedirectUri
+    });
+    if (idToken) {
+      params.set("id_token_hint", idToken);
+    }
+    const logoutUrl = `${domain.replace(/\/+$/, "")}/orgs/${safeOrgId}/api/v1/oauth/logout?${params.toString()}`;
     if (accessToken) {
       authModule.revokeToken(accessToken, accessToken).catch(() => {
       });
@@ -1214,8 +1235,10 @@ function LumoAuthProvider({
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
     saveTokens(tokensRef.current);
-    dispatch({ type: "UNAUTHENTICATED" });
-  }, [authModule]);
+    window.location.replace(logoutUrl);
+    await new Promise(() => {
+    });
+  }, [authModule, domain, orgId, afterSignOutUrl]);
   (0, import_react.useEffect)(() => {
     let cancelled = false;
     async function init() {
@@ -1876,10 +1899,7 @@ function UserButton({
   }, [isOpen]);
   const handleSignOut = (0, import_react5.useCallback)(async () => {
     setIsOpen(false);
-    await signOut();
-    if (typeof window !== "undefined") {
-      window.location.href = sanitizeRedirectUrl(resolvedSignOutUrl);
-    }
+    await signOut({ afterSignOutUrl: sanitizeRedirectUrl(resolvedSignOutUrl) });
   }, [signOut, resolvedSignOutUrl]);
   if (!isSignedIn || !user) {
     return null;
@@ -2042,10 +2062,7 @@ function UserProfile({
   const resolvedSignOutUrl = afterSignOutUrl || config.afterSignOutUrl || "/";
   const handleSignOut = (0, import_react6.useCallback)(async () => {
     setSigningOut(true);
-    await signOut();
-    if (typeof window !== "undefined") {
-      window.location.href = resolvedSignOutUrl;
-    }
+    await signOut({ afterSignOutUrl: resolvedSignOutUrl });
   }, [signOut, resolvedSignOutUrl]);
   if (!isLoaded) {
     return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "la-card", style: { textAlign: "center", padding: "2rem" }, children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "la-spinner" }) });
@@ -2461,11 +2478,8 @@ function SignUpButton({ children, signUpUrl, className }) {
 function SignOutButton({ children, afterSignOutUrl, className }) {
   const { signOut, config } = useLumoAuthContext();
   const handleClick = async () => {
-    await signOut();
     const redirectUrl = afterSignOutUrl || config.afterSignOutUrl || "/";
-    if (typeof window !== "undefined") {
-      window.location.href = sanitizeRedirectUrl(redirectUrl);
-    }
+    await signOut({ afterSignOutUrl: sanitizeRedirectUrl(redirectUrl) });
   };
   if (children) {
     return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { onClick: handleClick, role: "button", tabIndex: 0, onKeyDown: (e) => {
