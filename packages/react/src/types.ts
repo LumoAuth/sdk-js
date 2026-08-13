@@ -1,3 +1,4 @@
+import type { TokenStorage } from '@lumoauth/client';
 // ─── User Types ───────────────────────────────────────────────────────
 
 export interface LumoAuthUser {
@@ -67,6 +68,27 @@ export interface LumoAuthProviderProps {
     afterSignUpUrl?: string;
     /** URL to redirect after sign-out (defaults to "/") */
     afterSignOutUrl?: string;
+    /**
+     * Where to keep tokens. Defaults to `sessionStorage` in the browser and
+     * memory on the server.
+     *
+     * Import an adapter from `@lumoauth/client`:
+     * `sessionStorageAdapter` (default, per-tab), `localStorageAdapter`
+     * (shared across tabs, survives restart), `memoryStorageAdapter`, or
+     * `cookieStorageAdapter` — the last keeps tokens in an httpOnly cookie so
+     * they are never readable by JavaScript, which is the only option that
+     * survives XSS. It requires a same-origin backend to own the exchange and
+     * refresh (see `@lumoauth/express`).
+     */
+    storage?: TokenStorage;
+    /**
+     * Share the session across browser tabs: a refresh in one tab is broadcast
+     * to the others, and a Web Lock elects a single refresher so tabs do not
+     * race on a rotated refresh token.
+     * @default true
+     */
+    crossTab?: boolean;
+
     /** React children */
     children: React.ReactNode;
 }

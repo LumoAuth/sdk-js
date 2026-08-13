@@ -1,6 +1,6 @@
 import * as react from 'react';
 import react__default from 'react';
-import { AbacCheckRequest, LumoAuth, ZanzibarCheckRequest } from '@lumoauth/client';
+import { TokenStorage, AbacCheckRequest, LumoAuth, ZanzibarCheckRequest } from '@lumoauth/client';
 
 interface LumoAuthUser {
     /** Unique user ID */
@@ -62,6 +62,26 @@ interface LumoAuthProviderProps {
     afterSignUpUrl?: string;
     /** URL to redirect after sign-out (defaults to "/") */
     afterSignOutUrl?: string;
+    /**
+     * Where to keep tokens. Defaults to `sessionStorage` in the browser and
+     * memory on the server.
+     *
+     * Import an adapter from `@lumoauth/client`:
+     * `sessionStorageAdapter` (default, per-tab), `localStorageAdapter`
+     * (shared across tabs, survives restart), `memoryStorageAdapter`, or
+     * `cookieStorageAdapter` — the last keeps tokens in an httpOnly cookie so
+     * they are never readable by JavaScript, which is the only option that
+     * survives XSS. It requires a same-origin backend to own the exchange and
+     * refresh (see `@lumoauth/express`).
+     */
+    storage?: TokenStorage;
+    /**
+     * Share the session across browser tabs: a refresh in one tab is broadcast
+     * to the others, and a Web Lock elects a single refresher so tabs do not
+     * race on a rotated refresh token.
+     * @default true
+     */
+    crossTab?: boolean;
     /** React children */
     children: React.ReactNode;
 }
@@ -292,7 +312,7 @@ interface LumoAuthContextValue extends AuthState {
     };
 }
 
-declare function LumoAuthProvider({ domain, orgId, clientId, authStrategy, redirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl, children, }: LumoAuthProviderProps): react.JSX.Element;
+declare function LumoAuthProvider({ domain, orgId, clientId, authStrategy, redirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl, storage, crossTab, children, }: LumoAuthProviderProps): react.JSX.Element;
 
 /**
  * Drop-in sign-in component.

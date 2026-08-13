@@ -1,4 +1,5 @@
-import { createContext, useContext, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { LumoAuthSession } from '@lumoauth/client';
 import { AuthModule } from '@lumoauth/client';
 import type {
     LumoAuthProviderProps,
@@ -33,26 +34,6 @@ type AuthAction =
     | { type: 'UNAUTHENTICATED' }
     | { type: 'ERROR'; error: string };
 
-function authReducer(_state: AuthState, action: AuthAction): AuthState {
-    switch (action.type) {
-        case 'LOADING':
-            return { status: 'loading', user: null, isLoaded: false, isSignedIn: false };
-        case 'AUTHENTICATED':
-            return { status: 'authenticated', user: action.user, isLoaded: true, isSignedIn: true };
-        case 'UNAUTHENTICATED':
-            return { status: 'unauthenticated', user: null, isLoaded: true, isSignedIn: false };
-        case 'ERROR':
-            return { status: 'unauthenticated', user: null, isLoaded: true, isSignedIn: false };
-    }
-}
-
-const initialState: AuthState = {
-    status: 'loading',
-    user: null,
-    isLoaded: false,
-    isSignedIn: false,
-};
-
 // ─── Token Storage ────────────────────────────────────────────────────
 
 const TOKEN_STORAGE_KEY = 'lumoauth_tokens';
@@ -69,20 +50,6 @@ function loadTokens(): TokenState {
         // Ignore storage errors (SSR, private browsing, etc.)
     }
     return { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-}
-
-function saveTokens(tokens: TokenState): void {
-    try {
-        if (typeof window !== 'undefined') {
-            if (tokens.accessToken) {
-                sessionStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(tokens));
-            } else {
-                sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-            }
-        }
-    } catch {
-        // Ignore
-    }
 }
 
 function savePkceParams(codeVerifier: string, state: string): void {
@@ -156,11 +123,12 @@ export function LumoAuthProvider({
     afterSignInUrl,
     afterSignUpUrl,
     afterSignOutUrl,
+    storage,
+    crossTab = true,
     children,
 }: LumoAuthProviderProps) {
-    const [state, dispatch] = useReducer(authReducer, initialState);
+    const [user, setUser] = useState<LumoAuthUser | null>(null);
     const tokensRef = useRef<TokenState>(loadTokens());
-    const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const callbackHandledRef = useRef(false);
     const callbackInflightRef = useRef<{ code: string; promise: Promise<void> } | null>(null);
 
@@ -186,6 +154,62 @@ export function LumoAuthProvider({
         return '';
     }, [redirectUri]);
 
+    // ── Session runtime ──────────────────────────────────────────────
+    //
+    // Owns tokens, refresh scheduling and cross-tab sync. Created once per
+    // (authModule, redirectUri, storage) and disposed on unmount.
+    const session = useMemo(
+        () =>
+            new LumoAuthSession({
+                auth: authModule,
+                redirectUri: resolvedRedirectUri,
+                storage,
+                crossTab,
+                // Mirror the store's tokens into the ref the flow code below
+                // still reads, so signOut can build id_token_hint and the
+                // callback path can inspect what was persisted.
+                onTokens: (t) => {
+                    tokensRef.current = {
+                        accessToken: t.accessToken,
+                        refreshToken: t.refreshToken,
+                        idToken: t.idToken,
+                        expiresAt: t.expiresAt,
+                    };
+                },
+            }),
+        [authModule, resolvedRedirectUri, storage, crossTab],
+    );
+
+    useEffect(() => () => session.dispose(), [session]);
+
+    // Bind the store to React. useSyncExternalStore is tear-free, so a token
+    // refresh in another tab cannot render half-updated state.
+    const sessionState = useSyncExternalStore(
+        session.subscribe,
+        session.getSnapshot,
+        session.getServerSnapshot,
+    );
+
+    const state: AuthState = useMemo(
+        () => ({
+            status: sessionState.status,
+            user: sessionState.isSignedIn ? user : null,
+            isLoaded: sessionState.isLoaded,
+            isSignedIn: sessionState.isSignedIn,
+        }),
+        [sessionState, user],
+    );
+
+    // Shim so the flow code below keeps reading as it did. LOADING is a no-op
+    // now: the store owns status, and it is already 'loading' initially.
+    const dispatch = useCallback(
+        (action: AuthAction) => {
+            if (action.type === 'AUTHENTICATED') setUser(action.user);
+            else if (action.type === 'UNAUTHENTICATED' || action.type === 'ERROR') setUser(null);
+        },
+        [],
+    );
+
     // ── Fetch user info ──────────────────────────────────────────────
 
     const fetchUser = useCallback(async (accessToken: string): Promise<LumoAuthUser> => {
@@ -195,52 +219,18 @@ export function LumoAuthProvider({
 
     // ── Token refresh ────────────────────────────────────────────────
 
-    const refreshAccessToken = useCallback(async (): Promise<string | null> => {
-        const { refreshToken } = tokensRef.current;
-        if (!refreshToken) return null;
+    // Token lifetime — persistence, refresh scheduling, single-flight refresh,
+    // and cross-tab coordination — is owned by LumoAuthSession in
+    // @lumoauth/client. This provider only binds it to React.
+    const refreshAccessToken = useCallback(
+        (): Promise<string | null> => session.refresh(),
+        [session],
+    );
 
-        try {
-            const data = await authModule.refreshToken(refreshToken);
-            const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-            tokensRef.current = {
-                accessToken: data.access_token,
-                refreshToken: data.refresh_token || refreshToken,
-                expiresAt,
-                idToken: data.id_token || tokensRef.current.idToken,
-            };
-            saveTokens(tokensRef.current);
-            scheduleRefresh(expiresAt);
-
-            return data.access_token;
-        } catch {
-            // Refresh failed — sign out
-            tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-            saveTokens(tokensRef.current);
-            dispatch({ type: 'UNAUTHENTICATED' });
-            return null;
-        }
-    }, [authModule]);
-
-    // ── Schedule auto-refresh ────────────────────────────────────────
-
-    const scheduleRefresh = useCallback((expiresAt: number) => {
-        if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-        // Refresh 60 seconds before expiry
-        const delay = Math.max((expiresAt - Date.now()) - 60_000, 5_000);
-        refreshTimerRef.current = setTimeout(() => {
-            refreshAccessToken();
-        }, delay);
-    }, [refreshAccessToken]);
-
-    // ── Get token (public) ───────────────────────────────────────────
-
-    const getToken = useCallback(async (): Promise<string | null> => {
-        const { accessToken, expiresAt } = tokensRef.current;
-        if (accessToken && expiresAt && Date.now() < expiresAt - 30_000) {
-            return accessToken;
-        }
-        return refreshAccessToken();
-    }, [refreshAccessToken]);
+    const getToken = useCallback(
+        (): Promise<string | null> => session.getToken(),
+        [session],
+    );
 
     // ── Sign In with Redirect (PKCE) ─────────────────────────────────
 
@@ -295,15 +285,8 @@ export function LumoAuthProvider({
                 redirectUri
             );
 
-            const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-            tokensRef.current = {
-                accessToken: data.access_token,
-                refreshToken: data.refresh_token || null,
-                expiresAt,
-                idToken: data.id_token || null,
-            };
-            saveTokens(tokensRef.current);
-            scheduleRefresh(expiresAt);
+            // adopt() persists, schedules the refresh, and tells other tabs.
+            await session.adopt(data);
 
             const user = await fetchUser(data.access_token);
             dispatch({ type: 'AUTHENTICATED', user });
@@ -311,7 +294,7 @@ export function LumoAuthProvider({
             dispatch({ type: 'ERROR', error: err instanceof Error ? err.message : 'Sign in failed' });
             throw err;
         }
-    }, [authStrategy, authModule, redirectUri, fetchUser, scheduleRefresh, signInWithRedirect]);
+    }, [authStrategy, authModule, redirectUri, fetchUser, session, signInWithRedirect, dispatch]);
 
     // ── Handle OAuth Callback (PKCE) ─────────────────────────────────
 
@@ -369,15 +352,7 @@ export function LumoAuthProvider({
 
                 clearPkceParams();
 
-                const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-                tokensRef.current = {
-                    accessToken: data.access_token,
-                    refreshToken: data.refresh_token || null,
-                    expiresAt,
-                    idToken: data.id_token || null,
-                };
-                saveTokens(tokensRef.current);
-                scheduleRefresh(expiresAt);
+                await session.adopt(data);
 
                 const user = await fetchUser(data.access_token);
                 dispatch({ type: 'AUTHENTICATED', user });
@@ -398,7 +373,7 @@ export function LumoAuthProvider({
         }
 
         return promise;
-    }, [authModule, resolvedRedirectUri, fetchUser, scheduleRefresh]);
+    }, [authModule, resolvedRedirectUri, fetchUser, session, dispatch]);
 
     // ── Sign Up ──────────────────────────────────────────────────────
 
@@ -475,9 +450,8 @@ export function LumoAuthProvider({
             if (accessToken) {
                 authModule.revokeToken(accessToken, accessToken).catch(() => { });
             }
-            if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
             tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-            saveTokens(tokensRef.current);
+            await session.clearSession();
             dispatch({ type: 'UNAUTHENTICATED' });
             return;
         }
@@ -506,9 +480,10 @@ export function LumoAuthProvider({
         if (accessToken) {
             authModule.revokeToken(accessToken, accessToken).catch(() => { });
         }
-        if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
         tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-        saveTokens(tokensRef.current);
+        // emit:false is load-bearing — see LumoAuthSession#clearSession. Other
+        // tabs are still told to sign out (broadcast defaults to true).
+        await session.clearSession(null, { emit: false });
 
         // Use replace() so the dashboard URL doesn't sit in browser history
         // as the back-target after logout.
@@ -517,7 +492,7 @@ export function LumoAuthProvider({
         // Block forever — the page is unloading. This guarantees no caller
         // code runs after signOut() resolves and tries to navigate elsewhere.
         await new Promise<void>(() => { });
-    }, [authModule, domain, orgId, afterSignOutUrl]);
+    }, [authModule, domain, orgId, afterSignOutUrl, session, dispatch]);
 
     // ── Initialize (check for existing session) ──────────────────────
 
@@ -584,25 +559,20 @@ export function LumoAuthProvider({
                 const user = await fetchUser(currentToken);
                 if (!cancelled) {
                     dispatch({ type: 'AUTHENTICATED', user });
-                    if (tokensRef.current.expiresAt) {
-                        scheduleRefresh(tokensRef.current.expiresAt);
-                    }
+                    // No scheduleRefresh here: session.hydrate() below owns the
+                    // timer, and scheduling twice would double-refresh.
                 }
             } catch {
                 if (!cancelled) dispatch({ type: 'UNAUTHENTICATED' });
             }
         }
 
-        init();
+        init().then(() => {
+            // Settle the store's own status/timer from persisted tokens.
+            if (!cancelled) void session.hydrate();
+        });
         return () => { cancelled = true; };
-    }, [fetchUser, handleCallback, refreshAccessToken, scheduleRefresh]);
-
-    // Cleanup timer on unmount
-    useEffect(() => {
-        return () => {
-            if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-        };
-    }, []);
+    }, [fetchUser, handleCallback, refreshAccessToken, session]);
 
     // ── Context Value ────────────────────────────────────────────────
 

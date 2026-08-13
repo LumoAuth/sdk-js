@@ -11,6 +11,29 @@
 
 export { LumoAuth, type LumoAuthConfig } from './client';
 
+// ─── Session runtime (framework-agnostic) ─────────────────────────────
+// The store @lumoauth/react binds to. Exported so a Vue/Svelte binding can
+// use the same runtime instead of reimplementing refresh and cross-tab logic.
+export {
+    LumoAuthSession,
+    type SessionState,
+    type SessionStatus,
+    type SessionOptions,
+} from './session';
+
+// ─── Token storage ────────────────────────────────────────────────────
+export {
+    type TokenStorage,
+    type StoredTokens,
+    type CookieStorageOptions,
+    EMPTY_TOKENS,
+    sessionStorageAdapter,
+    localStorageAdapter,
+    memoryStorageAdapter,
+    cookieStorageAdapter,
+    defaultStorage,
+} from './storage';
+
 // The full isomorphic surface: authorization modules, OAuth/PKCE helpers,
 // schemas, errors, and the HTTP client.
 export * from '@lumoauth/shared';

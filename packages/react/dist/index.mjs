@@ -1,7 +1,8 @@
 "use client";
 
 // src/provider.tsx
-import { createContext, useContext, useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { LumoAuthSession } from "@lumoauth/client";
 import { AuthModule } from "@lumoauth/client";
 
 // src/styles.ts
@@ -830,24 +831,6 @@ function useLumoAuthContext() {
   }
   return ctx;
 }
-function authReducer(_state, action) {
-  switch (action.type) {
-    case "LOADING":
-      return { status: "loading", user: null, isLoaded: false, isSignedIn: false };
-    case "AUTHENTICATED":
-      return { status: "authenticated", user: action.user, isLoaded: true, isSignedIn: true };
-    case "UNAUTHENTICATED":
-      return { status: "unauthenticated", user: null, isLoaded: true, isSignedIn: false };
-    case "ERROR":
-      return { status: "unauthenticated", user: null, isLoaded: true, isSignedIn: false };
-  }
-}
-var initialState = {
-  status: "loading",
-  user: null,
-  isLoaded: false,
-  isSignedIn: false
-};
 var TOKEN_STORAGE_KEY = "lumoauth_tokens";
 var PKCE_VERIFIER_KEY = "lumoauth_pkce_verifier";
 var PKCE_STATE_KEY = "lumoauth_pkce_state";
@@ -860,18 +843,6 @@ function loadTokens() {
   } catch {
   }
   return { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-}
-function saveTokens(tokens) {
-  try {
-    if (typeof window !== "undefined") {
-      if (tokens.accessToken) {
-        sessionStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(tokens));
-      } else {
-        sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-      }
-    }
-  } catch {
-  }
 }
 function savePkceParams(codeVerifier, state) {
   try {
@@ -932,11 +903,12 @@ function LumoAuthProvider({
   afterSignInUrl,
   afterSignUpUrl,
   afterSignOutUrl,
+  storage,
+  crossTab = true,
   children
 }) {
-  const [state, dispatch] = useReducer(authReducer, initialState);
+  const [user, setUser] = useState(null);
   const tokensRef = useRef(loadTokens());
-  const refreshTimerRef = useRef(null);
   const callbackHandledRef = useRef(false);
   const callbackInflightRef = useRef(null);
   useEffect(() => {
@@ -957,46 +929,60 @@ function LumoAuthProvider({
     }
     return "";
   }, [redirectUri]);
+  const session = useMemo(
+    () => new LumoAuthSession({
+      auth: authModule,
+      redirectUri: resolvedRedirectUri,
+      storage,
+      crossTab,
+      // Mirror the store's tokens into the ref the flow code below
+      // still reads, so signOut can build id_token_hint and the
+      // callback path can inspect what was persisted.
+      onTokens: (t) => {
+        tokensRef.current = {
+          accessToken: t.accessToken,
+          refreshToken: t.refreshToken,
+          idToken: t.idToken,
+          expiresAt: t.expiresAt
+        };
+      }
+    }),
+    [authModule, resolvedRedirectUri, storage, crossTab]
+  );
+  useEffect(() => () => session.dispose(), [session]);
+  const sessionState = useSyncExternalStore(
+    session.subscribe,
+    session.getSnapshot,
+    session.getServerSnapshot
+  );
+  const state = useMemo(
+    () => ({
+      status: sessionState.status,
+      user: sessionState.isSignedIn ? user : null,
+      isLoaded: sessionState.isLoaded,
+      isSignedIn: sessionState.isSignedIn
+    }),
+    [sessionState, user]
+  );
+  const dispatch = useCallback(
+    (action) => {
+      if (action.type === "AUTHENTICATED") setUser(action.user);
+      else if (action.type === "UNAUTHENTICATED" || action.type === "ERROR") setUser(null);
+    },
+    []
+  );
   const fetchUser = useCallback(async (accessToken) => {
     const data = await authModule.getUserInfo(accessToken);
     return parseUserFromUserInfo(data);
   }, [authModule]);
-  const refreshAccessToken = useCallback(async () => {
-    const { refreshToken } = tokensRef.current;
-    if (!refreshToken) return null;
-    try {
-      const data = await authModule.refreshToken(refreshToken);
-      const expiresAt = Date.now() + (data.expires_in || 3600) * 1e3;
-      tokensRef.current = {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token || refreshToken,
-        expiresAt,
-        idToken: data.id_token || tokensRef.current.idToken
-      };
-      saveTokens(tokensRef.current);
-      scheduleRefresh(expiresAt);
-      return data.access_token;
-    } catch {
-      tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-      saveTokens(tokensRef.current);
-      dispatch({ type: "UNAUTHENTICATED" });
-      return null;
-    }
-  }, [authModule]);
-  const scheduleRefresh = useCallback((expiresAt) => {
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    const delay = Math.max(expiresAt - Date.now() - 6e4, 5e3);
-    refreshTimerRef.current = setTimeout(() => {
-      refreshAccessToken();
-    }, delay);
-  }, [refreshAccessToken]);
-  const getToken = useCallback(async () => {
-    const { accessToken, expiresAt } = tokensRef.current;
-    if (accessToken && expiresAt && Date.now() < expiresAt - 3e4) {
-      return accessToken;
-    }
-    return refreshAccessToken();
-  }, [refreshAccessToken]);
+  const refreshAccessToken = useCallback(
+    () => session.refresh(),
+    [session]
+  );
+  const getToken = useCallback(
+    () => session.getToken(),
+    [session]
+  );
   const signInWithRedirect = useCallback(() => {
     authModule.buildAuthorizationUrl({
       redirectUri: resolvedRedirectUri,
@@ -1036,22 +1022,14 @@ function LumoAuthProvider({
         "openid profile email",
         redirectUri
       );
-      const expiresAt = Date.now() + (data.expires_in || 3600) * 1e3;
-      tokensRef.current = {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token || null,
-        expiresAt,
-        idToken: data.id_token || null
-      };
-      saveTokens(tokensRef.current);
-      scheduleRefresh(expiresAt);
-      const user = await fetchUser(data.access_token);
-      dispatch({ type: "AUTHENTICATED", user });
+      await session.adopt(data);
+      const user2 = await fetchUser(data.access_token);
+      dispatch({ type: "AUTHENTICATED", user: user2 });
     } catch (err) {
       dispatch({ type: "ERROR", error: err instanceof Error ? err.message : "Sign in failed" });
       throw err;
     }
-  }, [authStrategy, authModule, redirectUri, fetchUser, scheduleRefresh, signInWithRedirect]);
+  }, [authStrategy, authModule, redirectUri, fetchUser, session, signInWithRedirect, dispatch]);
   const handleCallback = useCallback(async () => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -1090,17 +1068,9 @@ function LumoAuthProvider({
           redirectUri: resolvedRedirectUri
         });
         clearPkceParams();
-        const expiresAt = Date.now() + (data.expires_in || 3600) * 1e3;
-        tokensRef.current = {
-          accessToken: data.access_token,
-          refreshToken: data.refresh_token || null,
-          expiresAt,
-          idToken: data.id_token || null
-        };
-        saveTokens(tokensRef.current);
-        scheduleRefresh(expiresAt);
-        const user = await fetchUser(data.access_token);
-        dispatch({ type: "AUTHENTICATED", user });
+        await session.adopt(data);
+        const user2 = await fetchUser(data.access_token);
+        dispatch({ type: "AUTHENTICATED", user: user2 });
       } catch (err) {
         clearPkceParams();
         dispatch({ type: "ERROR", error: err instanceof Error ? err.message : "Token exchange failed" });
@@ -1116,7 +1086,7 @@ function LumoAuthProvider({
       });
     }
     return promise;
-  }, [authModule, resolvedRedirectUri, fetchUser, scheduleRefresh]);
+  }, [authModule, resolvedRedirectUri, fetchUser, session, dispatch]);
   const signUp = useCallback(async (_params) => {
     if (authStrategy === "pkce") {
       const safeOrgId = encodeURIComponent(orgId);
@@ -1153,9 +1123,8 @@ function LumoAuthProvider({
         authModule.revokeToken(accessToken, accessToken).catch(() => {
         });
       }
-      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-      saveTokens(tokensRef.current);
+      await session.clearSession();
       dispatch({ type: "UNAUTHENTICATED" });
       return;
     }
@@ -1173,13 +1142,12 @@ function LumoAuthProvider({
       authModule.revokeToken(accessToken, accessToken).catch(() => {
       });
     }
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-    saveTokens(tokensRef.current);
+    await session.clearSession(null, { emit: false });
     window.location.replace(logoutUrl);
     await new Promise(() => {
     });
-  }, [authModule, domain, orgId, afterSignOutUrl]);
+  }, [authModule, domain, orgId, afterSignOutUrl, session, dispatch]);
   useEffect(() => {
     let cancelled = false;
     async function init() {
@@ -1223,27 +1191,21 @@ function LumoAuthProvider({
           if (!cancelled) dispatch({ type: "UNAUTHENTICATED" });
           return;
         }
-        const user = await fetchUser(currentToken);
+        const user2 = await fetchUser(currentToken);
         if (!cancelled) {
-          dispatch({ type: "AUTHENTICATED", user });
-          if (tokensRef.current.expiresAt) {
-            scheduleRefresh(tokensRef.current.expiresAt);
-          }
+          dispatch({ type: "AUTHENTICATED", user: user2 });
         }
       } catch {
         if (!cancelled) dispatch({ type: "UNAUTHENTICATED" });
       }
     }
-    init();
+    init().then(() => {
+      if (!cancelled) void session.hydrate();
+    });
     return () => {
       cancelled = true;
     };
-  }, [fetchUser, handleCallback, refreshAccessToken, scheduleRefresh]);
-  useEffect(() => {
-    return () => {
-      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    };
-  }, []);
+  }, [fetchUser, handleCallback, refreshAccessToken, session]);
   const contextValue = useMemo(() => ({
     ...state,
     signIn,
@@ -1270,7 +1232,7 @@ function LumoAuthProvider({
 }
 
 // src/components/SignIn.tsx
-import { useState, useCallback as useCallback2 } from "react";
+import { useState as useState2, useCallback as useCallback2 } from "react";
 
 // src/utils/url.ts
 function sanitizeRedirectUrl(url, defaultUrl = "/") {
@@ -1431,10 +1393,10 @@ function SignInPassword({
   themeClass,
   appearance
 }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState2("");
+  const [password, setPassword] = useState2("");
+  const [error, setError] = useState2(null);
+  const [loading, setLoading] = useState2(false);
   const handleSubmit = useCallback2(async (e) => {
     e.preventDefault();
     setError(null);
@@ -1540,7 +1502,7 @@ function SignInPassword({
 }
 
 // src/components/SignUp.tsx
-import { useState as useState2, useCallback as useCallback3, useMemo as useMemo2 } from "react";
+import { useState as useState3, useCallback as useCallback3, useMemo as useMemo2 } from "react";
 import { jsx as jsx3, jsxs as jsxs2 } from "react/jsx-runtime";
 function getPasswordStrength(password) {
   if (!password) return { score: 0, label: "" };
@@ -1612,12 +1574,12 @@ function SignUpPasswordForm({
   themeClass,
   appearance
 }) {
-  const [firstName, setFirstName] = useState2("");
-  const [lastName, setLastName] = useState2("");
-  const [email, setEmail] = useState2("");
-  const [password, setPassword] = useState2("");
-  const [error, setError] = useState2(null);
-  const [loading, setLoading] = useState2(false);
+  const [firstName, setFirstName] = useState3("");
+  const [lastName, setLastName] = useState3("");
+  const [email, setEmail] = useState3("");
+  const [password, setPassword] = useState3("");
+  const [error, setError] = useState3(null);
+  const [loading, setLoading] = useState3(false);
   const passwordStrength = useMemo2(() => getPasswordStrength(password), [password]);
   const handleSubmit = useCallback3(async (e) => {
     e.preventDefault();
@@ -1755,7 +1717,7 @@ function SignUpPasswordForm({
 }
 
 // src/components/AuthCallback.tsx
-import { useEffect as useEffect2, useState as useState3 } from "react";
+import { useEffect as useEffect2, useState as useState4 } from "react";
 import { Fragment, jsx as jsx4, jsxs as jsxs3 } from "react/jsx-runtime";
 function AuthCallback({
   afterSignInUrl,
@@ -1763,7 +1725,7 @@ function AuthCallback({
   error: errorComponent
 }) {
   const { handleCallback, config } = useLumoAuthContext();
-  const [error, setError] = useState3(null);
+  const [error, setError] = useState4(null);
   const resolvedAfterSignInUrl = afterSignInUrl || config.afterSignInUrl || "/";
   useEffect2(() => {
     let cancelled = false;
@@ -1812,7 +1774,7 @@ function AuthCallback({
 }
 
 // src/components/UserButton.tsx
-import { useState as useState4, useCallback as useCallback4, useEffect as useEffect3, useRef as useRef2 } from "react";
+import { useState as useState5, useCallback as useCallback4, useEffect as useEffect3, useRef as useRef2 } from "react";
 import { jsx as jsx5, jsxs as jsxs4 } from "react/jsx-runtime";
 function UserButton({
   afterSignOutUrl,
@@ -1820,7 +1782,7 @@ function UserButton({
   appearance
 }) {
   const { user, isSignedIn, signOut, config } = useLumoAuthContext();
-  const [isOpen, setIsOpen] = useState4(false);
+  const [isOpen, setIsOpen] = useState5(false);
   const containerRef = useRef2(null);
   const resolvedSignOutUrl = afterSignOutUrl || config.afterSignOutUrl || "/";
   useEffect3(() => {
@@ -1974,7 +1936,7 @@ function UserAvatar({
 }
 
 // src/components/UserProfile.tsx
-import { useState as useState5, useCallback as useCallback5 } from "react";
+import { useState as useState6, useCallback as useCallback5 } from "react";
 import { Fragment as Fragment2, jsx as jsx7, jsxs as jsxs6 } from "react/jsx-runtime";
 var ICONS = {
   user: /* @__PURE__ */ jsxs6("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
@@ -2004,7 +1966,7 @@ function UserProfile({
   appearance
 }) {
   const { user, isSignedIn, isLoaded, signOut, config } = useLumoAuthContext();
-  const [signingOut, setSigningOut] = useState5(false);
+  const [signingOut, setSigningOut] = useState6(false);
   const resolvedSignOutUrl = afterSignOutUrl || config.afterSignOutUrl || "/";
   const handleSignOut = useCallback5(async () => {
     setSigningOut(true);
@@ -2093,7 +2055,7 @@ function UserProfile({
 }
 
 // src/hooks.ts
-import { useState as useState6, useEffect as useEffect4, useCallback as useCallback6, useMemo as useMemo3 } from "react";
+import { useState as useState7, useEffect as useEffect4, useCallback as useCallback6, useMemo as useMemo3 } from "react";
 import { LumoAuth } from "@lumoauth/client";
 function useAuth() {
   return useLumoAuthContext();
@@ -2135,8 +2097,8 @@ function useLumoAuth() {
 function usePermission(slug) {
   const client = useLumoAuth();
   const { isSignedIn, isLoaded } = useLumoAuthContext();
-  const [allowed, setAllowed] = useState6(false);
-  const [isLoading, setIsLoading] = useState6(true);
+  const [allowed, setAllowed] = useState7(false);
+  const [isLoading, setIsLoading] = useState7(true);
   useEffect4(() => {
     if (!isLoaded || !isSignedIn) {
       setAllowed(false);
@@ -2165,8 +2127,8 @@ function usePermission(slug) {
 function useZanzibar(request) {
   const client = useLumoAuth();
   const { isSignedIn, isLoaded } = useLumoAuthContext();
-  const [allowed, setAllowed] = useState6(false);
-  const [isLoading, setIsLoading] = useState6(true);
+  const [allowed, setAllowed] = useState7(false);
+  const [isLoading, setIsLoading] = useState7(true);
   const requestKey = `${request.object}:${request.relation}:${request.subject}`;
   useEffect4(() => {
     if (!isLoaded || !isSignedIn) {
@@ -2196,8 +2158,8 @@ function useZanzibar(request) {
 function useAbac(request) {
   const client = useLumoAuth();
   const { isSignedIn, isLoaded } = useLumoAuthContext();
-  const [allowed, setAllowed] = useState6(false);
-  const [isLoading, setIsLoading] = useState6(true);
+  const [allowed, setAllowed] = useState7(false);
+  const [isLoading, setIsLoading] = useState7(true);
   const requestKey = `${request.resourceType}:${request.action}:${request.resourceId || ""}`;
   useEffect4(() => {
     if (!isLoaded || !isSignedIn) {
@@ -2226,9 +2188,9 @@ function useAbac(request) {
 }
 function useMagicLink() {
   const { sendMagicLink: sendMagicLinkCtx } = useLumoAuthContext();
-  const [isLoading, setIsLoading] = useState6(false);
-  const [isSent, setIsSent] = useState6(false);
-  const [error, setError] = useState6(null);
+  const [isLoading, setIsLoading] = useState7(false);
+  const [isSent, setIsSent] = useState7(false);
+  const [error, setError] = useState7(null);
   const sendMagicLink = useCallback6(async (email, redirectUri) => {
     setIsLoading(true);
     setError(null);
@@ -2250,8 +2212,8 @@ function useMagicLink() {
 }
 function useEmailFirst() {
   const { checkEmail: checkEmailCtx } = useLumoAuthContext();
-  const [isLoading, setIsLoading] = useState6(false);
-  const [exists, setExists] = useState6(null);
+  const [isLoading, setIsLoading] = useState7(false);
+  const [exists, setExists] = useState7(null);
   const checkEmail = useCallback6(async (email) => {
     setIsLoading(true);
     try {

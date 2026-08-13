@@ -51,6 +51,7 @@ module.exports = __toCommonJS(index_exports);
 // src/provider.tsx
 var import_react = require("react");
 var import_client = require("@lumoauth/client");
+var import_client2 = require("@lumoauth/client");
 
 // src/styles.ts
 var STYLE_ID = "lumoauth-react-styles";
@@ -878,24 +879,6 @@ function useLumoAuthContext() {
   }
   return ctx;
 }
-function authReducer(_state, action) {
-  switch (action.type) {
-    case "LOADING":
-      return { status: "loading", user: null, isLoaded: false, isSignedIn: false };
-    case "AUTHENTICATED":
-      return { status: "authenticated", user: action.user, isLoaded: true, isSignedIn: true };
-    case "UNAUTHENTICATED":
-      return { status: "unauthenticated", user: null, isLoaded: true, isSignedIn: false };
-    case "ERROR":
-      return { status: "unauthenticated", user: null, isLoaded: true, isSignedIn: false };
-  }
-}
-var initialState = {
-  status: "loading",
-  user: null,
-  isLoaded: false,
-  isSignedIn: false
-};
 var TOKEN_STORAGE_KEY = "lumoauth_tokens";
 var PKCE_VERIFIER_KEY = "lumoauth_pkce_verifier";
 var PKCE_STATE_KEY = "lumoauth_pkce_state";
@@ -908,18 +891,6 @@ function loadTokens() {
   } catch {
   }
   return { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-}
-function saveTokens(tokens) {
-  try {
-    if (typeof window !== "undefined") {
-      if (tokens.accessToken) {
-        sessionStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(tokens));
-      } else {
-        sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-      }
-    }
-  } catch {
-  }
 }
 function savePkceParams(codeVerifier, state) {
   try {
@@ -980,18 +951,19 @@ function LumoAuthProvider({
   afterSignInUrl,
   afterSignUpUrl,
   afterSignOutUrl,
+  storage,
+  crossTab = true,
   children
 }) {
-  const [state, dispatch] = (0, import_react.useReducer)(authReducer, initialState);
+  const [user, setUser] = (0, import_react.useState)(null);
   const tokensRef = (0, import_react.useRef)(loadTokens());
-  const refreshTimerRef = (0, import_react.useRef)(null);
   const callbackHandledRef = (0, import_react.useRef)(false);
   const callbackInflightRef = (0, import_react.useRef)(null);
   (0, import_react.useEffect)(() => {
     injectStyles();
   }, []);
   const authModule = (0, import_react.useMemo)(
-    () => new import_client.AuthModule({
+    () => new import_client2.AuthModule({
       baseUrl: domain,
       orgId,
       clientId
@@ -1005,46 +977,60 @@ function LumoAuthProvider({
     }
     return "";
   }, [redirectUri]);
+  const session = (0, import_react.useMemo)(
+    () => new import_client.LumoAuthSession({
+      auth: authModule,
+      redirectUri: resolvedRedirectUri,
+      storage,
+      crossTab,
+      // Mirror the store's tokens into the ref the flow code below
+      // still reads, so signOut can build id_token_hint and the
+      // callback path can inspect what was persisted.
+      onTokens: (t) => {
+        tokensRef.current = {
+          accessToken: t.accessToken,
+          refreshToken: t.refreshToken,
+          idToken: t.idToken,
+          expiresAt: t.expiresAt
+        };
+      }
+    }),
+    [authModule, resolvedRedirectUri, storage, crossTab]
+  );
+  (0, import_react.useEffect)(() => () => session.dispose(), [session]);
+  const sessionState = (0, import_react.useSyncExternalStore)(
+    session.subscribe,
+    session.getSnapshot,
+    session.getServerSnapshot
+  );
+  const state = (0, import_react.useMemo)(
+    () => ({
+      status: sessionState.status,
+      user: sessionState.isSignedIn ? user : null,
+      isLoaded: sessionState.isLoaded,
+      isSignedIn: sessionState.isSignedIn
+    }),
+    [sessionState, user]
+  );
+  const dispatch = (0, import_react.useCallback)(
+    (action) => {
+      if (action.type === "AUTHENTICATED") setUser(action.user);
+      else if (action.type === "UNAUTHENTICATED" || action.type === "ERROR") setUser(null);
+    },
+    []
+  );
   const fetchUser = (0, import_react.useCallback)(async (accessToken) => {
     const data = await authModule.getUserInfo(accessToken);
     return parseUserFromUserInfo(data);
   }, [authModule]);
-  const refreshAccessToken = (0, import_react.useCallback)(async () => {
-    const { refreshToken } = tokensRef.current;
-    if (!refreshToken) return null;
-    try {
-      const data = await authModule.refreshToken(refreshToken);
-      const expiresAt = Date.now() + (data.expires_in || 3600) * 1e3;
-      tokensRef.current = {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token || refreshToken,
-        expiresAt,
-        idToken: data.id_token || tokensRef.current.idToken
-      };
-      saveTokens(tokensRef.current);
-      scheduleRefresh(expiresAt);
-      return data.access_token;
-    } catch {
-      tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-      saveTokens(tokensRef.current);
-      dispatch({ type: "UNAUTHENTICATED" });
-      return null;
-    }
-  }, [authModule]);
-  const scheduleRefresh = (0, import_react.useCallback)((expiresAt) => {
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    const delay = Math.max(expiresAt - Date.now() - 6e4, 5e3);
-    refreshTimerRef.current = setTimeout(() => {
-      refreshAccessToken();
-    }, delay);
-  }, [refreshAccessToken]);
-  const getToken = (0, import_react.useCallback)(async () => {
-    const { accessToken, expiresAt } = tokensRef.current;
-    if (accessToken && expiresAt && Date.now() < expiresAt - 3e4) {
-      return accessToken;
-    }
-    return refreshAccessToken();
-  }, [refreshAccessToken]);
+  const refreshAccessToken = (0, import_react.useCallback)(
+    () => session.refresh(),
+    [session]
+  );
+  const getToken = (0, import_react.useCallback)(
+    () => session.getToken(),
+    [session]
+  );
   const signInWithRedirect = (0, import_react.useCallback)(() => {
     authModule.buildAuthorizationUrl({
       redirectUri: resolvedRedirectUri,
@@ -1084,22 +1070,14 @@ function LumoAuthProvider({
         "openid profile email",
         redirectUri
       );
-      const expiresAt = Date.now() + (data.expires_in || 3600) * 1e3;
-      tokensRef.current = {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token || null,
-        expiresAt,
-        idToken: data.id_token || null
-      };
-      saveTokens(tokensRef.current);
-      scheduleRefresh(expiresAt);
-      const user = await fetchUser(data.access_token);
-      dispatch({ type: "AUTHENTICATED", user });
+      await session.adopt(data);
+      const user2 = await fetchUser(data.access_token);
+      dispatch({ type: "AUTHENTICATED", user: user2 });
     } catch (err) {
       dispatch({ type: "ERROR", error: err instanceof Error ? err.message : "Sign in failed" });
       throw err;
     }
-  }, [authStrategy, authModule, redirectUri, fetchUser, scheduleRefresh, signInWithRedirect]);
+  }, [authStrategy, authModule, redirectUri, fetchUser, session, signInWithRedirect, dispatch]);
   const handleCallback = (0, import_react.useCallback)(async () => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -1138,17 +1116,9 @@ function LumoAuthProvider({
           redirectUri: resolvedRedirectUri
         });
         clearPkceParams();
-        const expiresAt = Date.now() + (data.expires_in || 3600) * 1e3;
-        tokensRef.current = {
-          accessToken: data.access_token,
-          refreshToken: data.refresh_token || null,
-          expiresAt,
-          idToken: data.id_token || null
-        };
-        saveTokens(tokensRef.current);
-        scheduleRefresh(expiresAt);
-        const user = await fetchUser(data.access_token);
-        dispatch({ type: "AUTHENTICATED", user });
+        await session.adopt(data);
+        const user2 = await fetchUser(data.access_token);
+        dispatch({ type: "AUTHENTICATED", user: user2 });
       } catch (err) {
         clearPkceParams();
         dispatch({ type: "ERROR", error: err instanceof Error ? err.message : "Token exchange failed" });
@@ -1164,7 +1134,7 @@ function LumoAuthProvider({
       });
     }
     return promise;
-  }, [authModule, resolvedRedirectUri, fetchUser, scheduleRefresh]);
+  }, [authModule, resolvedRedirectUri, fetchUser, session, dispatch]);
   const signUp = (0, import_react.useCallback)(async (_params) => {
     if (authStrategy === "pkce") {
       const safeOrgId = encodeURIComponent(orgId);
@@ -1201,9 +1171,8 @@ function LumoAuthProvider({
         authModule.revokeToken(accessToken, accessToken).catch(() => {
         });
       }
-      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-      saveTokens(tokensRef.current);
+      await session.clearSession();
       dispatch({ type: "UNAUTHENTICATED" });
       return;
     }
@@ -1221,13 +1190,12 @@ function LumoAuthProvider({
       authModule.revokeToken(accessToken, accessToken).catch(() => {
       });
     }
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-    saveTokens(tokensRef.current);
+    await session.clearSession(null, { emit: false });
     window.location.replace(logoutUrl);
     await new Promise(() => {
     });
-  }, [authModule, domain, orgId, afterSignOutUrl]);
+  }, [authModule, domain, orgId, afterSignOutUrl, session, dispatch]);
   (0, import_react.useEffect)(() => {
     let cancelled = false;
     async function init() {
@@ -1271,27 +1239,21 @@ function LumoAuthProvider({
           if (!cancelled) dispatch({ type: "UNAUTHENTICATED" });
           return;
         }
-        const user = await fetchUser(currentToken);
+        const user2 = await fetchUser(currentToken);
         if (!cancelled) {
-          dispatch({ type: "AUTHENTICATED", user });
-          if (tokensRef.current.expiresAt) {
-            scheduleRefresh(tokensRef.current.expiresAt);
-          }
+          dispatch({ type: "AUTHENTICATED", user: user2 });
         }
       } catch {
         if (!cancelled) dispatch({ type: "UNAUTHENTICATED" });
       }
     }
-    init();
+    init().then(() => {
+      if (!cancelled) void session.hydrate();
+    });
     return () => {
       cancelled = true;
     };
-  }, [fetchUser, handleCallback, refreshAccessToken, scheduleRefresh]);
-  (0, import_react.useEffect)(() => {
-    return () => {
-      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    };
-  }, []);
+  }, [fetchUser, handleCallback, refreshAccessToken, session]);
   const contextValue = (0, import_react.useMemo)(() => ({
     ...state,
     signIn,
@@ -2142,7 +2104,7 @@ function UserProfile({
 
 // src/hooks.ts
 var import_react7 = require("react");
-var import_client2 = require("@lumoauth/client");
+var import_client3 = require("@lumoauth/client");
 function useAuth() {
   return useLumoAuthContext();
 }
@@ -2170,7 +2132,7 @@ function useSession() {
 function useLumoAuth() {
   const { getToken, config } = useLumoAuthContext();
   const client = (0, import_react7.useMemo)(
-    () => new import_client2.LumoAuth({
+    () => new import_client3.LumoAuth({
       baseUrl: config.domain,
       orgId: config.orgId,
       clientId: config.clientId,
