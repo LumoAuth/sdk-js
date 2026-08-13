@@ -1,6 +1,6 @@
 import {
   AuthModule
-} from "../chunk-UZNV5N2Z.mjs";
+} from "../chunk-MDPDK3NA.mjs";
 import {
   LumoAuthApiError,
   LumoAuthError

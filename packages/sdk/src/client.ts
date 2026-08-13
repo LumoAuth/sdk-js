@@ -136,7 +136,7 @@ export class LumoAuth {
             cache: config.cache,
         });
         this.zanzibar = new ZanzibarModule(this.http);
-        this.abac = new AbacModule(this.http);
+        this.abac = new AbacModule(this.http, config.orgId ?? '');
 
         // Auth module
         const authConfig: AuthModuleConfig = {

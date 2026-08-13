@@ -157,6 +157,14 @@ function sha256(data) {
 }
 
 // src/modules/auth.ts
+var EMPTY_EMAIL_CHECK = {
+  exists: false,
+  hasPasskey: false,
+  hasPushDevice: false,
+  magicLinkEnabled: false,
+  passkeyEnabled: false,
+  passwordEnabled: false
+};
 var AuthModule = class {
   constructor(config) {
     const base = config.baseUrl.replace(/\/+$/, "");
@@ -341,12 +349,23 @@ var AuthModule = class {
         body: new URLSearchParams({ email })
       });
       if (!res.ok) {
-        return { exists: false };
+        return EMPTY_EMAIL_CHECK;
       }
       const data = await res.json();
-      return { exists: data.exists === true };
+      return {
+        exists: data.exists === true,
+        hasPasskey: data.has_passkey === true,
+        hasPushDevice: data.has_push_device === true,
+        magicLinkEnabled: data.magic_link_enabled === true,
+        passkeyEnabled: data.passkey_enabled === true,
+        passwordEnabled: data.password_enabled === true,
+        maskedEmail: typeof data.masked_email === "string" ? data.masked_email : void 0,
+        pushInitiateUrl: typeof data.push_initiate_url === "string" ? data.push_initiate_url : void 0,
+        pushStatusUrl: typeof data.push_status_url === "string" ? data.push_status_url : void 0,
+        pushLoginUrl: typeof data.push_login_url === "string" ? data.push_login_url : void 0
+      };
     } catch {
-      return { exists: false };
+      return EMPTY_EMAIL_CHECK;
     }
   }
   // ── Internal ─────────────────────────────────────────────────────

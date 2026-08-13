@@ -44,7 +44,24 @@ import { z } from 'zod';
  * ```
  */
 export class AbacModule {
-    constructor(private http: HttpClient) { }
+    constructor(
+        private readonly http: HttpClient,
+        private readonly orgId: string,
+    ) { }
+
+    /**
+     * ABAC is mounted org-scoped on the server
+     * (`/orgs/{orgId}/api/v1/abac/...`). There is no unprefixed route, so
+     * every call must carry the org.
+     */
+    private base(): string {
+        if (!this.orgId) {
+            throw new Error(
+                'client.abac requires `orgId` — pass it to the LumoAuth constructor: new LumoAuth({ baseUrl, orgId, token })',
+            );
+        }
+        return `/orgs/${encodeURIComponent(this.orgId)}/api/v1/abac`;
+    }
 
     // ── Authorization checks ──────────────────────────────────────────
 
@@ -68,7 +85,7 @@ export class AbacModule {
      */
     async check(params: AbacCheckRequest): Promise<AbacCheckResponse> {
         const body = AbacCheckRequestSchema.parse(params);
-        const raw = await this.http.post<unknown>('/api/v1/abac/check', body);
+        const raw = await this.http.post<unknown>(`${this.base()}/check`, body);
         return this.validate(AbacCheckResponseSchema, raw);
     }
 
@@ -110,7 +127,7 @@ export class AbacModule {
      */
     async checkBulk(params: AbacBulkCheckRequest): Promise<AbacBulkCheckResponse> {
         const body = AbacBulkCheckRequestSchema.parse(params);
-        const raw = await this.http.post<unknown>('/api/v1/abac/check-bulk', body);
+        const raw = await this.http.post<unknown>(`${this.base()}/check-bulk`, body);
         return this.validate(AbacBulkCheckResponseSchema, raw);
     }
 
@@ -128,7 +145,7 @@ export class AbacModule {
      * ```
      */
     async getMyAttributes(): Promise<AbacUserAttributesResponse> {
-        const raw = await this.http.get<unknown>('/api/v1/abac/my-attributes');
+        const raw = await this.http.get<unknown>(`${this.base()}/my-attributes`);
         return this.validate(AbacUserAttributesResponseSchema, raw);
     }
 
@@ -151,7 +168,7 @@ export class AbacModule {
         value: unknown
     ): Promise<void> {
         await this.http.put(
-            `/api/v1/abac/users/${encodeURIComponent(userId)}/attributes/${encodeURIComponent(attributeSlug)}`,
+            `${this.base()}/users/${encodeURIComponent(userId)}/attributes/${encodeURIComponent(attributeSlug)}`,
             { value }
         );
     }
@@ -172,7 +189,7 @@ export class AbacModule {
         resourceId: string
     ): Promise<AbacResourceAttributesResponse> {
         const raw = await this.http.get<unknown>(
-            `/api/v1/abac/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes`
+            `${this.base()}/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes`
         );
         return this.validate(AbacResourceAttributesResponseSchema, raw);
     }
@@ -193,7 +210,7 @@ export class AbacModule {
         value: unknown
     ): Promise<void> {
         await this.http.put(
-            `/api/v1/abac/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes/${encodeURIComponent(attributeSlug)}`,
+            `${this.base()}/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes/${encodeURIComponent(attributeSlug)}`,
             { value }
         );
     }
@@ -215,7 +232,7 @@ export class AbacModule {
         type?: 'user' | 'resource' | 'environment'
     ): Promise<AbacAttributeDefinition[]> {
         const query = type ? `?type=${encodeURIComponent(type)}` : '';
-        const raw = await this.http.get<unknown>(`/api/v1/abac/attribute-definitions${query}`);
+        const raw = await this.http.get<unknown>(`${this.base()}/attribute-definitions${query}`);
 
         // Response may be a direct array or wrapped in { data: [...] }
         const arr = Array.isArray(raw)

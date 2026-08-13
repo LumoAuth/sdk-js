@@ -402,7 +402,11 @@ export function LumoAuthProvider({
 
     // ── Sign Up ──────────────────────────────────────────────────────
 
-    const signUp = useCallback(async (params: {
+    // `params` is intentionally unused: PKCE mode redirects to the hosted
+    // registration page, and password mode throws (no JSON registration
+    // endpoint exists — see below). The signature is kept so the call site
+    // does not change when Phase 4 adds inline registration.
+    const signUp = useCallback(async (_params: {
         email: string;
         password: string;
         firstName?: string;
@@ -424,29 +428,27 @@ export function LumoAuthProvider({
             return;
         }
 
-        // Password mode — inline registration
-        dispatch({ type: 'LOADING' });
-
-        const safeOrgId = encodeURIComponent(orgId);
-        const registerRes = await fetch(`${domain.replace(/\/+$/, '')}/orgs/${safeOrgId}/api/v1/auth/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                email: params.email,
-                password: params.password,
-                first_name: params.firstName,
-                last_name: params.lastName,
-            }),
+        // Password mode — inline registration is NOT supported by the server.
+        //
+        // This previously POSTed to /orgs/{orgId}/api/v1/auth/register, which
+        // does not exist and always 404'd, surfacing as a generic
+        // "Registration failed". Registration is currently a server-rendered
+        // form at /orgs/{orgId}/register, so there is no JSON endpoint to
+        // create an account and return tokens.
+        //
+        // Fail with an actionable message instead of a silent 404. A JSON
+        // registration endpoint is Phase 4 of the frontend-SDK plan; until it
+        // lands, send users to the hosted page via `redirectToSignUp()`.
+        dispatch({
+            type: 'ERROR',
+            error: 'inline_registration_unsupported',
         });
-
-        if (!registerRes.ok) {
-            const errorData = await registerRes.json().catch(() => ({}));
-            dispatch({ type: 'ERROR', error: (errorData as Record<string, string>).error || 'Registration failed' });
-            throw new Error((errorData as Record<string, string>).error || 'Registration failed');
-        }
-
-        // Auto sign-in after registration
-        await signIn(params.email, params.password);
+        throw new Error(
+            'Inline registration is not supported by this LumoAuth server: there is no JSON ' +
+            'registration endpoint. Use redirectToSignUp() to send the user to the hosted ' +
+            `registration page (${domain.replace(/\/+$/, '')}/orgs/${encodeURIComponent(orgId)}/register), ` +
+            'or set authStrategy: "pkce".',
+        );
     }, [authStrategy, domain, orgId, clientId, resolvedRedirectUri, signIn]);
 
     // ── Magic Link ───────────────────────────────────────────────────

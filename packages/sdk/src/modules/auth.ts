@@ -87,14 +87,51 @@ export interface MagicLinkResult {
 }
 
 /**
- * Result of an email-existence check.
- * `exists` is `false` on network failure as well as when no account is found,
- * so callers should handle both cases gracefully.
+ * The result of identifier-first discovery.
+ *
+ * `POST /orgs/{orgId}/check-email` tells you which authentication methods are
+ * actually available for this identifier — both what the organization has
+ * enabled and what this particular user has enrolled. Use it to render only
+ * the methods that will work, instead of guessing.
+ *
+ * Every field except `exists` is best-effort: an older server, or a rate-limit
+ * / unknown-email response, returns a bare `{exists: false}`. Treat the
+ * capability flags as "false unless told otherwise".
  */
 export interface EmailCheckResult {
     /** Whether an account with this email exists in the organization */
     exists: boolean;
+    /** The user has at least one registered passkey */
+    hasPasskey: boolean;
+    /** The user has at least one enrolled push-approval device */
+    hasPushDevice: boolean;
+    /** The organization has magic-link sign-in enabled */
+    magicLinkEnabled: boolean;
+    /** The organization has passkey sign-in enabled */
+    passkeyEnabled: boolean;
+    /** The organization has password sign-in enabled */
+    passwordEnabled: boolean;
+    /** Partially masked address for display, e.g. `j••@acme.com` */
+    maskedEmail?: string;
+    /** Push-approval endpoints, present only when `hasPushDevice` is true */
+    pushInitiateUrl?: string;
+    pushStatusUrl?: string;
+    pushLoginUrl?: string;
 }
+
+/**
+ * Returned when discovery is unavailable (network error, rate limit, or an
+ * unknown identifier). Every capability is false, so callers fall back to the
+ * hosted page rather than offering a method that will not work.
+ */
+const EMPTY_EMAIL_CHECK: EmailCheckResult = {
+    exists: false,
+    hasPasskey: false,
+    hasPushDevice: false,
+    magicLinkEnabled: false,
+    passkeyEnabled: false,
+    passwordEnabled: false,
+};
 
 // ─── Auth Module ──────────────────────────────────────────────────────
 
@@ -354,13 +391,24 @@ export class AuthModule {
             });
 
             if (!res.ok) {
-                return { exists: false };
+                return EMPTY_EMAIL_CHECK;
             }
 
-            const data = await res.json() as { exists?: boolean };
-            return { exists: data.exists === true };
+            const data = await res.json() as Record<string, unknown>;
+            return {
+                exists: data.exists === true,
+                hasPasskey: data.has_passkey === true,
+                hasPushDevice: data.has_push_device === true,
+                magicLinkEnabled: data.magic_link_enabled === true,
+                passkeyEnabled: data.passkey_enabled === true,
+                passwordEnabled: data.password_enabled === true,
+                maskedEmail: typeof data.masked_email === 'string' ? data.masked_email : undefined,
+                pushInitiateUrl: typeof data.push_initiate_url === 'string' ? data.push_initiate_url : undefined,
+                pushStatusUrl: typeof data.push_status_url === 'string' ? data.push_status_url : undefined,
+                pushLoginUrl: typeof data.push_login_url === 'string' ? data.push_login_url : undefined,
+            };
         } catch {
-            return { exists: false };
+            return EMPTY_EMAIL_CHECK;
         }
     }
 

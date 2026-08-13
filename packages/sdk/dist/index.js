@@ -662,8 +662,22 @@ var ZanzibarModule = class {
 // src/modules/abac.ts
 var import_zod2 = require("zod");
 var AbacModule = class {
-  constructor(http) {
+  constructor(http, orgId) {
     this.http = http;
+    this.orgId = orgId;
+  }
+  /**
+   * ABAC is mounted org-scoped on the server
+   * (`/orgs/{orgId}/api/v1/abac/...`). There is no unprefixed route, so
+   * every call must carry the org.
+   */
+  base() {
+    if (!this.orgId) {
+      throw new Error(
+        "client.abac requires `orgId` \u2014 pass it to the LumoAuth constructor: new LumoAuth({ baseUrl, orgId, token })"
+      );
+    }
+    return `/orgs/${encodeURIComponent(this.orgId)}/api/v1/abac`;
   }
   // ── Authorization checks ──────────────────────────────────────────
   /**
@@ -686,7 +700,7 @@ var AbacModule = class {
    */
   async check(params) {
     const body = AbacCheckRequestSchema.parse(params);
-    const raw = await this.http.post("/api/v1/abac/check", body);
+    const raw = await this.http.post(`${this.base()}/check`, body);
     return this.validate(AbacCheckResponseSchema, raw);
   }
   /**
@@ -721,7 +735,7 @@ var AbacModule = class {
    */
   async checkBulk(params) {
     const body = AbacBulkCheckRequestSchema.parse(params);
-    const raw = await this.http.post("/api/v1/abac/check-bulk", body);
+    const raw = await this.http.post(`${this.base()}/check-bulk`, body);
     return this.validate(AbacBulkCheckResponseSchema, raw);
   }
   // ── User attributes ───────────────────────────────────────────────
@@ -737,7 +751,7 @@ var AbacModule = class {
    * ```
    */
   async getMyAttributes() {
-    const raw = await this.http.get("/api/v1/abac/my-attributes");
+    const raw = await this.http.get(`${this.base()}/my-attributes`);
     return this.validate(AbacUserAttributesResponseSchema, raw);
   }
   /**
@@ -755,7 +769,7 @@ var AbacModule = class {
    */
   async setUserAttribute(userId, attributeSlug, value) {
     await this.http.put(
-      `/api/v1/abac/users/${encodeURIComponent(userId)}/attributes/${encodeURIComponent(attributeSlug)}`,
+      `${this.base()}/users/${encodeURIComponent(userId)}/attributes/${encodeURIComponent(attributeSlug)}`,
       { value }
     );
   }
@@ -771,7 +785,7 @@ var AbacModule = class {
    */
   async getResourceAttributes(resourceType, resourceId) {
     const raw = await this.http.get(
-      `/api/v1/abac/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes`
+      `${this.base()}/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes`
     );
     return this.validate(AbacResourceAttributesResponseSchema, raw);
   }
@@ -786,7 +800,7 @@ var AbacModule = class {
    */
   async setResourceAttribute(resourceType, resourceId, attributeSlug, value) {
     await this.http.put(
-      `/api/v1/abac/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes/${encodeURIComponent(attributeSlug)}`,
+      `${this.base()}/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes/${encodeURIComponent(attributeSlug)}`,
       { value }
     );
   }
@@ -804,7 +818,7 @@ var AbacModule = class {
    */
   async getAttributeDefinitions(type) {
     const query = type ? `?type=${encodeURIComponent(type)}` : "";
-    const raw = await this.http.get(`/api/v1/abac/attribute-definitions${query}`);
+    const raw = await this.http.get(`${this.base()}/attribute-definitions${query}`);
     const arr = Array.isArray(raw) ? raw : typeof raw === "object" && raw !== null && "data" in raw ? raw.data : raw;
     return this.validate(import_zod2.z.array(AbacAttributeDefinitionSchema), arr);
   }
@@ -976,6 +990,14 @@ function sha256(data) {
 }
 
 // src/modules/auth.ts
+var EMPTY_EMAIL_CHECK = {
+  exists: false,
+  hasPasskey: false,
+  hasPushDevice: false,
+  magicLinkEnabled: false,
+  passkeyEnabled: false,
+  passwordEnabled: false
+};
 var AuthModule = class {
   constructor(config) {
     const base = config.baseUrl.replace(/\/+$/, "");
@@ -1160,12 +1182,23 @@ var AuthModule = class {
         body: new URLSearchParams({ email })
       });
       if (!res.ok) {
-        return { exists: false };
+        return EMPTY_EMAIL_CHECK;
       }
       const data = await res.json();
-      return { exists: data.exists === true };
+      return {
+        exists: data.exists === true,
+        hasPasskey: data.has_passkey === true,
+        hasPushDevice: data.has_push_device === true,
+        magicLinkEnabled: data.magic_link_enabled === true,
+        passkeyEnabled: data.passkey_enabled === true,
+        passwordEnabled: data.password_enabled === true,
+        maskedEmail: typeof data.masked_email === "string" ? data.masked_email : void 0,
+        pushInitiateUrl: typeof data.push_initiate_url === "string" ? data.push_initiate_url : void 0,
+        pushStatusUrl: typeof data.push_status_url === "string" ? data.push_status_url : void 0,
+        pushLoginUrl: typeof data.push_login_url === "string" ? data.push_login_url : void 0
+      };
     } catch {
-      return { exists: false };
+      return EMPTY_EMAIL_CHECK;
     }
   }
   // ── Internal ─────────────────────────────────────────────────────
@@ -1273,7 +1306,7 @@ var LumoAuth = class {
       cache: config.cache
     });
     this.zanzibar = new ZanzibarModule(this.http);
-    this.abac = new AbacModule(this.http);
+    this.abac = new AbacModule(this.http, config.orgId ?? "");
     const authConfig = {
       baseUrl: config.baseUrl,
       orgId: config.orgId ?? "",

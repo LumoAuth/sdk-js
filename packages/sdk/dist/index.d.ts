@@ -787,8 +787,15 @@ declare class ZanzibarModule {
  * ```
  */
 declare class AbacModule {
-    private http;
-    constructor(http: HttpClient);
+    private readonly http;
+    private readonly orgId;
+    constructor(http: HttpClient, orgId: string);
+    /**
+     * ABAC is mounted org-scoped on the server
+     * (`/orgs/{orgId}/api/v1/abac/...`). There is no unprefixed route, so
+     * every call must carry the org.
+     */
+    private base;
     /**
      * Evaluate ABAC policies for a single resource/action.
      *
@@ -973,13 +980,36 @@ interface MagicLinkResult {
     sent: boolean;
 }
 /**
- * Result of an email-existence check.
- * `exists` is `false` on network failure as well as when no account is found,
- * so callers should handle both cases gracefully.
+ * The result of identifier-first discovery.
+ *
+ * `POST /orgs/{orgId}/check-email` tells you which authentication methods are
+ * actually available for this identifier — both what the organization has
+ * enabled and what this particular user has enrolled. Use it to render only
+ * the methods that will work, instead of guessing.
+ *
+ * Every field except `exists` is best-effort: an older server, or a rate-limit
+ * / unknown-email response, returns a bare `{exists: false}`. Treat the
+ * capability flags as "false unless told otherwise".
  */
 interface EmailCheckResult {
     /** Whether an account with this email exists in the organization */
     exists: boolean;
+    /** The user has at least one registered passkey */
+    hasPasskey: boolean;
+    /** The user has at least one enrolled push-approval device */
+    hasPushDevice: boolean;
+    /** The organization has magic-link sign-in enabled */
+    magicLinkEnabled: boolean;
+    /** The organization has passkey sign-in enabled */
+    passkeyEnabled: boolean;
+    /** The organization has password sign-in enabled */
+    passwordEnabled: boolean;
+    /** Partially masked address for display, e.g. `j••@acme.com` */
+    maskedEmail?: string;
+    /** Push-approval endpoints, present only when `hasPushDevice` is true */
+    pushInitiateUrl?: string;
+    pushStatusUrl?: string;
+    pushLoginUrl?: string;
 }
 /**
  * Handles OAuth 2.0 Authorization Code + PKCE flow, token exchange,

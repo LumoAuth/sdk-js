@@ -3,7 +3,7 @@ import {
   generateCodeChallenge,
   generateCodeVerifier,
   generateState
-} from "./chunk-UZNV5N2Z.mjs";
+} from "./chunk-MDPDK3NA.mjs";
 import {
   LumoAuthApiError,
   LumoAuthAuthError,
@@ -573,8 +573,22 @@ var ZanzibarModule = class {
 // src/modules/abac.ts
 import { z as z2 } from "zod";
 var AbacModule = class {
-  constructor(http) {
+  constructor(http, orgId) {
     this.http = http;
+    this.orgId = orgId;
+  }
+  /**
+   * ABAC is mounted org-scoped on the server
+   * (`/orgs/{orgId}/api/v1/abac/...`). There is no unprefixed route, so
+   * every call must carry the org.
+   */
+  base() {
+    if (!this.orgId) {
+      throw new Error(
+        "client.abac requires `orgId` \u2014 pass it to the LumoAuth constructor: new LumoAuth({ baseUrl, orgId, token })"
+      );
+    }
+    return `/orgs/${encodeURIComponent(this.orgId)}/api/v1/abac`;
   }
   // ── Authorization checks ──────────────────────────────────────────
   /**
@@ -597,7 +611,7 @@ var AbacModule = class {
    */
   async check(params) {
     const body = AbacCheckRequestSchema.parse(params);
-    const raw = await this.http.post("/api/v1/abac/check", body);
+    const raw = await this.http.post(`${this.base()}/check`, body);
     return this.validate(AbacCheckResponseSchema, raw);
   }
   /**
@@ -632,7 +646,7 @@ var AbacModule = class {
    */
   async checkBulk(params) {
     const body = AbacBulkCheckRequestSchema.parse(params);
-    const raw = await this.http.post("/api/v1/abac/check-bulk", body);
+    const raw = await this.http.post(`${this.base()}/check-bulk`, body);
     return this.validate(AbacBulkCheckResponseSchema, raw);
   }
   // ── User attributes ───────────────────────────────────────────────
@@ -648,7 +662,7 @@ var AbacModule = class {
    * ```
    */
   async getMyAttributes() {
-    const raw = await this.http.get("/api/v1/abac/my-attributes");
+    const raw = await this.http.get(`${this.base()}/my-attributes`);
     return this.validate(AbacUserAttributesResponseSchema, raw);
   }
   /**
@@ -666,7 +680,7 @@ var AbacModule = class {
    */
   async setUserAttribute(userId, attributeSlug, value) {
     await this.http.put(
-      `/api/v1/abac/users/${encodeURIComponent(userId)}/attributes/${encodeURIComponent(attributeSlug)}`,
+      `${this.base()}/users/${encodeURIComponent(userId)}/attributes/${encodeURIComponent(attributeSlug)}`,
       { value }
     );
   }
@@ -682,7 +696,7 @@ var AbacModule = class {
    */
   async getResourceAttributes(resourceType, resourceId) {
     const raw = await this.http.get(
-      `/api/v1/abac/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes`
+      `${this.base()}/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes`
     );
     return this.validate(AbacResourceAttributesResponseSchema, raw);
   }
@@ -697,7 +711,7 @@ var AbacModule = class {
    */
   async setResourceAttribute(resourceType, resourceId, attributeSlug, value) {
     await this.http.put(
-      `/api/v1/abac/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes/${encodeURIComponent(attributeSlug)}`,
+      `${this.base()}/resources/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/attributes/${encodeURIComponent(attributeSlug)}`,
       { value }
     );
   }
@@ -715,7 +729,7 @@ var AbacModule = class {
    */
   async getAttributeDefinitions(type) {
     const query = type ? `?type=${encodeURIComponent(type)}` : "";
-    const raw = await this.http.get(`/api/v1/abac/attribute-definitions${query}`);
+    const raw = await this.http.get(`${this.base()}/attribute-definitions${query}`);
     const arr = Array.isArray(raw) ? raw : typeof raw === "object" && raw !== null && "data" in raw ? raw.data : raw;
     return this.validate(z2.array(AbacAttributeDefinitionSchema), arr);
   }
@@ -810,7 +824,7 @@ var LumoAuth = class {
       cache: config.cache
     });
     this.zanzibar = new ZanzibarModule(this.http);
-    this.abac = new AbacModule(this.http);
+    this.abac = new AbacModule(this.http, config.orgId ?? "");
     const authConfig = {
       baseUrl: config.baseUrl,
       orgId: config.orgId ?? "",

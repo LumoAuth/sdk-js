@@ -70,6 +70,7 @@ export function SignIn({
     afterSignInUrl,
     signUpUrl,
     appearance,
+    socialProviders = [],
 }: SignInProps) {
     const { signIn, signInWithSocial, config, status, authStrategy } = useLumoAuthContext();
 
@@ -91,6 +92,7 @@ export function SignIn({
             <SignInPkce
                 signIn={signIn}
                 signInWithSocial={signInWithSocial}
+                socialProviders={socialProviders}
                 resolvedSignUpUrl={resolvedSignUpUrl}
                 themeClass={themeClass}
                 appearance={appearance}
@@ -102,6 +104,7 @@ export function SignIn({
         <SignInPassword
             signIn={signIn}
             signInWithSocial={signInWithSocial}
+            socialProviders={socialProviders}
             config={config}
             resolvedAfterSignInUrl={resolvedAfterSignInUrl}
             resolvedSignUpUrl={resolvedSignUpUrl}
@@ -116,12 +119,14 @@ export function SignIn({
 function SignInPkce({
     signIn,
     signInWithSocial,
+    socialProviders,
     resolvedSignUpUrl,
     themeClass,
     appearance,
 }: {
     signIn: (email?: string, password?: string) => Promise<void> | void;
     signInWithSocial: (provider: string) => void;
+    socialProviders: string[];
     resolvedSignUpUrl: string;
     themeClass: string;
     appearance?: { className?: string; variables?: Record<string, string> };
@@ -140,9 +145,12 @@ function SignInPkce({
                 <p className="la-card-subtitle">Welcome back! Please sign in to continue.</p>
             </div>
 
-            {/* Social Login Buttons */}
+            {/* Social Login Buttons — opt-in via the `socialProviders` prop.
+                Empty by default: enabled providers are only readable through an
+                admin-authenticated endpoint, so the card cannot discover them. */}
+            {socialProviders.length > 0 && (
             <div className="la-social-buttons">
-                {['google', 'github', 'microsoft'].map((provider) => (
+                {socialProviders.map((provider) => (
                     <button
                         key={provider}
                         type="button"
@@ -154,8 +162,9 @@ function SignInPkce({
                     </button>
                 ))}
             </div>
+            )}
 
-            <div className="la-divider">or</div>
+            {socialProviders.length > 0 && <div className="la-divider">or</div>}
 
             {/* Email sign-in via redirect */}
             <button
@@ -179,6 +188,7 @@ function SignInPkce({
 function SignInPassword({
     signIn,
     signInWithSocial,
+    socialProviders,
     config,
     resolvedAfterSignInUrl,
     resolvedSignUpUrl,
@@ -187,6 +197,7 @@ function SignInPassword({
 }: {
     signIn: (email?: string, password?: string) => Promise<void> | void;
     signInWithSocial: (provider: string) => void;
+    socialProviders: string[];
     config: { domain: string; orgId: string; clientId: string };
     resolvedAfterSignInUrl: string;
     resolvedSignUpUrl: string;
@@ -229,9 +240,12 @@ function SignInPassword({
                 <p className="la-card-subtitle">Welcome back! Please sign in to continue.</p>
             </div>
 
-            {/* Social Login Buttons */}
+            {/* Social Login Buttons — opt-in via the `socialProviders` prop.
+                Empty by default: enabled providers are only readable through an
+                admin-authenticated endpoint, so the card cannot discover them. */}
+            {socialProviders.length > 0 && (
             <div className="la-social-buttons">
-                {['google', 'github', 'microsoft'].map((provider) => (
+                {socialProviders.map((provider) => (
                     <button
                         key={provider}
                         type="button"
@@ -244,8 +258,9 @@ function SignInPassword({
                     </button>
                 ))}
             </div>
+            )}
 
-            <div className="la-divider">or</div>
+            {socialProviders.length > 0 && <div className="la-divider">or</div>}
 
             {/* Email/Password Form */}
             <form onSubmit={handleSubmit}>
@@ -290,7 +305,7 @@ function SignInPassword({
                 </div>
 
                 <div className="la-forgot">
-                    <a href={`${config.domain}/forgot-password`}>Forgot password?</a>
+                    <a href={`${config.domain}/account/forgot-password`}>Forgot password?</a>
                 </div>
 
                 <button

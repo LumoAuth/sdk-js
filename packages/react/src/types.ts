@@ -91,6 +91,25 @@ export interface SignInProps {
     signUpUrl?: string;
     /** Appearance overrides */
     appearance?: AppearanceProps;
+    /**
+     * Social providers to offer, e.g. `['google', 'apple']`.
+     *
+     * Defaults to `[]` (no buttons). There is deliberately no default list:
+     * which providers an organization has enabled is only readable through
+     * `/orgs/{orgId}/api/v1/admin/social-providers`, which requires admin
+     * credentials and so is unreachable from an unauthenticated sign-in card.
+     * A hardcoded default would advertise providers the organization may not
+     * have configured.
+     *
+     * Note that until the server accepts a provider hint on `/oauth/authorize`,
+     * these buttons hand off to the hosted login page rather than deep-linking
+     * straight to the provider — the hosted page lists the organization's real
+     * providers. Set this only for providers you know are enabled.
+     *
+     * Recognised icons: `google`, `github`, `microsoft`, `apple`. Any other
+     * value renders with a label and no icon.
+     */
+    socialProviders?: string[];
 }
 
 export interface SignUpProps {

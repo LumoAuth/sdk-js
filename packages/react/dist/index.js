@@ -1165,10 +1165,10 @@ function LumoAuthProvider({
     }
     return promise;
   }, [authModule, resolvedRedirectUri, fetchUser, scheduleRefresh]);
-  const signUp = (0, import_react.useCallback)(async (params) => {
+  const signUp = (0, import_react.useCallback)(async (_params) => {
     if (authStrategy === "pkce") {
-      const safeOrgId2 = encodeURIComponent(orgId);
-      const signUpUrl = `${domain.replace(/\/+$/, "")}/orgs/${safeOrgId2}/register?` + new URLSearchParams({
+      const safeOrgId = encodeURIComponent(orgId);
+      const signUpUrl = `${domain.replace(/\/+$/, "")}/orgs/${safeOrgId}/register?` + new URLSearchParams({
         client_id: clientId,
         redirect_uri: resolvedRedirectUri,
         response_type: "code",
@@ -1179,24 +1179,13 @@ function LumoAuthProvider({
       }
       return;
     }
-    dispatch({ type: "LOADING" });
-    const safeOrgId = encodeURIComponent(orgId);
-    const registerRes = await fetch(`${domain.replace(/\/+$/, "")}/orgs/${safeOrgId}/api/v1/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: params.email,
-        password: params.password,
-        first_name: params.firstName,
-        last_name: params.lastName
-      })
+    dispatch({
+      type: "ERROR",
+      error: "inline_registration_unsupported"
     });
-    if (!registerRes.ok) {
-      const errorData = await registerRes.json().catch(() => ({}));
-      dispatch({ type: "ERROR", error: errorData.error || "Registration failed" });
-      throw new Error(errorData.error || "Registration failed");
-    }
-    await signIn(params.email, params.password);
+    throw new Error(
+      `Inline registration is not supported by this LumoAuth server: there is no JSON registration endpoint. Use redirectToSignUp() to send the user to the hosted registration page (${domain.replace(/\/+$/, "")}/orgs/${encodeURIComponent(orgId)}/register), or set authStrategy: "pkce".`
+    );
   }, [authStrategy, domain, orgId, clientId, resolvedRedirectUri, signIn]);
   const sendMagicLink = (0, import_react.useCallback)(async (email, redirectUri2) => {
     await authModule.requestMagicLink({ email, redirectUri: redirectUri2 });
@@ -1389,7 +1378,8 @@ function getSocialLabel(provider) {
 function SignIn({
   afterSignInUrl,
   signUpUrl,
-  appearance
+  appearance,
+  socialProviders = []
 }) {
   const { signIn, signInWithSocial, config, status, authStrategy } = useLumoAuthContext();
   const resolvedAfterSignInUrl = afterSignInUrl || config.afterSignInUrl || "/";
@@ -1404,6 +1394,7 @@ function SignIn({
       {
         signIn,
         signInWithSocial,
+        socialProviders,
         resolvedSignUpUrl,
         themeClass,
         appearance
@@ -1415,6 +1406,7 @@ function SignIn({
     {
       signIn,
       signInWithSocial,
+      socialProviders,
       config,
       resolvedAfterSignInUrl,
       resolvedSignUpUrl,
@@ -1426,6 +1418,7 @@ function SignIn({
 function SignInPkce({
   signIn,
   signInWithSocial,
+  socialProviders,
   resolvedSignUpUrl,
   themeClass,
   appearance
@@ -1443,7 +1436,7 @@ function SignInPkce({
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h2", { className: "la-card-title", children: "Sign in" }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "la-card-subtitle", children: "Welcome back! Please sign in to continue." })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-social-buttons", children: ["google", "github", "microsoft"].map((provider) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+        socialProviders.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-social-buttons", children: socialProviders.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
           "button",
           {
             type: "button",
@@ -1457,7 +1450,7 @@ function SignInPkce({
           },
           provider
         )) }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-divider", children: "or" }),
+        socialProviders.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-divider", children: "or" }),
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "button",
           {
@@ -1479,6 +1472,7 @@ function SignInPkce({
 function SignInPassword({
   signIn,
   signInWithSocial,
+  socialProviders,
   config,
   resolvedAfterSignInUrl,
   resolvedSignUpUrl,
@@ -1517,7 +1511,7 @@ function SignInPassword({
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h2", { className: "la-card-title", children: "Sign in" }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "la-card-subtitle", children: "Welcome back! Please sign in to continue." })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-social-buttons", children: ["google", "github", "microsoft"].map((provider) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+        socialProviders.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-social-buttons", children: socialProviders.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
           "button",
           {
             type: "button",
@@ -1532,7 +1526,7 @@ function SignInPassword({
           },
           provider
         )) }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-divider", children: "or" }),
+        socialProviders.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-divider", children: "or" }),
         /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("form", { onSubmit: handleSubmit, children: [
           error && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-alert la-alert-error", role: "alert", children: error }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "la-form-group", children: [
@@ -1569,7 +1563,7 @@ function SignInPassword({
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-forgot", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("a", { href: `${config.domain}/forgot-password`, children: "Forgot password?" }) }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "la-forgot", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("a", { href: `${config.domain}/account/forgot-password`, children: "Forgot password?" }) }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "button",
             {
