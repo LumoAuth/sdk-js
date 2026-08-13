@@ -21,14 +21,28 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var session_cookie_exports = {};
 __export(session_cookie_exports, {
   PKCE_COOKIE: () => PKCE_COOKIE,
+  REFRESHED_SESSION_HEADER: () => REFRESHED_SESSION_HEADER,
+  REFRESH_WINDOW_MS: () => REFRESH_WINDOW_MS,
   SESSION_COOKIE: () => SESSION_COOKIE,
   cookieOptions: () => cookieOptions,
+  isSessionLive: () => isSessionLive,
+  isTokenStale: () => isTokenStale,
   seal: () => seal,
   unseal: () => unseal
 });
 module.exports = __toCommonJS(session_cookie_exports);
 var SESSION_COOKIE = "lumo_session";
 var PKCE_COOKIE = "lumo_pkce";
+var REFRESHED_SESSION_HEADER = "x-lumo-session";
+var REFRESH_WINDOW_MS = 6e4;
+function isSessionLive(session) {
+  if (!session) return false;
+  if (session.sessionExpiresAt && session.sessionExpiresAt <= Date.now()) return false;
+  return !!session.refreshToken || session.expiresAt > Date.now();
+}
+function isTokenStale(session) {
+  return session.expiresAt - Date.now() < REFRESH_WINDOW_MS;
+}
 var IV_BYTES = 12;
 function buf(u) {
   return u;
@@ -90,8 +104,12 @@ function cookieOptions(maxAgeSeconds, secure) {
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   PKCE_COOKIE,
+  REFRESHED_SESSION_HEADER,
+  REFRESH_WINDOW_MS,
   SESSION_COOKIE,
   cookieOptions,
+  isSessionLive,
+  isTokenStale,
   seal,
   unseal
 });

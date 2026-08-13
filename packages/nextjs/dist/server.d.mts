@@ -1,6 +1,6 @@
 import { UserInfo } from '@lumoauth/shared';
 import { NextRequest, NextResponse } from 'next/server';
-export { SESSION_COOKIE, ServerSession } from './session-cookie.mjs';
+export { REFRESHED_SESSION_HEADER, SESSION_COOKIE, ServerSession, isSessionLive, isTokenStale } from './session-cookie.mjs';
 
 interface LumoAuthNextConfig {
     /** Base URL of your LumoAuth instance. */
@@ -37,11 +37,29 @@ declare function resolveConfig(overrides?: Partial<LumoAuthNextConfig>): LumoAut
 interface AuthObject {
     /** OIDC subject of the signed-in user, or null. */
     userId: string | null;
+    /**
+     * Whether the user has a live SESSION — not whether the access token is
+     * currently fresh. A stale access token with a valid refresh token is still
+     * a signed-in user.
+     */
     isSignedIn: boolean;
-    /** The access token, or null. Server-side only — never pass this to a client component. */
+    /**
+     * The access token, or null if it is stale and nothing refreshed it.
+     *
+     * Returns null rather than refreshing, because a server component cannot
+     * persist the result: LumoAuth rotates and revokes refresh tokens on use,
+     * so an unpersisted refresh would burn the token and break the session on
+     * the very next request. Add `lumoAuthMiddleware()` and the token is always
+     * fresh by the time this runs.
+     */
     getToken: () => string | null;
-    /** Absolute expiry, epoch milliseconds. */
+    /** Access-token expiry, epoch milliseconds. */
     expiresAt: number | null;
+    /**
+     * True when the session is live but the access token needs replacing.
+     * Only possible when middleware is not installed on this route.
+     */
+    isStale: boolean;
 }
 /**
  * Read the session in a server component, route handler, or server action.
@@ -115,13 +133,21 @@ declare function createRouteHandler(overrides?: Partial<LumoAuthNextConfig>): {
 
 interface MiddlewareOptions extends Partial<LumoAuthNextConfig> {
     /**
-     * Paths requiring a session. Accepts globs (`/dashboard/:path*`) or a
-     * predicate. Everything else is public.
+     * Paths requiring a session. Accepts globs (`/dashboard/:path*`), regexes,
+     * or a predicate. Everything else is public.
      */
     protect?: Array<string | RegExp> | ((req: NextRequest) => boolean);
+    /**
+     * Keep the access token fresh automatically. @default true
+     *
+     * Turning this off means `auth().getToken()` returns null once the token
+     * goes stale, because nothing else in the request pipeline is able to
+     * persist a refreshed one.
+     */
+    refresh?: boolean;
 }
 /**
- * Route protection at the edge.
+ * Session refresh and route protection.
  *
  * ```ts
  * // middleware.ts
@@ -131,13 +157,24 @@ interface MiddlewareOptions extends Partial<LumoAuthNextConfig> {
  * export const config = { matcher: ['/((?!_next|.*\\..*).*)'] };
  * ```
  *
- * Redirects unauthenticated requests for protected paths to the login route,
- * carrying `return_to` so the user lands where they were going.
+ * ## Why refresh belongs here
  *
- * This only checks that a valid, unexpired session cookie exists. It is a
- * convenience, not the security boundary — the boundary is the API rejecting a
- * bad token. Middleware runs on the edge runtime, where the cookie's AES-GCM
- * seal is verified with Web Crypto rather than node:crypto.
+ * An access token lasts about an hour; a session lasts weeks. Something has to
+ * trade the refresh token for a new access token, and in Next.js that can only
+ * happen where cookies are writable: middleware, route handlers, and server
+ * actions. Server components cannot set cookies, so they can never persist a
+ * refresh.
+ *
+ * That distinction is not cosmetic. LumoAuth rotates refresh tokens and revokes
+ * the old one on use, so refreshing somewhere that cannot persist the result
+ * would spend the token and break the session on the next request. Middleware
+ * runs before the page renders and can write the response cookie, so it is the
+ * correct place.
+ *
+ * Because middleware writes the cookie on the *response* while the page reads
+ * the *request*, the fresh session is also forwarded on a request header that
+ * `auth()` prefers — otherwise the refresh would not take effect until the
+ * following request.
  */
 declare function lumoAuthMiddleware(options?: MiddlewareOptions): (req: NextRequest) => Promise<NextResponse<unknown>>;
 

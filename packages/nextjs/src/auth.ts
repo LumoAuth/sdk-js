@@ -1,16 +1,41 @@
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { AuthModule, type UserInfo } from '@lumoauth/shared';
 import { resolveConfig, type LumoAuthNextConfig } from './config';
-import { SESSION_COOKIE, unseal, type ServerSession } from './session-cookie';
+import {
+    SESSION_COOKIE,
+    REFRESHED_SESSION_HEADER,
+    isSessionLive,
+    isTokenStale,
+    unseal,
+    type ServerSession,
+} from './session-cookie';
 
 export interface AuthObject {
     /** OIDC subject of the signed-in user, or null. */
     userId: string | null;
+    /**
+     * Whether the user has a live SESSION — not whether the access token is
+     * currently fresh. A stale access token with a valid refresh token is still
+     * a signed-in user.
+     */
     isSignedIn: boolean;
-    /** The access token, or null. Server-side only — never pass this to a client component. */
+    /**
+     * The access token, or null if it is stale and nothing refreshed it.
+     *
+     * Returns null rather than refreshing, because a server component cannot
+     * persist the result: LumoAuth rotates and revokes refresh tokens on use,
+     * so an unpersisted refresh would burn the token and break the session on
+     * the very next request. Add `lumoAuthMiddleware()` and the token is always
+     * fresh by the time this runs.
+     */
     getToken: () => string | null;
-    /** Absolute expiry, epoch milliseconds. */
+    /** Access-token expiry, epoch milliseconds. */
     expiresAt: number | null;
+    /**
+     * True when the session is live but the access token needs replacing.
+     * Only possible when middleware is not installed on this route.
+     */
+    isStale: boolean;
 }
 
 const SIGNED_OUT: AuthObject = {
@@ -18,6 +43,7 @@ const SIGNED_OUT: AuthObject = {
     isSignedIn: false,
     getToken: () => null,
     expiresAt: null,
+    isStale: false,
 };
 
 function decodeSub(accessToken: string): string | null {
@@ -54,22 +80,27 @@ function decodeSub(accessToken: string): string | null {
  */
 export async function auth(overrides: Partial<LumoAuthNextConfig> = {}): Promise<AuthObject> {
     const cfg = resolveConfig(overrides);
+
+    // Prefer the header: if middleware refreshed during THIS request, the
+    // request cookie still holds the pre-refresh value.
+    const hdrs = await headers();
+    const fromHeader = await unseal<ServerSession>(
+        hdrs.get(REFRESHED_SESSION_HEADER) ?? undefined,
+        cfg.secret,
+    );
     const jar = await cookies();
-    const session = await unseal<ServerSession>(jar.get(SESSION_COOKIE)?.value, cfg.secret);
+    const session =
+        fromHeader ?? (await unseal<ServerSession>(jar.get(SESSION_COOKIE)?.value, cfg.secret));
 
-    if (!session?.accessToken) return SIGNED_OUT;
-    if (session.expiresAt <= Date.now()) {
-        // Expired. Refreshing here is not possible: a server component cannot
-        // set a cookie, so a new token could not be persisted. The client
-        // provider refreshes and the next request carries the fresh session.
-        return SIGNED_OUT;
-    }
+    if (!isSessionLive(session)) return SIGNED_OUT;
 
+    const stale = isTokenStale(session);
     return {
         userId: decodeSub(session.accessToken),
         isSignedIn: true,
-        getToken: () => session.accessToken,
+        getToken: () => (stale ? null : session.accessToken),
         expiresAt: session.expiresAt,
+        isStale: stale,
     };
 }
 

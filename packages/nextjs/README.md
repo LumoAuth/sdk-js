@@ -97,9 +97,51 @@ fails the auth tag and is treated as no session at all.
 not need to: the token is only ever in that cookie because this package put it
 there after a successful exchange, and the cookie is unforgeable.
 
+## Sessions vs access tokens
+
+These are two different lifetimes, and treating them as one is the classic way
+to log everybody out every hour.
+
+| | Lifetime | Meaning |
+|---|---|---|
+| **Session** | weeks (`sessionMaxAge`) | The user is signed in |
+| **Access token** | ~1 hour (issuer's choice) | A credential for calling the API |
+
+`auth().isSignedIn` reports on the **session**. A user whose access token
+expired a minute ago is still signed in; the token just needs replacing.
+
+`lumoAuthMiddleware()` does that replacing, in the background, before the page
+renders. Install it and `getToken()` always returns a fresh token:
+
+```ts
+export default lumoAuthMiddleware();   // refresh only, protect nothing
+```
+
+### Why refresh lives in middleware
+
+Only middleware, route handlers, and server actions can write cookies in
+Next.js. Server components cannot — so a server component can never persist a
+refreshed token.
+
+That is not a technicality to route around. LumoAuth **rotates refresh tokens
+and revokes the old one on use**, so refreshing somewhere that cannot save the
+result would spend the token and break the session on the very next request.
+`auth()` therefore returns `getToken() === null` and `isStale === true` rather
+than performing a refresh it cannot persist.
+
+Middleware writes the new cookie on the *response*, but the page reads the
+*request* — so the fresh session is also forwarded on a request header that
+`auth()` prefers. Without that, a refresh would not take effect until the
+following request.
+
+This is the same problem Clerk solves with its handshake, but simpler here:
+Clerk must bounce the browser through its API because only that origin holds
+the session, whereas this package holds the refresh token in its own cookie and
+can refresh server-to-server with no redirect.
+
 ## Limitations
 
-- `auth()` cannot refresh an expired token — a server component cannot set a
-  cookie, so there would be nowhere to persist the result. It reports signed-out
-  and the client provider refreshes; the next request carries a fresh session.
+- Without `lumoAuthMiddleware()`, `getToken()` returns null once the access
+  token goes stale (`isStale` tells you why). The session stays valid; nothing
+  is silently broken, but you get no token until something refreshes it.
 - Pages Router is not supported yet. App Router only.

@@ -30,10 +30,13 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/server.ts
 var server_exports = {};
 __export(server_exports, {
+  REFRESHED_SESSION_HEADER: () => REFRESHED_SESSION_HEADER,
   SESSION_COOKIE: () => SESSION_COOKIE,
   auth: () => auth,
   createRouteHandler: () => createRouteHandler,
   currentUser: () => currentUser,
+  isSessionLive: () => isSessionLive,
+  isTokenStale: () => isTokenStale,
   lumoAuthMiddleware: () => lumoAuthMiddleware,
   protectPage: () => protectPage,
   resolveConfig: () => resolveConfig
@@ -74,6 +77,16 @@ function resolveConfig(overrides = {}) {
 // src/session-cookie.ts
 var SESSION_COOKIE = "lumo_session";
 var PKCE_COOKIE = "lumo_pkce";
+var REFRESHED_SESSION_HEADER = "x-lumo-session";
+var REFRESH_WINDOW_MS = 6e4;
+function isSessionLive(session) {
+  if (!session) return false;
+  if (session.sessionExpiresAt && session.sessionExpiresAt <= Date.now()) return false;
+  return !!session.refreshToken || session.expiresAt > Date.now();
+}
+function isTokenStale(session) {
+  return session.expiresAt - Date.now() < REFRESH_WINDOW_MS;
+}
 var IV_BYTES = 12;
 function buf(u) {
   return u;
@@ -138,7 +151,8 @@ var SIGNED_OUT = {
   userId: null,
   isSignedIn: false,
   getToken: () => null,
-  expiresAt: null
+  expiresAt: null,
+  isStale: false
 };
 function decodeSub(accessToken) {
   try {
@@ -151,17 +165,21 @@ function decodeSub(accessToken) {
 }
 async function auth(overrides = {}) {
   const cfg = resolveConfig(overrides);
+  const hdrs = await (0, import_headers.headers)();
+  const fromHeader = await unseal(
+    hdrs.get(REFRESHED_SESSION_HEADER) ?? void 0,
+    cfg.secret
+  );
   const jar = await (0, import_headers.cookies)();
-  const session = await unseal(jar.get(SESSION_COOKIE)?.value, cfg.secret);
-  if (!session?.accessToken) return SIGNED_OUT;
-  if (session.expiresAt <= Date.now()) {
-    return SIGNED_OUT;
-  }
+  const session = fromHeader ?? await unseal(jar.get(SESSION_COOKIE)?.value, cfg.secret);
+  if (!isSessionLive(session)) return SIGNED_OUT;
+  const stale = isTokenStale(session);
   return {
     userId: decodeSub(session.accessToken),
     isSignedIn: true,
-    getToken: () => session.accessToken,
-    expiresAt: session.expiresAt
+    getToken: () => stale ? null : session.accessToken,
+    expiresAt: session.expiresAt,
+    isStale: stale
   };
 }
 async function currentUser(overrides = {}) {
@@ -254,7 +272,11 @@ function createRouteHandler(overrides = {}) {
           accessToken: tokens.access_token,
           refreshToken: tokens.refresh_token ?? null,
           idToken: tokens.id_token ?? null,
-          expiresAt: Date.now() + tokens.expires_in * 1e3
+          // Access-token expiry: short, refreshed in the background.
+          expiresAt: Date.now() + tokens.expires_in * 1e3,
+          // Session expiry: long. The user stays signed in until this
+          // passes, however many access tokens come and go.
+          sessionExpiresAt: Date.now() + cfg.sessionMaxAge * 1e3
         };
         return redirectTo(url.origin + pkce.returnTo, [
           `${SESSION_COOKIE}=${await seal(session, cfg.secret)}; ${serialize(cookieOptions(cfg.sessionMaxAge, secure))}`,
@@ -266,7 +288,7 @@ function createRouteHandler(overrides = {}) {
     }
     if (action === "session") {
       const session = await unseal(readCookie(request, SESSION_COOKIE), cfg.secret);
-      if (!session || session.expiresAt <= Date.now()) {
+      if (!isSessionLive(session)) {
         return Response.json({ accessToken: null, expiresAt: null });
       }
       return Response.json({
@@ -319,44 +341,91 @@ function readCookie(request, name) {
   return hit?.slice(name.length + 1);
 }
 function redirectTo(location, cookies2) {
-  const headers = new Headers({ Location: location });
-  cookies2.forEach((c) => headers.append("Set-Cookie", c));
-  return new Response(null, { status: 302, headers });
+  const headers2 = new Headers({ Location: location });
+  cookies2.forEach((c) => headers2.append("Set-Cookie", c));
+  return new Response(null, { status: 302, headers: headers2 });
 }
 function withCookie(res, cookie) {
-  const headers = new Headers(res.headers);
-  headers.append("Set-Cookie", cookie);
-  return new Response(res.body, { status: res.status, headers });
+  const headers2 = new Headers(res.headers);
+  headers2.append("Set-Cookie", cookie);
+  return new Response(res.body, { status: res.status, headers: headers2 });
 }
 
 // src/middleware.ts
 var import_server = require("next/server");
+var import_shared3 = require("@lumoauth/shared");
 function toMatcher(pattern) {
   if (pattern instanceof RegExp) return pattern;
   const source = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\/:path\*/g, "(?:/.*)?").replace(/\*/g, ".*");
   return new RegExp(`^${source}$`);
 }
 function lumoAuthMiddleware(options = {}) {
-  const { protect = [], ...configOverrides } = options;
+  const { protect = [], refresh = true, ...configOverrides } = options;
   return async function middleware(req) {
     const isProtected = typeof protect === "function" ? protect(req) : protect.map(toMatcher).some((m) => m.test(req.nextUrl.pathname));
-    if (!isProtected) return import_server.NextResponse.next();
     const cfg = resolveConfig(configOverrides);
-    const raw = req.cookies.get(SESSION_COOKIE)?.value;
-    const session = await unseal(raw, cfg.secret);
-    const valid = !!session?.accessToken && session.expiresAt > Date.now();
-    if (valid) return import_server.NextResponse.next();
-    const login = new URL("/api/auth/login", req.nextUrl.origin);
-    login.searchParams.set("return_to", req.nextUrl.pathname + req.nextUrl.search);
-    return import_server.NextResponse.redirect(login);
+    const rawCookie = req.cookies.get(SESSION_COOKIE)?.value;
+    const session = await unseal(rawCookie, cfg.secret);
+    if (!isSessionLive(session)) {
+      if (!isProtected) {
+        if (!rawCookie) return import_server.NextResponse.next();
+        const res2 = import_server.NextResponse.next();
+        res2.cookies.delete(SESSION_COOKIE);
+        return res2;
+      }
+      const login = new URL("/api/auth/login", req.nextUrl.origin);
+      login.searchParams.set("return_to", req.nextUrl.pathname + req.nextUrl.search);
+      const res = import_server.NextResponse.redirect(login);
+      if (rawCookie) res.cookies.delete(SESSION_COOKIE);
+      return res;
+    }
+    if (!refresh || !isTokenStale(session)) return import_server.NextResponse.next();
+    if (!session.refreshToken) {
+      if (!isProtected) return import_server.NextResponse.next();
+      const login = new URL("/api/auth/login", req.nextUrl.origin);
+      login.searchParams.set("return_to", req.nextUrl.pathname + req.nextUrl.search);
+      return import_server.NextResponse.redirect(login);
+    }
+    try {
+      const mod = new import_shared3.AuthModule({
+        baseUrl: cfg.domain,
+        orgId: cfg.orgId,
+        clientId: cfg.clientId
+      });
+      const tokens = await mod.refreshToken(session.refreshToken);
+      const next = {
+        accessToken: tokens.access_token,
+        // Keep the existing token when the server does not rotate;
+        // losing it here would silently end the session at the next
+        // refresh.
+        refreshToken: tokens.refresh_token ?? session.refreshToken,
+        idToken: tokens.id_token ?? session.idToken,
+        expiresAt: Date.now() + tokens.expires_in * 1e3,
+        sessionExpiresAt: session.sessionExpiresAt
+      };
+      const sealed = await seal(next, cfg.secret);
+      const headers2 = new Headers(req.headers);
+      headers2.set(REFRESHED_SESSION_HEADER, sealed);
+      const res = import_server.NextResponse.next({ request: { headers: headers2 } });
+      const opts = cookieOptions(cfg.sessionMaxAge, req.nextUrl.protocol === "https:");
+      res.cookies.set(SESSION_COOKIE, sealed, opts);
+      return res;
+    } catch {
+      const res = isProtected ? import_server.NextResponse.redirect(new URL("/api/auth/login", req.nextUrl.origin)) : import_server.NextResponse.next();
+      res.cookies.delete(SESSION_COOKIE);
+      return res;
+    }
   };
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  REFRESHED_SESSION_HEADER,
   SESSION_COOKIE,
   auth,
   createRouteHandler,
   currentUser,
+  isSessionLive,
+  isTokenStale,
   lumoAuthMiddleware,
   protectPage,
   resolveConfig

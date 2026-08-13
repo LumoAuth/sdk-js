@@ -9,4 +9,10 @@ export { auth, currentUser, protectPage, type AuthObject } from './auth';
 export { createRouteHandler } from './route-handler';
 export { lumoAuthMiddleware, type MiddlewareOptions } from './middleware';
 export { resolveConfig, type LumoAuthNextConfig } from './config';
-export { SESSION_COOKIE, type ServerSession } from './session-cookie';
+export {
+    SESSION_COOKIE,
+    REFRESHED_SESSION_HEADER,
+    isSessionLive,
+    isTokenStale,
+    type ServerSession,
+} from './session-cookie';

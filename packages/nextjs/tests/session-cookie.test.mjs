@@ -46,3 +46,53 @@ test('two seals of the same payload differ (fresh IV)', async () => {
 test('a short secret is rejected rather than silently weakening the cipher', async () => {
     await assert.rejects(() => seal(SESSION, 'too-short'), /at least 32 characters/);
 });
+
+// ── Session lifetime vs access-token lifetime ────────────────────────
+//
+// Conflating these is the bug this suite exists to prevent: an access token
+// lasts about an hour, a session lasts weeks. Treating a stale token as "not
+// signed in" logs everyone out hourly.
+import { isSessionLive, isTokenStale } from '../dist/session-cookie.mjs';
+
+const HOUR = 3600_000;
+const base = { accessToken: 'a', refreshToken: 'r', idToken: null };
+
+test('a stale access token with a refresh token is still a live session', () => {
+    const stale = { ...base, expiresAt: Date.now() - HOUR, sessionExpiresAt: Date.now() + 30 * 24 * HOUR };
+    assert.equal(isSessionLive(stale), true, 'the user is signed in; the token just needs refreshing');
+    assert.equal(isTokenStale(stale), true);
+});
+
+test('a fresh access token is a live session and not stale', () => {
+    const fresh = { ...base, expiresAt: Date.now() + HOUR };
+    assert.equal(isSessionLive(fresh), true);
+    assert.equal(isTokenStale(fresh), false);
+});
+
+test('an expired SESSION is not live, even with a refresh token', () => {
+    const ended = { ...base, expiresAt: Date.now() + HOUR, sessionExpiresAt: Date.now() - 1 };
+    assert.equal(isSessionLive(ended), false, 'session expiry ends the session regardless of the token');
+});
+
+test('a stale token with NO refresh token is not a live session', () => {
+    const dead = { ...base, refreshToken: null, expiresAt: Date.now() - 1 };
+    assert.equal(isSessionLive(dead), false, 'nothing left to refresh with');
+});
+
+test('a token inside the refresh window counts as stale before it actually expires', () => {
+    // Refreshing only after expiry would leave a gap where requests 401.
+    const soon = { ...base, expiresAt: Date.now() + 30_000 };
+    assert.equal(isTokenStale(soon), true);
+    assert.equal(isSessionLive(soon), true);
+});
+
+test('null is not a live session', () => {
+    assert.equal(isSessionLive(null), false);
+});
+
+test('a cookie written before sessionExpiresAt existed still works', () => {
+    // Backwards compatibility: older cookies have no sessionExpiresAt, and must
+    // not be treated as already-expired sessions.
+    const legacy = { ...base, expiresAt: Date.now() + HOUR };
+    assert.equal(isSessionLive(legacy), true);
+});

@@ -4,6 +4,7 @@ import {
     SESSION_COOKIE,
     PKCE_COOKIE,
     cookieOptions,
+    isSessionLive,
     seal,
     unseal,
     type PkceState,
@@ -111,7 +112,11 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
                     accessToken: tokens.access_token,
                     refreshToken: tokens.refresh_token ?? null,
                     idToken: tokens.id_token ?? null,
+                    // Access-token expiry: short, refreshed in the background.
                     expiresAt: Date.now() + tokens.expires_in * 1000,
+                    // Session expiry: long. The user stays signed in until this
+                    // passes, however many access tokens come and go.
+                    sessionExpiresAt: Date.now() + cfg.sessionMaxAge! * 1000,
                 };
                 return redirectTo(url.origin + pkce.returnTo, [
                     `${SESSION_COOKIE}=${await seal(session, cfg.secret)}; ${serialize(cookieOptions(cfg.sessionMaxAge!, secure))}`,
@@ -126,7 +131,10 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
             // Read endpoint for `cookieStorageAdapter`. Returns the access token
             // only — the refresh token must never leave the server.
             const session = await unseal<ServerSession>(readCookie(request, SESSION_COOKIE), cfg.secret);
-            if (!session || session.expiresAt <= Date.now()) {
+            // Judged on the SESSION, not the access token: reporting "no
+            // session" for a merely stale token would sign the client out every
+            // hour despite a perfectly good session.
+            if (!isSessionLive(session)) {
                 return Response.json({ accessToken: null, expiresAt: null });
             }
             return Response.json({

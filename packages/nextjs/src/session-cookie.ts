@@ -19,12 +19,52 @@
 export const SESSION_COOKIE = 'lumo_session';
 export const PKCE_COOKIE = 'lumo_pkce';
 
+/**
+ * Two different lifetimes live in here, and conflating them is the classic
+ * bug: an access token lasts ~1 hour, a session lasts weeks.
+ *
+ * `expiresAt` is when the ACCESS TOKEN goes stale — routine, expected, and
+ * fixed by a refresh.
+ * `sessionExpiresAt` is when the SESSION itself ends and the user must sign in
+ * again.
+ *
+ * A user whose access token expired five minutes ago is still signed in.
+ */
 export interface ServerSession {
     accessToken: string;
     refreshToken: string | null;
     idToken: string | null;
-    /** Absolute expiry, epoch milliseconds. */
+    /** Access-token expiry, epoch milliseconds. */
     expiresAt: number;
+    /** Session expiry, epoch milliseconds. Absent on cookies written before this field existed. */
+    sessionExpiresAt?: number;
+}
+
+/**
+ * Header used to hand a freshly refreshed session from middleware to the
+ * server component rendering the same request.
+ *
+ * Middleware writes the new cookie on the RESPONSE, but the component reads
+ * REQUEST cookies — which still hold the stale value. Without this header the
+ * refresh would only take effect on the following request.
+ */
+export const REFRESHED_SESSION_HEADER = 'x-lumo-session';
+
+/** Refresh once the access token is within this window of expiring. */
+export const REFRESH_WINDOW_MS = 60_000;
+
+/** True when the session itself is still valid, regardless of token staleness. */
+export function isSessionLive(session: ServerSession | null): session is ServerSession {
+    if (!session) return false;
+    if (session.sessionExpiresAt && session.sessionExpiresAt <= Date.now()) return false;
+    // A live session is one we can still get a token for: either the current
+    // access token is good, or we hold a refresh token to obtain a new one.
+    return !!session.refreshToken || session.expiresAt > Date.now();
+}
+
+/** True when the access token needs replacing before it can be used. */
+export function isTokenStale(session: ServerSession): boolean {
+    return session.expiresAt - Date.now() < REFRESH_WINDOW_MS;
 }
 
 export interface PkceState {

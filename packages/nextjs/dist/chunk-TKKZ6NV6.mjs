@@ -1,6 +1,16 @@
 // src/session-cookie.ts
 var SESSION_COOKIE = "lumo_session";
 var PKCE_COOKIE = "lumo_pkce";
+var REFRESHED_SESSION_HEADER = "x-lumo-session";
+var REFRESH_WINDOW_MS = 6e4;
+function isSessionLive(session) {
+  if (!session) return false;
+  if (session.sessionExpiresAt && session.sessionExpiresAt <= Date.now()) return false;
+  return !!session.refreshToken || session.expiresAt > Date.now();
+}
+function isTokenStale(session) {
+  return session.expiresAt - Date.now() < REFRESH_WINDOW_MS;
+}
 var IV_BYTES = 12;
 function buf(u) {
   return u;
@@ -63,8 +73,12 @@ function cookieOptions(maxAgeSeconds, secure) {
 export {
   SESSION_COOKIE,
   PKCE_COOKIE,
+  REFRESHED_SESSION_HEADER,
+  REFRESH_WINDOW_MS,
+  isSessionLive,
+  isTokenStale,
   seal,
   unseal,
   cookieOptions
 };
-//# sourceMappingURL=chunk-XWUXXELP.mjs.map
+//# sourceMappingURL=chunk-TKKZ6NV6.mjs.map

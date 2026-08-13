@@ -17,13 +17,41 @@
  */
 declare const SESSION_COOKIE = "lumo_session";
 declare const PKCE_COOKIE = "lumo_pkce";
+/**
+ * Two different lifetimes live in here, and conflating them is the classic
+ * bug: an access token lasts ~1 hour, a session lasts weeks.
+ *
+ * `expiresAt` is when the ACCESS TOKEN goes stale — routine, expected, and
+ * fixed by a refresh.
+ * `sessionExpiresAt` is when the SESSION itself ends and the user must sign in
+ * again.
+ *
+ * A user whose access token expired five minutes ago is still signed in.
+ */
 interface ServerSession {
     accessToken: string;
     refreshToken: string | null;
     idToken: string | null;
-    /** Absolute expiry, epoch milliseconds. */
+    /** Access-token expiry, epoch milliseconds. */
     expiresAt: number;
+    /** Session expiry, epoch milliseconds. Absent on cookies written before this field existed. */
+    sessionExpiresAt?: number;
 }
+/**
+ * Header used to hand a freshly refreshed session from middleware to the
+ * server component rendering the same request.
+ *
+ * Middleware writes the new cookie on the RESPONSE, but the component reads
+ * REQUEST cookies — which still hold the stale value. Without this header the
+ * refresh would only take effect on the following request.
+ */
+declare const REFRESHED_SESSION_HEADER = "x-lumo-session";
+/** Refresh once the access token is within this window of expiring. */
+declare const REFRESH_WINDOW_MS = 60000;
+/** True when the session itself is still valid, regardless of token staleness. */
+declare function isSessionLive(session: ServerSession | null): session is ServerSession;
+/** True when the access token needs replacing before it can be used. */
+declare function isTokenStale(session: ServerSession): boolean;
 interface PkceState {
     codeVerifier: string;
     state: string;
@@ -41,4 +69,4 @@ declare function cookieOptions(maxAgeSeconds: number, secure: boolean): {
     maxAge: number;
 };
 
-export { PKCE_COOKIE, type PkceState, SESSION_COOKIE, type ServerSession, cookieOptions, seal, unseal };
+export { PKCE_COOKIE, type PkceState, REFRESHED_SESSION_HEADER, REFRESH_WINDOW_MS, SESSION_COOKIE, type ServerSession, cookieOptions, isSessionLive, isTokenStale, seal, unseal };
