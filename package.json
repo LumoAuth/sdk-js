@@ -11,6 +11,7 @@
         "packages/express",
         "packages/agent",
         "packages/react",
+        "packages/nextjs",
         "packages/create-lumo-agent",
         "examples/nextjs"
     ],

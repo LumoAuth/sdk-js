@@ -1,0 +1,69 @@
+{
+    "name": "@lumoauth/nextjs",
+    "version": "1.0.0",
+    "description": "LumoAuth for Next.js \u2014 server-side auth() for App Router, route protection middleware, and a backend-for-frontend that keeps tokens out of the browser.",
+    "license": "MIT",
+    "author": "LumoAuth",
+    "publishConfig": {
+        "access": "public",
+        "provenance": true
+    },
+    "main": "dist/index.js",
+    "module": "dist/index.mjs",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.mjs",
+            "require": "./dist/index.js"
+        },
+        "./server": {
+            "types": "./dist/server.d.ts",
+            "import": "./dist/server.mjs",
+            "require": "./dist/server.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsup",
+        "dev": "tsup --watch",
+        "typecheck": "tsc --noEmit",
+        "prepublishOnly": "npm run build",
+        "test": "npm run build && node --test tests/"
+    },
+    "keywords": [
+        "lumoauth",
+        "nextjs",
+        "next",
+        "authentication",
+        "app-router",
+        "rsc",
+        "middleware"
+    ],
+    "dependencies": {
+        "@lumoauth/client": "*",
+        "@lumoauth/react": "*",
+        "@lumoauth/shared": "*",
+        "server-only": "^0.0.1"
+    },
+    "peerDependencies": {
+        "next": ">=14.0.0",
+        "react": ">=18.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.19.43",
+        "@types/react": "^18.3.0",
+        "next": "^15.0.0",
+        "react": "^18.3.0",
+        "tsup": "^8.0.0",
+        "typescript": "^5.5.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "sideEffects": false
+}
