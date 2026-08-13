@@ -1,0 +1,25 @@
+{
+    "name": "@lumoauth/example-nextjs",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Showcase app for the LumoAuth React SDK — Next.js App Router.",
+    "scripts": {
+        "dev": "next dev -p 3100",
+        "start": "next start -p 3100",
+        "typecheck": "tsc --noEmit",
+        "build:app": "next build"
+    },
+    "dependencies": {
+        "@lumoauth/client": "*",
+        "@lumoauth/react": "*",
+        "next": "^15.0.0",
+        "react": "^18.3.0",
+        "react-dom": "^18.3.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.19.43",
+        "@types/react": "^18.3.0",
+        "@types/react-dom": "^18.3.0",
+        "typescript": "^5.5.0"
+    }
+}

@@ -1,0 +1,79 @@
+:root {
+    --fg: #16181d;
+    --muted: #6b7280;
+    --bg: #ffffff;
+    --panel: #f7f8fa;
+    --border: #e4e6eb;
+    --accent: #5b5bd6;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+}
+
+.statusbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 1.25rem;
+    padding: 0.5rem 1rem;
+    background: #101114;
+    color: #cbd0d8;
+    font: 12px/1.9 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.statusbar b { color: #fff; font-weight: 600; }
+
+nav {
+    display: flex;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+}
+nav a { color: var(--accent); text-decoration: none; }
+nav a:hover { text-decoration: underline; }
+
+main { max-width: 780px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+
+h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+h2 { font-size: 1.05rem; margin: 2rem 0 0.5rem; }
+p.lede { color: var(--muted); margin-top: 0; }
+
+.card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem;
+    margin: 0.75rem 0;
+    background: var(--panel);
+}
+
+button {
+    font: inherit;
+    padding: 0.45rem 0.9rem;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: #fff;
+    cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; }
+
+code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: #eceef2; padding: 0.1rem 0.3rem; border-radius: 4px; }
+
+.note {
+    border-left: 3px solid var(--accent);
+    background: #f3f3fd;
+    padding: 0.65rem 0.9rem;
+    margin: 0.75rem 0;
+    font-size: 14px;
+}
+.note.warn { border-left-color: #b45309; background: #fdf6ec; }

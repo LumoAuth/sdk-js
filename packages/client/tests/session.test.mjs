@@ -157,3 +157,49 @@ test('clearSession wipes storage', async () => {
     assert.equal(s.getSnapshot().isSignedIn, false);
     s.dispose();
 });
+
+// ── Regressions found by the browser suite ───────────────────────────
+
+test('B3 — the refresh token is read inside the lock, not captured before it', async () => {
+    // The loser of a lock race must use whatever token is current when it gets
+    // the lock. Capturing before waiting means replaying a token the winner
+    // already rotated — the server revokes on use, so the loser is signed out.
+    const storage = memoryStorageAdapter();
+    storage.set({ accessToken: 'a', refreshToken: 'ORIGINAL', idToken: null, expiresAt: Date.now() - 1 });
+    const seen = [];
+    const auth = {
+        async refreshToken(rt) {
+            seen.push(rt);
+            return { access_token: 'a2', token_type: 'Bearer', expires_in: 3600, refresh_token: 'ROTATED' };
+        },
+        async buildAuthorizationUrl() { return { url: 'x', codeVerifier: 'v', state: 's' }; },
+    };
+    const s = new LumoAuthSession({ auth, redirectUri: 'x', storage, crossTab: false });
+    await s.hydrate();
+    assert.deepEqual(seen, ['ORIGINAL']);
+
+    // Simulate another tab having rotated the token underneath us.
+    s.getTokens();
+    await s.adopt({ access_token: 'a3', token_type: 'Bearer', expires_in: -1, refresh_token: 'FROM_OTHER_TAB' });
+    await s.refresh();
+    assert.equal(seen[seen.length - 1], 'FROM_OTHER_TAB', 'must use the current token, not a stale capture');
+    s.dispose();
+});
+
+test('B3 — a fresher in-memory token short-circuits a redundant refresh', async () => {
+    // Per-tab adapters cannot see a sibling's write, so the staleness check
+    // must also consult the tokens delivered by broadcast.
+    const storage = memoryStorageAdapter();
+    let calls = 0;
+    const auth = {
+        async refreshToken() { calls++; return { access_token: 'new', token_type: 'Bearer', expires_in: 3600 }; },
+        async buildAuthorizationUrl() { return { url: 'x', codeVerifier: 'v', state: 's' }; },
+    };
+    const s = new LumoAuthSession({ auth, redirectUri: 'x', storage, crossTab: false });
+    await s.hydrate();
+    await s.adopt({ access_token: 'fresh', token_type: 'Bearer', expires_in: 3600, refresh_token: 'r' });
+    const before = calls;
+    await s.refresh();
+    assert.equal(calls, before, 'a still-valid token should not trigger a network refresh');
+    s.dispose();
+});

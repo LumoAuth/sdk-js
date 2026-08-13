@@ -831,19 +831,8 @@ function useLumoAuthContext() {
   }
   return ctx;
 }
-var TOKEN_STORAGE_KEY = "lumoauth_tokens";
 var PKCE_VERIFIER_KEY = "lumoauth_pkce_verifier";
 var PKCE_STATE_KEY = "lumoauth_pkce_state";
-function loadTokens() {
-  try {
-    const stored = typeof window !== "undefined" ? sessionStorage.getItem(TOKEN_STORAGE_KEY) : null;
-    if (stored) {
-      return JSON.parse(stored);
-    }
-  } catch {
-  }
-  return { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-}
 function savePkceParams(codeVerifier, state) {
   try {
     if (typeof window !== "undefined") {
@@ -908,7 +897,7 @@ function LumoAuthProvider({
   children
 }) {
   const [user, setUser] = useState(null);
-  const tokensRef = useRef(loadTokens());
+  const tokensRef = useRef({ accessToken: null, refreshToken: null, expiresAt: null, idToken: null });
   const callbackHandledRef = useRef(false);
   const callbackInflightRef = useRef(null);
   useEffect(() => {
@@ -1112,10 +1101,10 @@ function LumoAuthProvider({
   const sendMagicLink = useCallback(async (email, redirectUri2) => {
     await authModule.requestMagicLink({ email, redirectUri: redirectUri2 });
   }, [authModule]);
-  const checkEmail = useCallback(async (email) => {
-    const result = await authModule.checkEmailExists(email);
-    return result.exists;
-  }, [authModule]);
+  const checkEmail = useCallback(
+    (email) => authModule.checkEmailExists(email),
+    [authModule]
+  );
   const signOut = useCallback(async (options) => {
     const { accessToken, idToken } = tokensRef.current;
     if (typeof window === "undefined") {
@@ -1173,31 +1162,6 @@ function LumoAuthProvider({
           return;
         }
       }
-      const { accessToken, expiresAt } = tokensRef.current;
-      if (!accessToken) {
-        dispatch({ type: "UNAUTHENTICATED" });
-        return;
-      }
-      if (expiresAt && Date.now() >= expiresAt - 3e4) {
-        const newToken = await refreshAccessToken();
-        if (!newToken) {
-          if (!cancelled) dispatch({ type: "UNAUTHENTICATED" });
-          return;
-        }
-      }
-      try {
-        const currentToken = tokensRef.current.accessToken;
-        if (!currentToken) {
-          if (!cancelled) dispatch({ type: "UNAUTHENTICATED" });
-          return;
-        }
-        const user2 = await fetchUser(currentToken);
-        if (!cancelled) {
-          dispatch({ type: "AUTHENTICATED", user: user2 });
-        }
-      } catch {
-        if (!cancelled) dispatch({ type: "UNAUTHENTICATED" });
-      }
     }
     init().then(() => {
       if (!cancelled) void session.hydrate();
@@ -1206,6 +1170,26 @@ function LumoAuthProvider({
       cancelled = true;
     };
   }, [fetchUser, handleCallback, refreshAccessToken, session]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!sessionState.isSignedIn) {
+      setUser(null);
+      return;
+    }
+    if (user) return;
+    void (async () => {
+      const token = await session.getToken().catch(() => null);
+      if (cancelled || !token) return;
+      try {
+        const fetched = await fetchUser(token);
+        if (!cancelled) setUser(fetched);
+      } catch {
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionState.isSignedIn, user, session, fetchUser]);
   const contextValue = useMemo(() => ({
     ...state,
     signIn,
@@ -2213,22 +2197,22 @@ function useMagicLink() {
 function useEmailFirst() {
   const { checkEmail: checkEmailCtx } = useLumoAuthContext();
   const [isLoading, setIsLoading] = useState7(false);
-  const [exists, setExists] = useState7(null);
+  const [result, setResult] = useState7(null);
   const checkEmail = useCallback6(async (email) => {
     setIsLoading(true);
     try {
-      const result = await checkEmailCtx(email);
-      setExists(result);
-      return result;
+      const res = await checkEmailCtx(email);
+      setResult(res);
+      return res;
     } finally {
       setIsLoading(false);
     }
   }, [checkEmailCtx]);
   const reset = useCallback6(() => {
-    setExists(null);
+    setResult(null);
     setIsLoading(false);
   }, []);
-  return { checkEmail, isLoading, exists, reset };
+  return { checkEmail, isLoading, result, exists: result?.exists ?? null, reset };
 }
 
 // src/components/Protect.tsx

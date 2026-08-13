@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { LumoAuth } from '@lumoauth/client';
-import type { ZanzibarCheckRequest, AbacCheckRequest } from '@lumoauth/client';
+import type { ZanzibarCheckRequest, AbacCheckRequest, EmailCheckResult } from '@lumoauth/client';
 import { useLumoAuthContext } from './provider';
 import type { LumoAuthContextValue, LumoAuthUser, UseMagicLinkReturn, UseEmailFirstReturn } from './types';
 
@@ -345,23 +345,23 @@ export function useMagicLink(): UseMagicLinkReturn {
 export function useEmailFirst(): UseEmailFirstReturn {
     const { checkEmail: checkEmailCtx } = useLumoAuthContext();
     const [isLoading, setIsLoading] = useState(false);
-    const [exists, setExists] = useState<boolean | null>(null);
+    const [result, setResult] = useState<EmailCheckResult | null>(null);
 
-    const checkEmail = useCallback(async (email: string): Promise<boolean> => {
+    const checkEmail = useCallback(async (email: string): Promise<EmailCheckResult> => {
         setIsLoading(true);
         try {
-            const result = await checkEmailCtx(email);
-            setExists(result);
-            return result;
+            const res = await checkEmailCtx(email);
+            setResult(res);
+            return res;
         } finally {
             setIsLoading(false);
         }
     }, [checkEmailCtx]);
 
     const reset = useCallback(() => {
-        setExists(null);
+        setResult(null);
         setIsLoading(false);
     }, []);
 
-    return { checkEmail, isLoading, exists, reset };
+    return { checkEmail, isLoading, result, exists: result?.exists ?? null, reset };
 }

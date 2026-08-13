@@ -209,24 +209,41 @@ export class LumoAuthSession {
     }
 
     private async doRefresh(): Promise<string | null> {
-        const refreshToken = this.tokens.refreshToken;
-        if (!refreshToken) {
+        if (!this.tokens.refreshToken) {
             await this.clearSession('no_refresh_token');
             return null;
         }
 
         const run = async (): Promise<string | null> => {
             // Another tab may have refreshed while we waited for the lock.
-            const latest = await this.storage.get();
-            if (
-                latest.accessToken &&
-                latest.expiresAt &&
-                latest.expiresAt - Date.now() > PROACTIVE_WINDOW_MS
-            ) {
-                this.tokens = latest;
+            //
+            // Check BOTH the shared store and our own in-memory tokens. Storage
+            // alone is not enough: with a per-tab adapter (the default,
+            // sessionStorage) `storage.get()` returns this tab's private copy
+            // and never sees the winner's rotated token — but the winner also
+            // broadcasts, and onBroadcast() updates `this.tokens`. Consulting
+            // both makes the check work for shared and per-tab adapters alike.
+            const stored = await this.storage.get();
+            const fresher = [stored, this.tokens]
+                .filter((t) => t.accessToken && t.expiresAt)
+                .sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))[0];
+
+            if (fresher && (fresher.expiresAt ?? 0) - Date.now() > PROACTIVE_WINDOW_MS) {
+                this.tokens = fresher;
                 this.scheduleRefresh();
-                return latest.accessToken;
+                return fresher.accessToken;
             }
+
+            // Read the refresh token HERE, inside the lock, not before waiting
+            // for it. The server rotates and revokes on use, so a value
+            // captured before the lock is already spent by the time the loser
+            // acquires it — the request 400s and the tab is signed out.
+            const refreshToken = this.tokens.refreshToken;
+            if (!refreshToken) {
+                await this.clearSession('no_refresh_token');
+                return null;
+            }
+
             try {
                 const res = await this.auth.refreshToken(refreshToken);
                 await this.persist(LumoAuthSession.tokensFrom(res, this.tokens));

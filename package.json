@@ -11,14 +11,16 @@
         "packages/express",
         "packages/agent",
         "packages/react",
-        "packages/create-lumo-agent"
+        "packages/create-lumo-agent",
+        "examples/nextjs"
     ],
     "scripts": {
         "build": "npm run build --workspaces --if-present",
         "typecheck": "npm run typecheck --workspaces --if-present",
         "test": "npm run test --workspaces --if-present",
         "lint": "npm run lint --workspaces --if-present",
-        "clean": "rm -rf packages/*/dist node_modules packages/*/node_modules"
+        "clean": "rm -rf packages/*/dist node_modules packages/*/node_modules",
+        "example": "npm run build && npm run dev -w @lumoauth/example-nextjs"
     },
     "engines": {
         "node": ">=18.0.0"

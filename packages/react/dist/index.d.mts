@@ -1,6 +1,6 @@
 import * as react from 'react';
 import react__default from 'react';
-import { TokenStorage, AbacCheckRequest, LumoAuth, ZanzibarCheckRequest } from '@lumoauth/client';
+import { EmailCheckResult, TokenStorage, AbacCheckRequest, LumoAuth, ZanzibarCheckRequest } from '@lumoauth/client';
 
 interface LumoAuthUser {
     /** Unique user ID */
@@ -246,13 +246,18 @@ interface UseMagicLinkReturn {
  */
 interface UseEmailFirstReturn {
     /**
-     * Check if an account with this email exists in the organization.
-     * Used to decide whether to show the password/magic-link step.
+     * Discover which sign-in methods this identifier can actually use.
+     *
+     * Returns the organization's enabled methods AND what this user has
+     * enrolled (passkey, push device, magic link, password), so a sign-in card
+     * can render only the options that will work.
      */
-    checkEmail: (email: string) => Promise<boolean>;
+    checkEmail: (email: string) => Promise<EmailCheckResult>;
     /** True while the check is in-flight */
     isLoading: boolean;
-    /** Result of the last check, or null if not yet checked */
+    /** Full result of the last check, or null if not yet checked */
+    result: EmailCheckResult | null;
+    /** Shorthand for `result?.exists`, or null if not yet checked */
     exists: boolean | null;
     /** Reset state back to idle */
     reset: () => void;
@@ -297,7 +302,7 @@ interface LumoAuthContextValue extends AuthState {
      * Check whether an account with the given email exists in the organization.
      * Used to implement email-first login flows.
      */
-    checkEmail: (email: string) => Promise<boolean>;
+    checkEmail: (email: string) => Promise<EmailCheckResult>;
     /** The authentication strategy in use */
     authStrategy: 'pkce' | 'password';
     /** Provider configuration */

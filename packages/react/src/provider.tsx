@@ -1,5 +1,5 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { LumoAuthSession } from '@lumoauth/client';
+import { LumoAuthSession, type EmailCheckResult } from '@lumoauth/client';
 import { AuthModule } from '@lumoauth/client';
 import type {
     LumoAuthProviderProps,
@@ -36,21 +36,8 @@ type AuthAction =
 
 // ─── Token Storage ────────────────────────────────────────────────────
 
-const TOKEN_STORAGE_KEY = 'lumoauth_tokens';
 const PKCE_VERIFIER_KEY = 'lumoauth_pkce_verifier';
 const PKCE_STATE_KEY = 'lumoauth_pkce_state';
-
-function loadTokens(): TokenState {
-    try {
-        const stored = typeof window !== 'undefined' ? sessionStorage.getItem(TOKEN_STORAGE_KEY) : null;
-        if (stored) {
-            return JSON.parse(stored) as TokenState;
-        }
-    } catch {
-        // Ignore storage errors (SSR, private browsing, etc.)
-    }
-    return { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
-}
 
 function savePkceParams(codeVerifier: string, state: string): void {
     try {
@@ -128,7 +115,7 @@ export function LumoAuthProvider({
     children,
 }: LumoAuthProviderProps) {
     const [user, setUser] = useState<LumoAuthUser | null>(null);
-    const tokensRef = useRef<TokenState>(loadTokens());
+    const tokensRef = useRef<TokenState>({ accessToken: null, refreshToken: null, expiresAt: null, idToken: null });
     const callbackHandledRef = useRef(false);
     const callbackInflightRef = useRef<{ code: string; promise: Promise<void> } | null>(null);
 
@@ -434,10 +421,13 @@ export function LumoAuthProvider({
 
     // ── Email-First: check email existence ───────────────────────────
 
-    const checkEmail = useCallback(async (email: string): Promise<boolean> => {
-        const result = await authModule.checkEmailExists(email);
-        return result.exists;
-    }, [authModule]);
+    // Return the whole discovery payload. This used to collapse to
+    // `result.exists`, which made the other nine fields — the ones that tell a
+    // sign-in card which methods will actually work — unreachable from React.
+    const checkEmail = useCallback(
+        (email: string): Promise<EmailCheckResult> => authModule.checkEmailExists(email),
+        [authModule],
+    );
 
     // ── Sign Out ─────────────────────────────────────────────────────
 
@@ -533,46 +523,56 @@ export function LumoAuthProvider({
                 }
             }
 
-            // ── Check for existing session from stored tokens ──
-            const { accessToken, expiresAt } = tokensRef.current;
-
-            if (!accessToken) {
-                dispatch({ type: 'UNAUTHENTICATED' });
-                return;
-            }
-
-            // If token is expired, try to refresh
-            if (expiresAt && Date.now() >= expiresAt - 30_000) {
-                const newToken = await refreshAccessToken();
-                if (!newToken) {
-                    if (!cancelled) dispatch({ type: 'UNAUTHENTICATED' });
-                    return;
-                }
-            }
-
-            try {
-                const currentToken = tokensRef.current.accessToken;
-                if (!currentToken) {
-                    if (!cancelled) dispatch({ type: 'UNAUTHENTICATED' });
-                    return;
-                }
-                const user = await fetchUser(currentToken);
-                if (!cancelled) {
-                    dispatch({ type: 'AUTHENTICATED', user });
-                    // No scheduleRefresh here: session.hydrate() below owns the
-                    // timer, and scheduling twice would double-refresh.
-                }
-            } catch {
-                if (!cancelled) dispatch({ type: 'UNAUTHENTICATED' });
-            }
+            // Restoring an existing session is the store's job — it knows which
+            // storage adapter is in play. This used to read sessionStorage
+            // directly, which silently ignored the `storage` prop: with
+            // localStorage the provider found nothing, declared the user signed
+            // out, and then the store hydrated and said signed-in — leaving a
+            // session with no user attached.
         }
 
         init().then(() => {
-            // Settle the store's own status/timer from persisted tokens.
+            // Settle status, tokens and the refresh timer from whichever
+            // storage adapter is configured.
             if (!cancelled) void session.hydrate();
         });
         return () => { cancelled = true; };
     }, [fetchUser, handleCallback, refreshAccessToken, session]);
+
+    // Keep the user in sync with the session.
+    //
+    // The store can become authenticated without this provider having done the
+    // sign-in: hydrate() restores from storage on load, and a BroadcastChannel
+    // message adopts tokens from another tab. Both used to leave `user` null,
+    // so <SignedIn> rendered with no identity — a signed-in shell showing a
+    // blank email. Fetching here covers every path uniformly.
+    useEffect(() => {
+        let cancelled = false;
+        if (!sessionState.isSignedIn) {
+            setUser(null);
+            return;
+        }
+        // Already have the identity for this session; nothing to do. Without
+        // this guard the effect would refetch on every token refresh.
+        if (user) return;
+
+        void (async () => {
+            const token = await session.getToken().catch(() => null);
+            if (cancelled || !token) return;
+            try {
+                const fetched = await fetchUser(token);
+                if (!cancelled) setUser(fetched);
+            } catch {
+                // Leave the session alone: a failed /userinfo does not mean the
+                // token is invalid, and signing the user out here would turn a
+                // transient network error into a logout.
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [sessionState.isSignedIn, user, session, fetchUser]);
 
     // ── Context Value ────────────────────────────────────────────────
 

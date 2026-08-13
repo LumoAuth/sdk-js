@@ -313,17 +313,22 @@ var LumoAuthSession = class _LumoAuthSession {
     return this.inflightRefresh;
   }
   async doRefresh() {
-    const refreshToken = this.tokens.refreshToken;
-    if (!refreshToken) {
+    if (!this.tokens.refreshToken) {
       await this.clearSession("no_refresh_token");
       return null;
     }
     const run = async () => {
-      const latest = await this.storage.get();
-      if (latest.accessToken && latest.expiresAt && latest.expiresAt - Date.now() > PROACTIVE_WINDOW_MS) {
-        this.tokens = latest;
+      const stored = await this.storage.get();
+      const fresher = [stored, this.tokens].filter((t) => t.accessToken && t.expiresAt).sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))[0];
+      if (fresher && (fresher.expiresAt ?? 0) - Date.now() > PROACTIVE_WINDOW_MS) {
+        this.tokens = fresher;
         this.scheduleRefresh();
-        return latest.accessToken;
+        return fresher.accessToken;
+      }
+      const refreshToken = this.tokens.refreshToken;
+      if (!refreshToken) {
+        await this.clearSession("no_refresh_token");
+        return null;
       }
       try {
         const res = await this.auth.refreshToken(refreshToken);
