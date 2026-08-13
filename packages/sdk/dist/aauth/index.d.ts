@@ -1,5 +1,5 @@
 import { KeyObject } from 'node:crypto';
-import { c as LumoAuthError } from '../errors-BALg-anN.mjs';
+import { L as LumoAuthError } from '../errors-DUVclDJU.js';
 
 /** A public JSON Web Key as published in a JWKS. */
 interface AAuthJwk {

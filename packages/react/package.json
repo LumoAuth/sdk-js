@@ -1,7 +1,7 @@
 {
     "name": "@lumoauth/react",
     "version": "1.0.0",
-    "description": "Official LumoAuth React SDK — Drop-in authentication components and hooks for React & Next.js applications.",
+    "description": "Official LumoAuth React SDK \u2014 Drop-in authentication components and hooks for React & Next.js applications.",
     "main": "dist/index.js",
     "module": "dist/index.mjs",
     "types": "dist/index.d.ts",
@@ -40,6 +40,10 @@
     ],
     "author": "LumoAuth",
     "license": "MIT",
+    "publishConfig": {
+        "access": "public",
+        "provenance": true
+    },
     "dependencies": {
         "@lumoauth/sdk": "^1.0.0",
         "zod": "^3.24.0"

@@ -1,4 +1,5 @@
-import * as react_jsx_runtime from 'react/jsx-runtime';
+import * as react from 'react';
+import react__default from 'react';
 import { AbacCheckRequest, LumoAuth, ZanzibarCheckRequest } from '@lumoauth/sdk';
 
 interface LumoAuthUser {
@@ -272,7 +273,7 @@ interface LumoAuthContextValue extends AuthState {
     };
 }
 
-declare function LumoAuthProvider({ domain, orgId, clientId, authStrategy, redirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl, children, }: LumoAuthProviderProps): react_jsx_runtime.JSX.Element;
+declare function LumoAuthProvider({ domain, orgId, clientId, authStrategy, redirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl, children, }: LumoAuthProviderProps): react.JSX.Element;
 
 /**
  * Drop-in sign-in component.
@@ -290,7 +291,7 @@ declare function LumoAuthProvider({ domain, orgId, clientId, authStrategy, redir
  * <SignIn afterSignInUrl="/dashboard" />
  * ```
  */
-declare function SignIn({ afterSignInUrl, signUpUrl, appearance, }: SignInProps): react_jsx_runtime.JSX.Element | null;
+declare function SignIn({ afterSignInUrl, signUpUrl, appearance, }: SignInProps): react__default.JSX.Element | null;
 
 /**
  * Drop-in sign-up/registration component.
@@ -307,7 +308,7 @@ declare function SignIn({ afterSignInUrl, signUpUrl, appearance, }: SignInProps)
  * <SignUp afterSignUpUrl="/onboarding" />
  * ```
  */
-declare function SignUp({ afterSignUpUrl, signInUrl, appearance, }: SignUpProps): react_jsx_runtime.JSX.Element | null;
+declare function SignUp({ afterSignUpUrl, signInUrl, appearance, }: SignUpProps): react__default.JSX.Element | null;
 
 /**
  * Handles the OAuth callback after a PKCE redirect.
@@ -328,7 +329,7 @@ declare function SignUp({ afterSignUpUrl, signInUrl, appearance, }: SignUpProps)
  * }
  * ```
  */
-declare function AuthCallback({ afterSignInUrl, loading, error: errorComponent, }: AuthCallbackProps): react_jsx_runtime.JSX.Element;
+declare function AuthCallback({ afterSignInUrl, loading, error: errorComponent, }: AuthCallbackProps): react.JSX.Element;
 
 /**
  * Clerk-style user avatar button with dropdown menu.
@@ -339,7 +340,7 @@ declare function AuthCallback({ afterSignInUrl, loading, error: errorComponent, 
  * <UserButton afterSignOutUrl="/" />
  * ```
  */
-declare function UserButton({ afterSignOutUrl, showName, appearance, }: UserButtonProps): react_jsx_runtime.JSX.Element | null;
+declare function UserButton({ afterSignOutUrl, showName, appearance, }: UserButtonProps): react__default.JSX.Element | null;
 
 /**
  * Renders the current user's avatar. Displays the profile image
@@ -359,7 +360,7 @@ declare function UserButton({ afterSignOutUrl, showName, appearance, }: UserButt
  * <UserAvatar shape="square" />
  * ```
  */
-declare function UserAvatar({ size, shape, appearance, }: UserAvatarProps): react_jsx_runtime.JSX.Element;
+declare function UserAvatar({ size, shape, appearance, }: UserAvatarProps): react__default.JSX.Element;
 
 /**
  * Renders a user profile card showing account details, roles,
@@ -379,7 +380,7 @@ declare function UserAvatar({ size, shape, appearance, }: UserAvatarProps): reac
  * <UserProfile mode="compact" />
  * ```
  */
-declare function UserProfile({ afterSignOutUrl, mode, appearance, }: UserProfileProps): react_jsx_runtime.JSX.Element | null;
+declare function UserProfile({ afterSignOutUrl, mode, appearance, }: UserProfileProps): react__default.JSX.Element | null;
 
 /**
  * Authorization gate component. Renders children only if the user
@@ -405,7 +406,7 @@ declare function UserProfile({ afterSignOutUrl, mode, appearance, }: UserProfile
  * </Protect>
  * ```
  */
-declare function Protect({ permission, zanzibar, abac, fallback, children, }: ProtectProps): react_jsx_runtime.JSX.Element;
+declare function Protect({ permission, zanzibar, abac, fallback, children, }: ProtectProps): react__default.JSX.Element;
 
 /**
  * Renders children only when the user is authenticated.
@@ -417,7 +418,7 @@ declare function Protect({ permission, zanzibar, abac, fallback, children, }: Pr
  * </SignedIn>
  * ```
  */
-declare function SignedIn({ children }: SignedInProps): react_jsx_runtime.JSX.Element | null;
+declare function SignedIn({ children }: SignedInProps): react.JSX.Element | null;
 /**
  * Renders children only when the user is NOT authenticated.
  *
@@ -428,7 +429,7 @@ declare function SignedIn({ children }: SignedInProps): react_jsx_runtime.JSX.El
  * </SignedOut>
  * ```
  */
-declare function SignedOut({ children }: SignedOutProps): react_jsx_runtime.JSX.Element | null;
+declare function SignedOut({ children }: SignedOutProps): react.JSX.Element | null;
 /**
  * Unstyled button that triggers sign-in.
  * In PKCE mode, initiates the redirect flow.
@@ -441,7 +442,7 @@ declare function SignedOut({ children }: SignedOutProps): react_jsx_runtime.JSX.
  * </SignInButton>
  * ```
  */
-declare function SignInButton({ children, signInUrl, className }: SignInButtonProps): react_jsx_runtime.JSX.Element;
+declare function SignInButton({ children, signInUrl, className }: SignInButtonProps): react.JSX.Element;
 /**
  * Unstyled button that navigates to the sign-up page.
  *
@@ -452,7 +453,7 @@ declare function SignInButton({ children, signInUrl, className }: SignInButtonPr
  * </SignUpButton>
  * ```
  */
-declare function SignUpButton({ children, signUpUrl, className }: SignUpButtonProps): react_jsx_runtime.JSX.Element;
+declare function SignUpButton({ children, signUpUrl, className }: SignUpButtonProps): react.JSX.Element;
 /**
  * Unstyled button that triggers sign-out.
  *
@@ -463,7 +464,7 @@ declare function SignUpButton({ children, signUpUrl, className }: SignUpButtonPr
  * </SignOutButton>
  * ```
  */
-declare function SignOutButton({ children, afterSignOutUrl, className }: SignOutButtonProps): react_jsx_runtime.JSX.Element;
+declare function SignOutButton({ children, afterSignOutUrl, className }: SignOutButtonProps): react.JSX.Element;
 /**
  * Automatically redirects to the sign-in page when rendered.
  * Useful for protecting routes.

@@ -1,7 +1,7 @@
 {
     "name": "@lumoauth/sdk",
     "version": "1.0.0",
-    "description": "Official LumoAuth TypeScript SDK — Permission checks, Zanzibar (ReBAC), and ABAC policy evaluation for any JavaScript/TypeScript application.",
+    "description": "Official LumoAuth TypeScript SDK \u2014 Permission checks, Zanzibar (ReBAC), and ABAC policy evaluation for any JavaScript/TypeScript application.",
     "main": "dist/index.js",
     "module": "dist/index.mjs",
     "types": "dist/index.d.ts",
@@ -49,6 +49,10 @@
     ],
     "author": "LumoAuth",
     "license": "MIT",
+    "publishConfig": {
+        "access": "public",
+        "provenance": true
+    },
     "dependencies": {
         "zod": "^3.24.0"
     },

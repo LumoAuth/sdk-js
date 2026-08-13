@@ -40,4 +40,4 @@ declare class LumoAuthNetworkError extends LumoAuthError {
     constructor(message: string, cause?: unknown);
 }
 
-export { LumoAuthApiError as L, LumoAuthAuthError as a, LumoAuthConfigError as b, LumoAuthError as c, LumoAuthNetworkError as d, LumoAuthValidationError as e };
+export { LumoAuthError as L, LumoAuthApiError as a, LumoAuthAuthError as b, LumoAuthConfigError as c, LumoAuthNetworkError as d, LumoAuthValidationError as e };

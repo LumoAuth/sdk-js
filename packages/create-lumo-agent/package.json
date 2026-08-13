@@ -4,6 +4,10 @@
   "description": "Scaffold a working LumoAuth agent app in 60 seconds.",
   "type": "module",
   "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "bin": {
     "create-lumo-agent": "./dist/index.js"
   },
