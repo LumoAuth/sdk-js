@@ -50,7 +50,7 @@ module.exports = __toCommonJS(index_exports);
 
 // src/provider.tsx
 var import_react = require("react");
-var import_sdk = require("@lumoauth/sdk");
+var import_client = require("@lumoauth/client");
 
 // src/styles.ts
 var STYLE_ID = "lumoauth-react-styles";
@@ -991,7 +991,7 @@ function LumoAuthProvider({
     injectStyles();
   }, []);
   const authModule = (0, import_react.useMemo)(
-    () => new import_sdk.AuthModule({
+    () => new import_client.AuthModule({
       baseUrl: domain,
       orgId,
       clientId
@@ -2142,7 +2142,7 @@ function UserProfile({
 
 // src/hooks.ts
 var import_react7 = require("react");
-var import_sdk2 = require("@lumoauth/sdk");
+var import_client2 = require("@lumoauth/client");
 function useAuth() {
   return useLumoAuthContext();
 }
@@ -2170,7 +2170,7 @@ function useSession() {
 function useLumoAuth() {
   const { getToken, config } = useLumoAuthContext();
   const client = (0, import_react7.useMemo)(
-    () => new import_sdk2.LumoAuth({
+    () => new import_client2.LumoAuth({
       baseUrl: config.domain,
       orgId: config.orgId,
       clientId: config.clientId,

@@ -1,6 +1,6 @@
 # {{projectName}}
 
-A LumoAuth-secured AI agent demo. Built with Next.js + `@lumoauth/react` + `@lumoauth/sdk`.
+A LumoAuth-secured AI agent demo. Built with Next.js + `@lumoauth/react` + `@lumoauth/client`.
 
 ## Setup
 

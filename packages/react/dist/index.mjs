@@ -2,7 +2,7 @@
 
 // src/provider.tsx
 import { createContext, useContext, useCallback, useEffect, useMemo, useReducer, useRef } from "react";
-import { AuthModule } from "@lumoauth/sdk";
+import { AuthModule } from "@lumoauth/client";
 
 // src/styles.ts
 var STYLE_ID = "lumoauth-react-styles";
@@ -2094,7 +2094,7 @@ function UserProfile({
 
 // src/hooks.ts
 import { useState as useState6, useEffect as useEffect4, useCallback as useCallback6, useMemo as useMemo3 } from "react";
-import { LumoAuth } from "@lumoauth/sdk";
+import { LumoAuth } from "@lumoauth/client";
 function useAuth() {
   return useLumoAuthContext();
 }

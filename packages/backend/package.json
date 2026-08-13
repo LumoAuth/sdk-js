@@ -1,0 +1,60 @@
+{
+    "name": "@lumoauth/backend",
+    "version": "1.0.0",
+    "description": "Official LumoAuth server SDK — token verification and server-side auth. Never import this from browser code.",
+    "license": "MIT",
+    "author": "LumoAuth",
+    "publishConfig": {
+        "access": "public",
+        "provenance": true
+    },
+    "main": "dist/index.js",
+    "module": "dist/index.mjs",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.mjs",
+            "require": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsup",
+        "dev": "tsup --watch",
+        "typecheck": "tsc --noEmit",
+        "prepublishOnly": "npm run build",
+        "test": "npm run build && node --test tests/"
+    },
+    "keywords": [
+        "lumoauth",
+        "backend",
+        "server",
+        "jwt"
+    ],
+    "dependencies": {
+        "@lumoauth/shared": "^1.0.0",
+        "zod": "^3.24.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.19.43",
+        "tsup": "^8.0.0",
+        "typescript": "^5.5.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "sideEffects": false,
+    "peerDependencies": {
+        "@lumoauth/api-client": ">=0.1.0"
+    },
+    "peerDependenciesMeta": {
+        "@lumoauth/api-client": {
+            "optional": true
+        }
+    }
+}

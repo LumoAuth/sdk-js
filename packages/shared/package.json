@@ -1,0 +1,49 @@
+{
+    "name": "@lumoauth/shared",
+    "version": "1.0.0",
+    "description": "Isomorphic core for the LumoAuth SDKs \u2014 types, errors, PKCE, HTTP, and the authorization modules. Runs identically in browsers, Node, and edge runtimes.",
+    "license": "MIT",
+    "author": "LumoAuth",
+    "publishConfig": {
+        "access": "public",
+        "provenance": true
+    },
+    "main": "dist/index.js",
+    "module": "dist/index.mjs",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.mjs",
+            "require": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsup",
+        "dev": "tsup --watch",
+        "typecheck": "tsc --noEmit",
+        "prepublishOnly": "npm run build"
+    },
+    "keywords": [
+        "lumoauth",
+        "authorization",
+        "shared"
+    ],
+    "dependencies": {
+        "zod": "^3.24.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.19.43",
+        "tsup": "^8.0.0",
+        "typescript": "^5.5.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "sideEffects": false
+}

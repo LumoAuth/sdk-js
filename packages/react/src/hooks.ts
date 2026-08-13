@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { LumoAuth } from '@lumoauth/sdk';
-import type { ZanzibarCheckRequest, AbacCheckRequest } from '@lumoauth/sdk';
+import { LumoAuth } from '@lumoauth/client';
+import type { ZanzibarCheckRequest, AbacCheckRequest } from '@lumoauth/client';
 import { useLumoAuthContext } from './provider';
 import type { LumoAuthContextValue, LumoAuthUser, UseMagicLinkReturn, UseEmailFirstReturn } from './types';
 

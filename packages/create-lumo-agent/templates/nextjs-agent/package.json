@@ -8,7 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
-    "@lumoauth/sdk": "^1.0.0",
+    "@lumoauth/client": "^1.0.0",
     "@lumoauth/react": "^1.0.0",
     "next": "^15.0.0",
     "react": "^18.3.0",

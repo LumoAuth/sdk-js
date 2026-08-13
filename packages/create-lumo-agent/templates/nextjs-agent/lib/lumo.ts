@@ -1,4 +1,4 @@
-import { LumoAuth } from '@lumoauth/sdk';
+import { LumoAuth } from '@lumoauth/client';
 
 // Server-side LumoAuth client, authenticated as the agent. The agent's access
 // token carries its identity; the LumoAuth PDP enforces what it may do via the

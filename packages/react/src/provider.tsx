@@ -1,5 +1,5 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
-import { AuthModule } from '@lumoauth/sdk';
+import { AuthModule } from '@lumoauth/client';
 import type {
     LumoAuthProviderProps,
     LumoAuthContextValue,

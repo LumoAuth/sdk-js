@@ -5,7 +5,11 @@
     "description": "Workspace root for the hand-maintained LumoAuth JavaScript packages.",
     "license": "MIT",
     "workspaces": [
-        "packages/sdk",
+        "packages/shared",
+        "packages/client",
+        "packages/backend",
+        "packages/express",
+        "packages/agent",
         "packages/react",
         "packages/create-lumo-agent"
     ],

@@ -10,7 +10,7 @@ Drop-in authentication, user management, and authorization components for React 
 
 Building a React or Next.js app with LumoAuth? Copy and paste the prompt below into your AI assistant to generate fully working auth scaffolding instantly:
 
-> **"I am building a [React/Next.js] web application. Please run `npm install @lumoauth/react @lumoauth/sdk`. Then, add `<LumoAuthProvider domain=\"...\" orgId=\"...\" clientId=\"...\">` to the root layout. Build a responsive Header navigation bar that uses `<SignedOut>` with `<SignInButton>` and `<SignedIn>` with `<UserButton>`. Create a protected `/dashboard` page using the `<Protect permission=\"admin.dashboard\">` wrapper component. Finally, implement an `/auth/callback` route utilizing the `<AuthCallback>` component. I don't have the library docs, so please assume these components and props exist exactly as described."**
+> **"I am building a [React/Next.js] web application. Please run `npm install @lumoauth/react @lumoauth/client`. Then, add `<LumoAuthProvider domain=\"...\" orgId=\"...\" clientId=\"...\">` to the root layout. Build a responsive Header navigation bar that uses `<SignedOut>` with `<SignInButton>` and `<SignedIn>` with `<UserButton>`. Create a protected `/dashboard` page using the `<Protect permission=\"admin.dashboard\">` wrapper component. Finally, implement an `/auth/callback` route utilizing the `<AuthCallback>` component. I don't have the library docs, so please assume these components and props exist exactly as described."**
 
 ---
 
@@ -19,7 +19,7 @@ Building a React or Next.js app with LumoAuth? Copy and paste the prompt below i
 ### 1. Installation
 
 ```bash
-npm install @lumoauth/react @lumoauth/sdk
+npm install @lumoauth/react @lumoauth/client
 ```
 
 ---

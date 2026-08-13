@@ -1,6 +1,6 @@
 import * as react from 'react';
 import react__default from 'react';
-import { AbacCheckRequest, LumoAuth, ZanzibarCheckRequest } from '@lumoauth/sdk';
+import { AbacCheckRequest, LumoAuth, ZanzibarCheckRequest } from '@lumoauth/client';
 
 interface LumoAuthUser {
     /** Unique user ID */
