@@ -110,10 +110,11 @@ interface SignInProps {
      * A hardcoded default would advertise providers the organization may not
      * have configured.
      *
-     * Note that until the server accepts a provider hint on `/oauth/authorize`,
-     * these buttons hand off to the hosted login page rather than deep-linking
-     * straight to the provider — the hosted page lists the organization's real
-     * providers. Set this only for providers you know are enabled.
+     * Each button deep-links straight to that provider: the SDK passes
+     * `?provider=` to `/oauth/authorize`, which redirects to the provider's
+     * flow with the PKCE challenge preserved. A provider the organization has
+     * not configured falls back to the hosted login page rather than erroring,
+     * so a wrong value degrades instead of breaking.
      *
      * Recognised icons: `google`, `github`, `microsoft`, `apple`. Any other
      * value renders with a label and no icon.
