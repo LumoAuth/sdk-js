@@ -1,6 +1,10 @@
 import {
+    LumoAuthError,
     LumoAuthApiError,
-    LumoAuthAuthError,
+    LumoAuthAuthenticationError,
+    LumoAuthPermissionDeniedError,
+    LumoAuthNotFoundError,
+    LumoAuthRateLimitError,
     LumoAuthNetworkError,
 } from '../errors';
 
@@ -74,7 +78,7 @@ export class HttpClient {
     private async request<T>(opts: RequestOptions): Promise<T> {
         const token = await this.tokenProvider();
         if (!token) {
-            throw new LumoAuthAuthError('No access token provided.');
+            throw new LumoAuthAuthenticationError('No access token provided.');
         }
 
         const url = `${this.baseUrl}${opts.path}`;
@@ -114,14 +118,28 @@ export class HttpClient {
                     parsedBody = text;
                 }
 
-                if (response.status === 401) {
-                    throw new LumoAuthAuthError();
-                }
-
                 const errorMessage =
                     typeof parsedBody === 'object' && parsedBody !== null && 'error' in parsedBody
                         ? String((parsedBody as Record<string, unknown>).error)
                         : `LumoAuth API error: ${response.status} ${response.statusText}`;
+
+                // Map well-known statuses to the typed error taxonomy.
+                switch (response.status) {
+                    case 401:
+                        throw new LumoAuthAuthenticationError(undefined, parsedBody);
+                    case 403:
+                        throw new LumoAuthPermissionDeniedError(errorMessage, parsedBody);
+                    case 404:
+                        throw new LumoAuthNotFoundError(errorMessage, parsedBody);
+                    case 429: {
+                        const retryAfterRaw = response.headers?.get?.('Retry-After');
+                        const retryAfter =
+                            retryAfterRaw != null && /^\d+$/.test(retryAfterRaw.trim())
+                                ? Number(retryAfterRaw.trim())
+                                : undefined;
+                        throw new LumoAuthRateLimitError(errorMessage, retryAfter, parsedBody);
+                    }
+                }
 
                 const errorCode =
                     typeof parsedBody === 'object' && parsedBody !== null && 'code' in parsedBody
@@ -141,10 +159,7 @@ export class HttpClient {
             clearTimeout(timeoutId);
 
             // Re-throw SDK errors as-is
-            if (
-                error instanceof LumoAuthApiError ||
-                error instanceof LumoAuthAuthError
-            ) {
+            if (error instanceof LumoAuthError) {
                 throw error;
             }
 

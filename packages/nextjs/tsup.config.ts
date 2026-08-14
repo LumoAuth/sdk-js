@@ -18,9 +18,12 @@ export default defineConfig([
         },
     },
     {
-        // session-cookie is built as its own entry so it can be exercised
-        // without importing next/headers, which only resolves inside Next.
-        entry: { server: 'src/server.ts', 'session-cookie': 'src/session-cookie.ts' },
+        // session-cookie's public symbols are re-exported from ./server —
+        // it is NOT its own dist entry (it was never in the exports map).
+        // Tests build it separately into tests/.build so the crypto can be
+        // exercised without importing next/headers, which only resolves
+        // inside Next.
+        entry: { server: 'src/server.ts' },
         format: ['cjs', 'esm'],
         dts: true,
         clean: false,

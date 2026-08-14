@@ -8,6 +8,10 @@ coverage
 
 # production
 build
+dist/
+
+# test-only build artifacts
+packages/nextjs/tests/.build/
 
 # misc
 .DS_Store

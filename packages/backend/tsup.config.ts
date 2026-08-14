@@ -7,4 +7,7 @@ export default defineConfig({
     clean: true,
     splitting: false,
     sourcemap: true,
+    // The lazy `api` escape hatch branches on __dirname (CJS) vs
+    // import.meta.url (ESM); shims keep both defined in both outputs.
+    shims: true,
 });

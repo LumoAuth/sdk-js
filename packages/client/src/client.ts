@@ -7,7 +7,8 @@ import {
     AbacModule,
     AuthModule,
     type AuthModuleConfig,
-    AgentModule,
+    AgentsModule,
+    ApprovalsModule,
     LumoAuthConfigError,
 } from '@lumoauth/shared';
 import { assertBrowserSafeCredential } from './guard';
@@ -74,6 +75,12 @@ export interface LumoAuthConfig {
     cache?: boolean | PermissionsModuleOptions['cache'];
 }
 
+/**
+ * Browser-safe subset of the approvals surface: status polling only.
+ * Creating approvals lives on the server/agent SDKs.
+ */
+export type ClientApprovals = Pick<ApprovalsModule, 'getStatus' | 'wait'>;
+
 // ─── Client ───────────────────────────────────────────────────────────
 
 /**
@@ -115,8 +122,14 @@ export class LumoAuth {
     public readonly abac: AbacModule;
     /** OAuth 2.0 authentication — PKCE flow, token exchange, refresh. */
     public readonly auth: AuthModule;
-    /** Agent identity, JIT permissions, and push-approval-for-actions. */
-    public readonly agent: AgentModule;
+    /** Agent identity — ask/isAllowed and self-inspection. */
+    public readonly agents: AgentsModule;
+    /**
+     * Approval status polling — the browser-safe subset of the approvals
+     * surface. Creating approvals (`require()`) is an agent/server action;
+     * use `@lumoauth/backend` or `@lumoauth/agent` for that.
+     */
+    public readonly approvals: ClientApprovals;
 
     private readonly http: HttpClient;
 
@@ -157,9 +170,24 @@ export class LumoAuth {
         };
         this.auth = new AuthModule(authConfig);
 
-        // Agent module — push-approval-for-actions, JIT. Org-scoped, so it
-        // needs `orgId`; the guard fires lazily when a method is called.
-        this.agent = new AgentModule(this.http, config.orgId ?? '');
+        // Agents module — org-scoped, so it needs `orgId`; the guard fires
+        // lazily when a method is called.
+        this.agents = new AgentsModule(this.http, config.orgId ?? '');
+
+        // Approvals — browser-safe subset (status polling only).
+        const approvals = new ApprovalsModule(this.http, config.orgId ?? '');
+        this.approvals = {
+            getStatus: approvals.getStatus.bind(approvals),
+            wait: approvals.wait.bind(approvals),
+        };
+    }
+
+    /**
+     * @deprecated Renamed to {@link agents}. This alias will be removed
+     * before 2.0.
+     */
+    get agent(): AgentsModule {
+        return this.agents;
     }
 
     /**

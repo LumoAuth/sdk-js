@@ -2,7 +2,7 @@ import { generateKeypair, jwkThumbprint, publicJwkFromPrivateKey, type AAuthJwk,
 import { signRequest, type SignRequestOptions } from './signing';
 import { verifyAuthToken, type AAuthTokenClaims, type VerifyAuthTokenOptions } from './verify';
 import { AAuthError } from './errors';
-import { LumoAuthConfigError, LumoAuthNetworkError } from '@lumoauth/shared';
+import { LumoAuthConfigError, LumoAuthNetworkError, ROUTES, buildPath } from '@lumoauth/shared';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -228,7 +228,7 @@ export class AAuthClient {
      * `authorizationUri` returned by `requestAuthToken()` when present.
      */
     buildConsentUrl(requestToken: string): string {
-        return `${this.issuer}/aauth/agent/auth?request_token=${encodeURIComponent(requestToken)}`;
+        return `${this.routeUrl('aauth.agentAuth')}?request_token=${encodeURIComponent(requestToken)}`;
     }
 
     /**
@@ -311,7 +311,7 @@ export class AAuthClient {
         agentToken: string;
     }): Promise<{ revoked: boolean }> {
         this.requireAgentToken(params.agentToken);
-        const url = `${this.issuer}/aauth/token/revoke`;
+        const url = this.routeUrl('aauth.tokenRevoke');
         const data = await this.signedPost(url, {
             token: params.token,
             token_type: params.tokenType ?? 'auth_token',
@@ -375,12 +375,12 @@ export class AAuthClient {
 
     /** Fetch `{issuer}/.well-known/aauth-issuer`. */
     async discoverIssuer(): Promise<AAuthIssuerMetadata> {
-        return this.getJson<AAuthIssuerMetadata>(`${this.issuer}/.well-known/aauth-issuer`);
+        return this.getJson<AAuthIssuerMetadata>(this.routeUrl('aauth.issuerMetadata'));
     }
 
     /** Fetch `{issuer}/.well-known/aauth-agent` — metadata for all active agents. */
     async discoverAgents(): Promise<AAuthAgentMetadata[]> {
-        return this.getJson<AAuthAgentMetadata[]>(`${this.issuer}/.well-known/aauth-agent`);
+        return this.getJson<AAuthAgentMetadata[]>(this.routeUrl('aauth.agentMetadata'));
     }
 
     /** Fetch `{resourceUrl}/.well-known/aauth-resource` from a resource server. */
@@ -401,7 +401,12 @@ export class AAuthClient {
     }
 
     private tokenUrl(): string {
-        return `${this.issuer}/aauth/agent/token`;
+        return this.routeUrl('aauth.agentToken');
+    }
+
+    /** Absolute URL for an org-scoped route from the shared registry. */
+    private routeUrl(name: keyof typeof ROUTES): string {
+        return `${this.baseUrl}${buildPath(ROUTES[name].path, { orgId: this.orgId })}`;
     }
 
     private async tokenRequest(body: Record<string, unknown>, agentToken: string): Promise<RawTokenResponse> {

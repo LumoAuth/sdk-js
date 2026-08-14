@@ -2,7 +2,9 @@
 // it, so forging or tampering must fail closed.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { seal, unseal } from '../dist/session-cookie.mjs';
+// Built by the test script into tests/.build — session-cookie is not a
+// dist entry (its public symbols ship via the ./server export).
+import { seal, unseal } from './.build/session-cookie.mjs';
 
 const SECRET = 'a'.repeat(32);
 const SESSION = { accessToken: 'tok', refreshToken: 'ref', idToken: null, expiresAt: 1234567890 };
@@ -52,7 +54,7 @@ test('a short secret is rejected rather than silently weakening the cipher', asy
 // Conflating these is the bug this suite exists to prevent: an access token
 // lasts about an hour, a session lasts weeks. Treating a stale token as "not
 // signed in" logs everyone out hourly.
-import { isSessionLive, isTokenStale } from '../dist/session-cookie.mjs';
+import { isSessionLive, isTokenStale } from './.build/session-cookie.mjs';
 
 const HOUR = 3600_000;
 const base = { accessToken: 'a', refreshToken: 'r', idToken: null };

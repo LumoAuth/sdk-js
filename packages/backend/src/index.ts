@@ -5,14 +5,20 @@
 // construct in a browser, so a server credential cannot reach a client bundle
 // by accident.
 //
-// For the full REST surface — every admin endpoint, SCIM, audit logs — use the
-// generated client `@lumoauth/api-client` alongside this package. It is
-// declared as an optional peer dependency: this package deliberately does not
-// re-wrap ~200 generated admin operations that are already typed and
-// CI-maintained. See api-clients/README.md for the generated-vs-hand-written
-// split.
+// For the full REST surface — every admin endpoint, SCIM, audit logs — use
+// the `lumo.api` escape hatch, which lazily loads the generated client
+// `@lumoauth/api-client` pre-configured with this backend's credential. It is
+// declared as an optional peer dependency because the generated client is not
+// yet published to a registry.
+// TODO(publish): once @lumoauth/api-client is published, drop
+// `peerDependenciesMeta.optional` in package.json so installs pull it in by
+// default (the lazy getter already handles both cases).
 
-export { LumoAuthBackend, type LumoAuthBackendConfig } from './backend';
+export {
+    LumoAuthBackend,
+    type LumoAuthBackendConfig,
+    type LumoAuthApiEscapeHatch,
+} from './backend';
 export { assertServerOnly } from './guard';
 
 // The full isomorphic surface: authorization modules, OAuth/PKCE helpers,

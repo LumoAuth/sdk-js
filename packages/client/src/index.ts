@@ -9,7 +9,7 @@
 // @lumoauth/backend (token verification, admin) and @lumoauth/agent (AAuth,
 // which needs `node:crypto`).
 
-export { LumoAuth, type LumoAuthConfig } from './client';
+export { LumoAuth, type LumoAuthConfig, type ClientApprovals } from './client';
 
 // ─── Session runtime (framework-agnostic) ─────────────────────────────
 // The store @lumoauth/react binds to. Exported so a Vue/Svelte binding can

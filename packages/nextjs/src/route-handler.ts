@@ -1,4 +1,11 @@
-import { AuthModule, generateCodeVerifier, generateCodeChallenge, generateState } from '@lumoauth/shared';
+import {
+    AuthModule,
+    generateCodeVerifier,
+    generateCodeChallenge,
+    generateState,
+    ROUTES,
+    buildPath,
+} from '@lumoauth/shared';
 import { resolveConfig, type LumoAuthNextConfig } from './config';
 import {
     SESSION_COOKIE,
@@ -63,7 +70,7 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
             const codeChallenge = await generateCodeChallenge(codeVerifier);
 
             const authorize = new URL(
-                `${cfg.domain.replace(/\/+$/, '')}/orgs/${encodeURIComponent(cfg.orgId)}/api/v1/oauth/authorize`,
+                `${cfg.domain.replace(/\/+$/, '')}${buildPath(ROUTES['oauth.authorize'].path, { orgId: cfg.orgId })}`,
             );
             authorize.searchParams.set('response_type', 'code');
             authorize.searchParams.set('client_id', cfg.clientId);
@@ -176,7 +183,7 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
         // End the IdP session too, otherwise the next /authorize silently
         // re-issues a code and the user is never really signed out.
         const logout = new URL(
-            `${cfg.domain.replace(/\/+$/, '')}/orgs/${encodeURIComponent(cfg.orgId)}/api/v1/oauth/logout`,
+            `${cfg.domain.replace(/\/+$/, '')}${buildPath(ROUTES['oauth.logout'].path, { orgId: cfg.orgId })}`,
         );
         logout.searchParams.set('post_logout_redirect_uri', url.origin + cfg.afterSignOutUrl!);
         if (session?.idToken) logout.searchParams.set('id_token_hint', session.idToken);

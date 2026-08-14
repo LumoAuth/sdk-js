@@ -1,8 +1,14 @@
-// ─── AAuth (Agent Auth) — Node.js/TypeScript client ──────────────────
+// ─── @lumoauth/agent — the agent SDK ─────────────────────────────────
 //
-// Import via the `@lumoauth/agent` subpath. This module uses
-// `node:crypto` and is therefore Node-only (>= 18); it is intentionally
-// NOT re-exported from the package root, which stays browser-safe.
+// Two layers:
+//   - `LumoAgent` — high-level client (client-credentials auth, ask/
+//     isAllowed, jit/delegation/approvals/mcp namespaces). Python parity
+//     with `lumoauth.LumoAuthAgent`.
+//   - `AAuthClient` + signing/verify primitives — the AAuth protocol
+//     (cryptographic agent identity, RFC 9421 HTTP message signing).
+//     Uses `node:crypto`, therefore Node-only (>= 18).
+
+export { LumoAgent, type LumoAgentOptions } from './agent';
 
 export {
     AAuthClient,

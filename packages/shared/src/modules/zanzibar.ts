@@ -1,5 +1,6 @@
 import { HttpClient } from '../utils/http';
 import { LumoAuthValidationError } from '../errors';
+import { ROUTES } from '../routes';
 import {
     ZanzibarCheckRequestSchema,
     ZanzibarCheckResponseSchema,
@@ -66,7 +67,7 @@ export class ZanzibarModule {
             subject: validated.subject,
         };
 
-        const raw = await this.http.post<unknown>('/api/v1/authz/zanzibar/check', body);
+        const raw = await this.http.post<unknown>(ROUTES['zanzibar.check'].path, body);
         const result = this.validate(ZanzibarCheckResponseSchema, raw);
         return result.allowed;
     }
@@ -87,7 +88,7 @@ export class ZanzibarModule {
             subject: validated.subject,
         };
 
-        const raw = await this.http.post<unknown>('/api/v1/authz/zanzibar/check', body);
+        const raw = await this.http.post<unknown>(ROUTES['zanzibar.check'].path, body);
         return this.validate(ZanzibarCheckResponseSchema, raw);
     }
 

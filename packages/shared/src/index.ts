@@ -9,11 +9,40 @@ export { PermissionsModule, type PermissionsModuleOptions } from './modules/perm
 export { ZanzibarModule } from './modules/zanzibar';
 export { AbacModule } from './modules/abac';
 export {
+    AgentsModule,
+    // Deprecated alias for AgentsModule — kept until 2.0.
     AgentModule,
+    type AgentAskResult,
+    type AgentIdentity,
+    type AgentBudget,
+    type RegisterAgentRequest,
+} from './modules/agent';
+export {
+    ApprovalsModule,
     type RequireApprovalRequest,
     type ApprovalResult,
     type ApprovalImpact,
-} from './modules/agent';
+    type ApprovalWaitOptions,
+} from './modules/approvals';
+export {
+    DelegationModule,
+    MAX_DELEGATION_DEPTH,
+    type DelegationModuleConfig,
+} from './modules/delegation';
+export {
+    JitModule,
+    JIT_MAX_TTL,
+    type CreateTaskOptions,
+    type JitTask,
+    type RequestPermissionOptions,
+    type JitPermissionResult,
+    type EvaluateTaskOptions,
+} from './modules/jit';
+export {
+    McpModule,
+    type McpModuleConfig,
+    type McpTokenResponse,
+} from './modules/mcp';
 export {
     AuthModule,
     type AuthModuleConfig,
@@ -91,14 +120,34 @@ export type {
     ApiErrorResponse,
 } from './schemas';
 
+// ─── Routes ───────────────────────────────────────────────────────────
+// The single registry of every endpoint the SDK calls, drift-tested
+// against server/openapi.json.
+export {
+    ROUTES,
+    buildPath,
+    routePath,
+    type RouteDef,
+    type RouteMethod,
+    type RouteName,
+} from './routes';
+
 // ─── Errors ───────────────────────────────────────────────────────────
 export {
     LumoAuthError,
     LumoAuthApiError,
+    LumoAuthAuthenticationError,
+    // Deprecated alias for LumoAuthAuthenticationError — kept until 2.0.
     LumoAuthAuthError,
+    LumoAuthPermissionDeniedError,
+    LumoAuthNotFoundError,
+    LumoAuthRateLimitError,
     LumoAuthValidationError,
     LumoAuthConfigError,
     LumoAuthNetworkError,
+    LumoAuthApprovalDeniedError,
+    LumoAuthApprovalTimeoutError,
+    LumoAuthBudgetExceededError,
 } from './errors';
 
 // ─── Utilities ────────────────────────────────────────────────────────

@@ -25,6 +25,27 @@ import {
     LumoAuthApiError,
 } from '@lumoauth/shared';
 
+// Re-exported so an Express app needs only this one install: the server
+// client for imperative checks inside handlers, and the shared error
+// taxonomy for instanceof checks in error middleware.
+export {
+    LumoAuthBackend,
+    type LumoAuthBackendConfig,
+    LumoAuthError,
+    LumoAuthApiError,
+    LumoAuthAuthenticationError,
+    LumoAuthAuthError,
+    LumoAuthPermissionDeniedError,
+    LumoAuthNotFoundError,
+    LumoAuthRateLimitError,
+    LumoAuthValidationError,
+    LumoAuthConfigError,
+    LumoAuthNetworkError,
+    LumoAuthApprovalDeniedError,
+    LumoAuthApprovalTimeoutError,
+    LumoAuthBudgetExceededError,
+} from '@lumoauth/backend';
+
 // Express types are loose to avoid a direct dependency on @types/express —
 // callers bring their own types. We only need the subset we use.
 type Req = {

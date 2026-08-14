@@ -1,5 +1,6 @@
 import { generateCodeVerifier, generateCodeChallenge, generateState } from '../utils/pkce';
 import { LumoAuthApiError, LumoAuthNetworkError } from '../errors';
+import { ROUTES, buildPath, type RouteName } from '../routes';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -180,20 +181,21 @@ const EMPTY_EMAIL_CHECK: EmailCheckResult = {
  * ```
  */
 export class AuthModule {
-    private readonly baseApiUrl: string;
     private readonly baseUrl: string;
     private readonly orgId: string;
     private readonly clientId: string;
     private readonly fetchFn: typeof globalThis.fetch;
 
     constructor(config: AuthModuleConfig) {
-        const base = config.baseUrl.replace(/\/+$/, '');
-        const safeOrgId = encodeURIComponent(config.orgId);
-        this.baseUrl = base;
+        this.baseUrl = config.baseUrl.replace(/\/+$/, '');
         this.orgId = config.orgId;
-        this.baseApiUrl = `${base}/orgs/${safeOrgId}/api/v1`;
         this.clientId = config.clientId;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
+    }
+
+    /** Absolute URL for an org-scoped route from the shared registry. */
+    private routeUrl(name: RouteName): string {
+        return `${this.baseUrl}${buildPath(ROUTES[name].path, { orgId: this.orgId })}`;
     }
 
     // ── Authorization URL ────────────────────────────────────────────
@@ -221,7 +223,7 @@ export class AuthModule {
             ...(options.extraParams ?? {}),
         });
 
-        const url = `${this.baseApiUrl}/oauth/authorize?${params.toString()}`;
+        const url = `${this.routeUrl('oauth.authorize')}?${params.toString()}`;
         return { url, codeVerifier, state };
     }
 
@@ -300,7 +302,7 @@ export class AuthModule {
         }
 
         try {
-            await this.fetchFn(`${this.baseApiUrl}/oauth/revoke`, {
+            await this.fetchFn(this.routeUrl('oauth.revoke'), {
                 method: 'POST',
                 headers,
                 body: new URLSearchParams({ token }),
@@ -316,7 +318,7 @@ export class AuthModule {
      * Fetch user info from the OIDC userinfo endpoint.
      */
     async getUserInfo(accessToken: string): Promise<UserInfo> {
-        const res = await this.fetchFn(`${this.baseApiUrl}/oauth/userinfo`, {
+        const res = await this.fetchFn(this.routeUrl('oauth.userinfo'), {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 Accept: 'application/json',
@@ -350,8 +352,7 @@ export class AuthModule {
      * ```
      */
     async requestMagicLink(options: MagicLinkOptions): Promise<MagicLinkResult> {
-        const safeOrgId = encodeURIComponent(this.orgId);
-        const url = `${this.baseUrl}/orgs/${safeOrgId}/magic-link`;
+        const url = this.routeUrl('web.magicLink');
 
         const body = new URLSearchParams({ email: options.email });
         if (options.redirectUri) {
@@ -397,8 +398,7 @@ export class AuthModule {
      * ```
      */
     async checkEmailExists(email: string): Promise<EmailCheckResult> {
-        const safeOrgId = encodeURIComponent(this.orgId);
-        const url = `${this.baseUrl}/orgs/${safeOrgId}/check-email`;
+        const url = this.routeUrl('web.checkEmail');
 
         try {
             const res = await this.fetchFn(url, {
@@ -445,8 +445,7 @@ export class AuthModule {
         email: string;
         password: string;
     }): Promise<PasswordLoginResult> {
-        const safeOrgId = encodeURIComponent(this.orgId);
-        const url = `${this.baseUrl}/orgs/${safeOrgId}/api/v1/oauth/login/json`;
+        const url = this.routeUrl('oauth.loginJson');
 
         try {
             const res = await this.fetchFn(url, {
@@ -474,7 +473,7 @@ export class AuthModule {
     private async postTokenRequest(body: URLSearchParams): Promise<TokenResponse> {
         let res: Response;
         try {
-            res = await this.fetchFn(`${this.baseApiUrl}/oauth/token`, {
+            res = await this.fetchFn(this.routeUrl('oauth.token'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body,

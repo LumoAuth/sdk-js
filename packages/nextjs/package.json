@@ -33,7 +33,7 @@
         "dev": "tsup --watch",
         "typecheck": "tsc --noEmit",
         "prepublishOnly": "npm run build",
-        "test": "npm run build && node --test tests/"
+        "test": "npm run build && tsup src/session-cookie.ts --format esm -d tests/.build --silent && node --test tests/"
     },
     "keywords": [
         "lumoauth",

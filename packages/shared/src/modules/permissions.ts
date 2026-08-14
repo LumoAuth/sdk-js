@@ -1,6 +1,7 @@
 import { HttpClient } from '../utils/http';
 import { PermissionCache, type CacheOptions } from '../utils/cache';
 import { LumoAuthValidationError } from '../errors';
+import { ROUTES } from '../routes';
 import {
     CheckPermissionRequestSchema,
     CheckPermissionResponseSchema,
@@ -90,7 +91,7 @@ export class PermissionsModule {
         }
 
         const body = CheckPermissionRequestSchema.parse({ permission, context });
-        const raw = await this.http.post<unknown>('/api/v1/authz/check', body);
+        const raw = await this.http.post<unknown>(ROUTES['permissions.check'].path, body);
         const result = this.validate(CheckPermissionResponseSchema, raw);
 
         if (this.cache) {
@@ -108,7 +109,7 @@ export class PermissionsModule {
         context?: Record<string, unknown>
     ): Promise<CheckPermissionResponse> {
         const body = CheckPermissionRequestSchema.parse({ permission, context });
-        const raw = await this.http.post<unknown>('/api/v1/authz/check', body);
+        const raw = await this.http.post<unknown>(ROUTES['permissions.check'].path, body);
         return this.validate(CheckPermissionResponseSchema, raw);
     }
 
@@ -138,7 +139,7 @@ export class PermissionsModule {
         context?: Record<string, unknown>
     ): Promise<CheckBulkResponse> {
         const body = CheckBulkRequestSchema.parse({ permissions, context });
-        const raw = await this.http.post<unknown>('/api/v1/authz/check-bulk', body);
+        const raw = await this.http.post<unknown>(ROUTES['permissions.checkBulk'].path, body);
         const result = this.validate(CheckBulkResponseSchema, raw);
 
         // Populate cache from bulk results
@@ -170,7 +171,7 @@ export class PermissionsModule {
         context?: Record<string, unknown>
     ): Promise<boolean> {
         const body = CheckMultipleRequestSchema.parse({ permissions, context });
-        const raw = await this.http.post<unknown>('/api/v1/authz/check-any', body);
+        const raw = await this.http.post<unknown>(ROUTES['permissions.checkAny'].path, body);
         const result = this.validate(CheckMultipleResponseSchema, raw);
         return result.allowed;
     }
@@ -191,7 +192,7 @@ export class PermissionsModule {
         context?: Record<string, unknown>
     ): Promise<boolean> {
         const body = CheckMultipleRequestSchema.parse({ permissions, context });
-        const raw = await this.http.post<unknown>('/api/v1/authz/check-all', body);
+        const raw = await this.http.post<unknown>(ROUTES['permissions.checkAll'].path, body);
         const result = this.validate(CheckMultipleResponseSchema, raw);
         return result.allowed;
     }
@@ -204,7 +205,7 @@ export class PermissionsModule {
         context?: Record<string, unknown>
     ): Promise<CheckMultipleResponse> {
         const body = CheckMultipleRequestSchema.parse({ permissions, context });
-        const raw = await this.http.post<unknown>('/api/v1/authz/check-any', body);
+        const raw = await this.http.post<unknown>(ROUTES['permissions.checkAny'].path, body);
         return this.validate(CheckMultipleResponseSchema, raw);
     }
 
@@ -213,7 +214,7 @@ export class PermissionsModule {
         context?: Record<string, unknown>
     ): Promise<CheckMultipleResponse> {
         const body = CheckMultipleRequestSchema.parse({ permissions, context });
-        const raw = await this.http.post<unknown>('/api/v1/authz/check-all', body);
+        const raw = await this.http.post<unknown>(ROUTES['permissions.checkAll'].path, body);
         return this.validate(CheckMultipleResponseSchema, raw);
     }
 
@@ -234,7 +235,7 @@ export class PermissionsModule {
      * ```
      */
     async list(): Promise<ListPermissionsResponse> {
-        const raw = await this.http.get<unknown>('/api/v1/authz/permissions');
+        const raw = await this.http.get<unknown>(ROUTES['permissions.list'].path);
         return this.validate(ListPermissionsResponseSchema, raw);
     }
 

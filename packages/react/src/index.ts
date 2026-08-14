@@ -1,6 +1,10 @@
 // ─── @lumoauth/react ──────────────────────────────────────────────────
 // Drop-in authentication components and hooks for React & Next.js.
 
+// The underlying browser client, so apps need only one install to reach
+// the imperative surface (permissions/zanzibar/abac/auth modules).
+export { LumoAuth, type LumoAuthConfig } from '@lumoauth/client';
+
 // Provider
 export { LumoAuthProvider } from './provider';
 
