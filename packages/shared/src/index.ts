@@ -25,6 +25,8 @@ export {
     type MagicLinkOptions,
     type MagicLinkResult,
     type EmailCheckResult,
+    type PasswordLoginResult,
+    type PasswordLoginStatus,
 } from './modules/auth';
 
 // ─── PKCE Utilities ───────────────────────────────────────────────────

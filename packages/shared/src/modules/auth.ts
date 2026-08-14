@@ -124,6 +124,23 @@ export interface EmailCheckResult {
  * unknown identifier). Every capability is false, so callers fall back to the
  * hosted page rather than offering a method that will not work.
  */
+/** Outcome of a JSON credential login. */
+export type PasswordLoginStatus =
+    | 'complete'
+    | 'mfa_required'
+    | 'invalid_credentials'
+    | 'blocked'
+    | 'inactive'
+    | 'rate_limited'
+    | 'invalid_request'
+    | 'error';
+
+export interface PasswordLoginResult {
+    status: PasswordLoginStatus;
+    /** Where to send the user to satisfy the second factor, when `mfa_required`. */
+    challengeUrl?: string;
+}
+
 const EMPTY_EMAIL_CHECK: EmailCheckResult = {
     exists: false,
     hasPasskey: false,
@@ -409,6 +426,46 @@ export class AuthModule {
             };
         } catch {
             return EMPTY_EMAIL_CHECK;
+        }
+    }
+
+    /**
+     * Sign in with an email and password, without leaving your app.
+     *
+     * This is what lets you render your own sign-in form. It authenticates and
+     * establishes the session; it does NOT return tokens. On `complete`,
+     * continue the normal PKCE flow — `/authorize` now issues a code without
+     * showing the hosted login page, so the redirect is invisible to the user.
+     *
+     * Credentials are sent to the LumoAuth origin, so the request needs
+     * `credentials: 'include'` and the origin must be in the client's allowed
+     * origins, exactly as the token exchange does.
+     */
+    async loginWithPassword(params: {
+        email: string;
+        password: string;
+    }): Promise<PasswordLoginResult> {
+        const safeOrgId = encodeURIComponent(this.orgId);
+        const url = `${this.baseUrl}/orgs/${safeOrgId}/api/v1/oauth/login/json`;
+
+        try {
+            const res = await this.fetchFn(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ email: params.email, password: params.password }),
+            });
+            const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+            const status = typeof data.status === 'string' ? data.status : 'error';
+            return {
+                status: status as PasswordLoginStatus,
+                challengeUrl:
+                    typeof data.challenge_url === 'string' ? data.challenge_url : undefined,
+            };
+        } catch {
+            // Network failure is reported as its own status rather than thrown,
+            // so a sign-in form can render one error path for every outcome.
+            return { status: 'error' };
         }
     }
 

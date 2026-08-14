@@ -1112,6 +1112,38 @@ var AuthModule = class {
       return EMPTY_EMAIL_CHECK;
     }
   }
+  /**
+   * Sign in with an email and password, without leaving your app.
+   *
+   * This is what lets you render your own sign-in form. It authenticates and
+   * establishes the session; it does NOT return tokens. On `complete`,
+   * continue the normal PKCE flow — `/authorize` now issues a code without
+   * showing the hosted login page, so the redirect is invisible to the user.
+   *
+   * Credentials are sent to the LumoAuth origin, so the request needs
+   * `credentials: 'include'` and the origin must be in the client's allowed
+   * origins, exactly as the token exchange does.
+   */
+  async loginWithPassword(params) {
+    const safeOrgId = encodeURIComponent(this.orgId);
+    const url = `${this.baseUrl}/orgs/${safeOrgId}/api/v1/oauth/login/json`;
+    try {
+      const res = await this.fetchFn(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: params.email, password: params.password })
+      });
+      const data = await res.json().catch(() => ({}));
+      const status = typeof data.status === "string" ? data.status : "error";
+      return {
+        status,
+        challengeUrl: typeof data.challenge_url === "string" ? data.challenge_url : void 0
+      };
+    } catch {
+      return { status: "error" };
+    }
+  }
   // ── Internal ─────────────────────────────────────────────────────
   async postTokenRequest(body) {
     let res;

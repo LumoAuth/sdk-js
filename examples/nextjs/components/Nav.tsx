@@ -5,6 +5,7 @@ import Link from 'next/link';
 const ROUTES: Array<[string, string]> = [
     ['/', 'Home'],
     ['/sign-in', 'Sign in'],
+    ['/embedded', 'Embedded'],
     ['/sign-up', 'Sign up'],
     ['/dashboard', 'Dashboard'],
     ['/authorization', 'Authorization'],

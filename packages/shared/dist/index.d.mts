@@ -1060,6 +1060,18 @@ interface EmailCheckResult {
     pushLoginUrl?: string;
 }
 /**
+ * Returned when discovery is unavailable (network error, rate limit, or an
+ * unknown identifier). Every capability is false, so callers fall back to the
+ * hosted page rather than offering a method that will not work.
+ */
+/** Outcome of a JSON credential login. */
+type PasswordLoginStatus = 'complete' | 'mfa_required' | 'invalid_credentials' | 'blocked' | 'inactive' | 'rate_limited' | 'invalid_request' | 'error';
+interface PasswordLoginResult {
+    status: PasswordLoginStatus;
+    /** Where to send the user to satisfy the second factor, when `mfa_required`. */
+    challengeUrl?: string;
+}
+/**
  * Handles OAuth 2.0 Authorization Code + PKCE flow, token exchange,
  * refresh, revocation, and user info retrieval.
  *
@@ -1154,6 +1166,22 @@ declare class AuthModule {
      * ```
      */
     checkEmailExists(email: string): Promise<EmailCheckResult>;
+    /**
+     * Sign in with an email and password, without leaving your app.
+     *
+     * This is what lets you render your own sign-in form. It authenticates and
+     * establishes the session; it does NOT return tokens. On `complete`,
+     * continue the normal PKCE flow — `/authorize` now issues a code without
+     * showing the hosted login page, so the redirect is invisible to the user.
+     *
+     * Credentials are sent to the LumoAuth origin, so the request needs
+     * `credentials: 'include'` and the origin must be in the client's allowed
+     * origins, exactly as the token exchange does.
+     */
+    loginWithPassword(params: {
+        email: string;
+        password: string;
+    }): Promise<PasswordLoginResult>;
     private postTokenRequest;
 }
 
@@ -1215,4 +1243,4 @@ declare class LumoAuthNetworkError extends LumoAuthError {
     constructor(message: string, cause?: unknown);
 }
 
-export { type AbacAttributeDefinition, AbacAttributeDefinitionSchema, type AbacBulkCheckRequest, AbacBulkCheckRequestSchema, type AbacBulkCheckResponse, AbacBulkCheckResponseSchema, type AbacCheckRequest, AbacCheckRequestSchema, type AbacCheckResponse, AbacCheckResponseSchema, type AbacCondition, AbacConditionSchema, type AbacGroupCondition, type AbacLeafCondition, AbacMatchedPolicySchema, AbacModule, type AbacResourceAttributesResponse, AbacResourceAttributesResponseSchema, type AbacUserAttributesResponse, AbacUserAttributesResponseSchema, AgentModule, type ApiErrorResponse, ApiErrorResponseSchema, type ApprovalImpact, type ApprovalResult, AuthModule, type AuthModuleConfig, type AuthorizationUrlOptions, type AuthorizationUrlResult, type CacheOptions, type CheckBulkRequest, CheckBulkRequestSchema, type CheckBulkResponse, CheckBulkResponseSchema, type CheckMultipleRequest, CheckMultipleRequestSchema, type CheckMultipleResponse, CheckMultipleResponseSchema, type CheckPermissionRequest, CheckPermissionRequestSchema, type CheckPermissionResponse, CheckPermissionResponseSchema, type EmailCheckResult, HttpClient, type HttpClientConfig, type ListPermissionsResponse, ListPermissionsResponseSchema, LumoAuthApiError, LumoAuthAuthError, LumoAuthConfigError, LumoAuthError, LumoAuthNetworkError, LumoAuthValidationError, type MagicLinkOptions, type MagicLinkResult, PermissionCache, type PermissionObject, PermissionObjectSchema, PermissionsModule, type PermissionsModuleOptions, type RequireApprovalRequest, type TokenExchangeOptions, type TokenResponse, type UserInfo, type ZanzibarCheckRequest, ZanzibarCheckRequestSchema, type ZanzibarCheckResponse, ZanzibarCheckResponseSchema, ZanzibarModule, generateCodeChallenge, generateCodeVerifier, generateState };
+export { type AbacAttributeDefinition, AbacAttributeDefinitionSchema, type AbacBulkCheckRequest, AbacBulkCheckRequestSchema, type AbacBulkCheckResponse, AbacBulkCheckResponseSchema, type AbacCheckRequest, AbacCheckRequestSchema, type AbacCheckResponse, AbacCheckResponseSchema, type AbacCondition, AbacConditionSchema, type AbacGroupCondition, type AbacLeafCondition, AbacMatchedPolicySchema, AbacModule, type AbacResourceAttributesResponse, AbacResourceAttributesResponseSchema, type AbacUserAttributesResponse, AbacUserAttributesResponseSchema, AgentModule, type ApiErrorResponse, ApiErrorResponseSchema, type ApprovalImpact, type ApprovalResult, AuthModule, type AuthModuleConfig, type AuthorizationUrlOptions, type AuthorizationUrlResult, type CacheOptions, type CheckBulkRequest, CheckBulkRequestSchema, type CheckBulkResponse, CheckBulkResponseSchema, type CheckMultipleRequest, CheckMultipleRequestSchema, type CheckMultipleResponse, CheckMultipleResponseSchema, type CheckPermissionRequest, CheckPermissionRequestSchema, type CheckPermissionResponse, CheckPermissionResponseSchema, type EmailCheckResult, HttpClient, type HttpClientConfig, type ListPermissionsResponse, ListPermissionsResponseSchema, LumoAuthApiError, LumoAuthAuthError, LumoAuthConfigError, LumoAuthError, LumoAuthNetworkError, LumoAuthValidationError, type MagicLinkOptions, type MagicLinkResult, type PasswordLoginResult, type PasswordLoginStatus, PermissionCache, type PermissionObject, PermissionObjectSchema, PermissionsModule, type PermissionsModuleOptions, type RequireApprovalRequest, type TokenExchangeOptions, type TokenResponse, type UserInfo, type ZanzibarCheckRequest, ZanzibarCheckRequestSchema, type ZanzibarCheckResponse, ZanzibarCheckResponseSchema, ZanzibarModule, generateCodeChallenge, generateCodeVerifier, generateState };
