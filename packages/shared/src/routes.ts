@@ -26,6 +26,7 @@ export const ROUTES = {
 
     // ── Zanzibar (ReBAC) ──────────────────────────────────────────────
     'zanzibar.check': { method: 'POST', path: '/api/v1/authz/zanzibar/check' },
+    'zanzibar.expand': { method: 'POST', path: '/api/v1/authz/zanzibar/expand' },
 
     // ── ABAC — org-scoped ─────────────────────────────────────────────
     'abac.check': { method: 'POST', path: '/orgs/{orgId}/api/v1/abac/check' },

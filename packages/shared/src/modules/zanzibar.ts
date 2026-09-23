@@ -4,7 +4,10 @@ import { ROUTES } from '../routes';
 import {
     ZanzibarCheckRequestSchema,
     ZanzibarCheckResponseSchema,
+    ZanzibarExpandRequestSchema,
+    ZanzibarExpandResponseSchema,
     type ZanzibarCheckResponse,
+    type ZanzibarUsersetNode,
 } from '../schemas';
 
 // ─── Module ───────────────────────────────────────────────────────────
@@ -90,6 +93,46 @@ export class ZanzibarModule {
 
         const raw = await this.http.post<unknown>(ROUTES['zanzibar.check'].path, body);
         return this.validate(ZanzibarCheckResponseSchema, raw);
+    }
+
+    /**
+     * Expand `object#relation` into the full userset tree — every subject
+     * that satisfies the relation, including the ones reached through
+     * namespace rewrites.
+     *
+     * This is the inverse of {@link check}: `check` answers "does this one
+     * subject have the relation", `expand` answers "who has it at all".
+     *
+     * Expansion always reveals other subjects, so the server requires the
+     * oracle privilege (the `authz.check` permission or the `authz:check`
+     * scope). There is no self-service variant — a token that can only
+     * check itself gets a 403.
+     *
+     * @param params.object   Resource as `namespace:id` (e.g. `"document:123"`)
+     * @param params.relation Relation to expand (e.g. `"viewer"`)
+     * @returns The root node of the userset tree
+     *
+     * @example
+     * ```ts
+     * const tree = await client.zanzibar.expand({
+     *   object: 'document:q4-report',
+     *   relation: 'viewer',
+     * });
+     * // tree.type === 'union'
+     * // tree.children?.[0].subjects === ['user:alice', 'team:eng#member']
+     * ```
+     */
+    async expand(params: {
+        object: string;
+        relation: string;
+    }): Promise<ZanzibarUsersetNode> {
+        const validated = ZanzibarExpandRequestSchema.parse(params);
+
+        const raw = await this.http.post<unknown>(ROUTES['zanzibar.expand'].path, {
+            object: validated.object,
+            relation: validated.relation,
+        });
+        return this.validate(ZanzibarExpandResponseSchema, raw).tree;
     }
 
     // ── Convenience helpers ───────────────────────────────────────────

@@ -79,6 +79,9 @@ export {
     // Zanzibar
     ZanzibarCheckRequestSchema,
     ZanzibarCheckResponseSchema,
+    ZanzibarExpandRequestSchema,
+    ZanzibarExpandResponseSchema,
+    ZanzibarUsersetNodeSchema,
     // ABAC
     AbacCheckRequestSchema,
     AbacCheckResponseSchema,
@@ -106,6 +109,9 @@ export type {
     // Zanzibar
     ZanzibarCheckRequest,
     ZanzibarCheckResponse,
+    ZanzibarExpandRequest,
+    ZanzibarExpandResponse,
+    ZanzibarUsersetNode,
     // ABAC
     AbacCheckRequest,
     AbacCheckResponse,

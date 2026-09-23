@@ -94,6 +94,41 @@ export const ZanzibarCheckResponseSchema = z.object({
 });
 export type ZanzibarCheckResponse = z.infer<typeof ZanzibarCheckResponseSchema>;
 
+/** Request: Zanzibar userset expansion */
+export const ZanzibarExpandRequestSchema = ZanzibarCheckRequestSchema.omit({ subject: true });
+export type ZanzibarExpandRequest = z.infer<typeof ZanzibarExpandRequestSchema>;
+
+/**
+ * A node in a Zanzibar userset tree. `leaf` nodes carry `subjects`;
+ * `union` / `intersection` nodes carry `children` of the same shape.
+ *
+ * Recursive, so it needs an explicit interface + `z.lazy` — the same
+ * pattern `AbacConditionSchema` uses.
+ */
+export interface ZanzibarUsersetNode {
+    type: 'union' | 'intersection' | 'leaf';
+    object: string;
+    relation: string;
+    children?: ZanzibarUsersetNode[];
+    subjects?: string[];
+}
+
+export const ZanzibarUsersetNodeSchema: z.ZodType<ZanzibarUsersetNode> = z.lazy(() =>
+    z.object({
+        type: z.enum(['union', 'intersection', 'leaf']),
+        object: z.string(),
+        relation: z.string(),
+        children: z.array(ZanzibarUsersetNodeSchema).optional(),
+        subjects: z.array(z.string()).optional(),
+    })
+);
+
+/** Response: Zanzibar userset expansion */
+export const ZanzibarExpandResponseSchema = z.object({
+    tree: ZanzibarUsersetNodeSchema,
+});
+export type ZanzibarExpandResponse = z.infer<typeof ZanzibarExpandResponseSchema>;
+
 // ─── ABAC Schemas ─────────────────────────────────────────────────────
 
 /** ABAC condition */
