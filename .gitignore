@@ -36,3 +36,6 @@ lerna-debug.log*
 # Next.js example build output
 .next/
 out/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
