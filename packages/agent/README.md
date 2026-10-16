@@ -112,7 +112,7 @@ construction time.
 | `agents` | Agent identity | `ask`, `isAllowed`, `me`, `capabilities`, `budget` |
 | `approvals` | Push approval for agent actions | `require` (send and wait), `getStatus`, `wait` |
 | `jit` | Just-in-time permissions: ephemeral tasks and scoped tokens | `createTask`, `requestPermission`, `getRequestStatus`, `getToken`, `evaluateTask`, `completeTask`, `listPendingRequests` |
-| `delegation` | Chain of Agency (RFC 8693): act on a user's behalf, or hand work to a sub-agent | `getConsentUrl`, `handleConsentCallback`, `exchange`, `delegateToSubAgent`, `revoke`, `revokeAll` |
+| `delegation` | Chain of Agency (RFC 8693): act on a user's behalf, or hand work to a sub-agent. `exchange` / `delegateToSubAgent` take an optional `{ subjectTokenType, actorTokenType }` from `TOKEN_TYPES` (`ACCESS_TOKEN` default, `JWT` for an at+jwt access token or external workload JWT, `ID_TOKEN` for an OpenID Connect ID token, `REFRESH_TOKEN`); the server refuses a token that does not match its declared type | `getConsentUrl`, `handleConsentCallback`, `exchange`, `delegateToSubAgent`, `revoke`, `revokeAll` |
 | `mcp` | Token exchange for secured MCP servers | `getToken`, `getTokenDetailed` |
 
 Errors are the shared taxonomy from [`@lumoauth/shared`](../shared/README.md),

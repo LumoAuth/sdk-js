@@ -28,6 +28,9 @@ export {
     DelegationModule,
     MAX_DELEGATION_DEPTH,
     type DelegationModuleConfig,
+    TOKEN_TYPES,
+    type TokenType,
+    type TokenExchangeTypeOptions,
 } from './modules/delegation';
 export {
     JitModule,

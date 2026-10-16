@@ -72,3 +72,13 @@ test('error taxonomy matches the contract', { skip: !CONTRACT && 'sdk-contract n
         assert.ok(e instanceof Error);
     }
 });
+
+test('token exchange types match the contract', { skip: !CONTRACT && 'sdk-contract not found' }, () => {
+    const { types } = load('token-types.json');
+    assert.ok(sdk.TOKEN_TYPES, 'TOKEN_TYPES is not exported');
+    for (const [key, spec] of Object.entries(types)) {
+        const name = spec.names.js.replace(/^TOKEN_TYPES\./, '');
+        assert.equal(sdk.TOKEN_TYPES[name], spec.urn, `${key} (${spec.names.js})`);
+    }
+    assert.equal(Object.keys(sdk.TOKEN_TYPES).length, Object.keys(types).length, 'TOKEN_TYPES and the contract list the same types');
+});

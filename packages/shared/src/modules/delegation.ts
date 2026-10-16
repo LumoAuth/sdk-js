@@ -24,8 +24,37 @@ import { ROUTES, buildPath } from '../routes';
  */
 
 // RFC 8693 constants
-const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
+
+/**
+ * RFC 8693 `subject_token_type` / `actor_token_type` values the token endpoint
+ * accepts (sdk-contract/token-types.json). The server checks the token against
+ * the declared type and answers a mismatch with `invalid_grant`:
+ *
+ * - `ACCESS_TOKEN` — an opaque or `at+jwt` access token issued by the organization (the default);
+ * - `JWT` — an `at+jwt` access token, or an external workload identity token (Kubernetes, AWS, GCP, Azure, GitHub, SPIFFE);
+ * - `ID_TOKEN` — an OpenID Connect ID token issued by the organization to the exchanging client;
+ * - `REFRESH_TOKEN` — a refresh token issued to the exchanging client.
+ *
+ * JIT permission tokens, logout tokens, transaction tokens and other
+ * special-purpose JWTs are never accepted under any type.
+ */
+export const TOKEN_TYPES = {
+    ACCESS_TOKEN: 'urn:ietf:params:oauth:token-type:access_token',
+    JWT: 'urn:ietf:params:oauth:token-type:jwt',
+    ID_TOKEN: 'urn:ietf:params:oauth:token-type:id_token',
+    REFRESH_TOKEN: 'urn:ietf:params:oauth:token-type:refresh_token',
+} as const;
+
+export type TokenType = (typeof TOKEN_TYPES)[keyof typeof TOKEN_TYPES];
+
+/** Which RFC 8693 type the subject / actor token is; both default to {@link TOKEN_TYPES.ACCESS_TOKEN}. */
+export interface TokenExchangeTypeOptions {
+    subjectTokenType?: TokenType;
+    actorTokenType?: TokenType;
+}
+
+const ACCESS_TOKEN_TYPE = TOKEN_TYPES.ACCESS_TOKEN;
 
 /** Maximum delegation depth enforced by LumoAuth. */
 export const MAX_DELEGATION_DEPTH = 3;
@@ -163,16 +192,16 @@ export class DelegationModule {
      * Perform an RFC 8693 token exchange: user token (subject) + agent
      * token (actor) → delegated token carrying an `act` claim.
      */
-    async exchange(sessionId: string, scopes?: string[]): Promise<string> {
+    async exchange(sessionId: string, scopes?: string[], types: TokenExchangeTypeOptions = {}): Promise<string> {
         const user = await this.ensureUserToken(sessionId);
         const actorToken = await this.agentToken();
 
         const form: Record<string, string> = {
             grant_type: TOKEN_EXCHANGE_GRANT,
             subject_token: user.accessToken,
-            subject_token_type: ACCESS_TOKEN_TYPE,
+            subject_token_type: types.subjectTokenType ?? ACCESS_TOKEN_TYPE,
             actor_token: actorToken,
-            actor_token_type: ACCESS_TOKEN_TYPE,
+            actor_token_type: types.actorTokenType ?? ACCESS_TOKEN_TYPE,
         };
         if (scopes?.length) form.scope = scopes.join(' ');
 
@@ -227,6 +256,7 @@ export class DelegationModule {
         sessionId: string,
         subAgentToken: string,
         scopes?: string[],
+        types: TokenExchangeTypeOptions = {},
     ): Promise<string> {
         let ourToken = this.delegatedTokens.get(sessionId);
         if (!ourToken) ourToken = await this.exchange(sessionId);
@@ -234,9 +264,9 @@ export class DelegationModule {
         const form: Record<string, string> = {
             grant_type: TOKEN_EXCHANGE_GRANT,
             subject_token: ourToken,
-            subject_token_type: ACCESS_TOKEN_TYPE,
+            subject_token_type: types.subjectTokenType ?? ACCESS_TOKEN_TYPE,
             actor_token: subAgentToken,
-            actor_token_type: ACCESS_TOKEN_TYPE,
+            actor_token_type: types.actorTokenType ?? ACCESS_TOKEN_TYPE,
         };
         if (scopes?.length) form.scope = scopes.join(' ');
 
