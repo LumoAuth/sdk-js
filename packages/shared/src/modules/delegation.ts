@@ -34,7 +34,10 @@ const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
  * - `ACCESS_TOKEN` — an opaque or `at+jwt` access token issued by the organization (the default);
  * - `JWT` — an `at+jwt` access token, or an external workload identity token (Kubernetes, AWS, GCP, Azure, GitHub, SPIFFE);
  * - `ID_TOKEN` — an OpenID Connect ID token issued by the organization to the exchanging client;
- * - `REFRESH_TOKEN` — a refresh token issued to the exchanging client.
+ * - `REFRESH_TOKEN` — a refresh token issued to the exchanging client. Not
+ *   accepted as the subject when an agent acts on a user's behalf (the
+ *   on-behalf-of exchange `exchange()` performs): the server answers 400
+ *   `invalid_request`.
  *
  * JIT permission tokens, logout tokens, transaction tokens and other
  * special-purpose JWTs are never accepted under any type.
@@ -48,10 +51,21 @@ export const TOKEN_TYPES = {
 
 export type TokenType = (typeof TOKEN_TYPES)[keyof typeof TOKEN_TYPES];
 
-/** Which RFC 8693 type the subject / actor token is; both default to {@link TOKEN_TYPES.ACCESS_TOKEN}. */
+/**
+ * Options for `exchange()` / `delegateToSubAgent()`: which RFC 8693 type the
+ * subject / actor token is (both default to {@link TOKEN_TYPES.ACCESS_TOKEN}),
+ * and the API the delegated token is for.
+ */
 export interface TokenExchangeTypeOptions {
     subjectTokenType?: TokenType;
     actorTokenType?: TokenType;
+    /**
+     * RFC 8707 resource indicator — the absolute https URL of the API the
+     * delegated token will be sent to. It becomes the token's `aud`; without
+     * it the server binds the token to the acting agent's id, which a
+     * resource server checking `aud` will refuse.
+     */
+    resource?: string;
 }
 
 const ACCESS_TOKEN_TYPE = TOKEN_TYPES.ACCESS_TOKEN;
@@ -204,6 +218,7 @@ export class DelegationModule {
             actor_token_type: types.actorTokenType ?? ACCESS_TOKEN_TYPE,
         };
         if (scopes?.length) form.scope = scopes.join(' ');
+        if (types.resource) form.resource = types.resource;
 
         const token = await this.performExchange(form, 'Token exchange');
         this.delegatedTokens.set(sessionId, token);
@@ -269,6 +284,7 @@ export class DelegationModule {
             actor_token_type: types.actorTokenType ?? ACCESS_TOKEN_TYPE,
         };
         if (scopes?.length) form.scope = scopes.join(' ');
+        if (types.resource) form.resource = types.resource;
 
         return this.performExchange(form, 'Nested delegation');
     }

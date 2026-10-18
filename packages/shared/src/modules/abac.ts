@@ -27,6 +27,12 @@ import { z } from 'zod';
  * Evaluate fine-grained access policies based on user attributes,
  * resource attributes, and environment context (time, IP, etc.).
  *
+ * `ip`, `userAgent`, `requestMethod` and `requestPath` in the environment
+ * always describe the request LumoAuth received (your server's call), never
+ * values you pass. A value you send under one of those names is kept as
+ * `pep.<name>` instead — forward the end user's IP as `context: { pep: { ip } }`
+ * and write policies against `pep.ip`.
+ *
  * @example
  * ```ts
  * // Check if user can read a classified document
