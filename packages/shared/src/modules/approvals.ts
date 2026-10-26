@@ -80,6 +80,11 @@ export class ApprovalsModule {
      * decision. Returns once approved/denied/expired, or after `timeoutMs`
      * (in which case `status` is whatever the server last reported —
      * usually `'pending'`).
+     *
+     * A portal "test token" is refused with 403 `test_token_not_accepted`.
+     * When the user has no enrolled device, the server emails a plain
+     * notification (it carries no sign-in link) and answers 202
+     * `email_fallback_sent`.
      */
     async require(req: RequireApprovalRequest): Promise<ApprovalResult> {
         const created = await this.http.post<CreateResponse>(

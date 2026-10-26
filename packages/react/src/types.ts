@@ -62,6 +62,13 @@ export interface LumoAuthProviderProps {
     authStrategy?: 'pkce' | 'password';
     /** OAuth redirect URI for the callback page (required for PKCE mode) */
     redirectUri?: string;
+    /**
+     * Space-separated OAuth scopes to request at sign-in and sign-up.
+     * Default: `"openid profile email"`. Add `abac:read` for `useAbac` and
+     * `<Protect abac>`, and `authz:read` for `listSlugs()` / `permissions.list()`.
+     * The application must also be allowed to request each scope.
+     */
+    scope?: string;
     /** URL to redirect after sign-in (defaults to current page) */
     afterSignInUrl?: string;
     /** URL to redirect after sign-up */

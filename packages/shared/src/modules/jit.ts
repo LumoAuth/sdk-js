@@ -219,7 +219,11 @@ export class JitModule {
 
     // ── Oversight ─────────────────────────────────────────────────────
 
-    /** List pending HITL approval requests. */
+    /**
+     * List pending HITL approval requests. This is the human reviewer's view:
+     * it needs a browser session or a user access token with the
+     * `jit:approve` scope, never an agent or JIT token.
+     */
     async listPendingRequests(): Promise<Array<Record<string, unknown>>> {
         const data = await this.http.get<unknown>(
             buildPath(ROUTES['jit.pending'].path, { orgId: this.requireOrgId() }),

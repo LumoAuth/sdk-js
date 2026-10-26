@@ -99,6 +99,9 @@ function parseUserFromUserInfo(data: Record<string, unknown>): LumoAuthUser {
     };
 }
 
+/** Scopes requested when the provider gets no `scope` prop. */
+const DEFAULT_SCOPE = 'openid profile email';
+
 // ─── Provider Component ───────────────────────────────────────────────
 
 export function LumoAuthProvider({
@@ -107,6 +110,7 @@ export function LumoAuthProvider({
     clientId,
     authStrategy = 'pkce',
     redirectUri,
+    scope = DEFAULT_SCOPE,
     afterSignInUrl,
     afterSignUpUrl,
     afterSignOutUrl,
@@ -224,21 +228,21 @@ export function LumoAuthProvider({
     const signInWithRedirect = useCallback(() => {
         authModule.buildAuthorizationUrl({
             redirectUri: resolvedRedirectUri,
-            scope: 'openid profile email',
+            scope,
         }).then(({ url, codeVerifier, state: stateParam }) => {
             savePkceParams(codeVerifier, stateParam);
             if (typeof window !== 'undefined') {
                 window.location.href = url;
             }
         });
-    }, [authModule, resolvedRedirectUri]);
+    }, [authModule, resolvedRedirectUri, scope]);
 
     // ── Sign In with Social (PKCE) ───────────────────────────────────
 
     const signInWithSocial = useCallback((provider: string) => {
         authModule.buildAuthorizationUrl({
             redirectUri: resolvedRedirectUri,
-            scope: 'openid profile email',
+            scope,
             extraParams: { provider },
         }).then(({ url, codeVerifier, state: stateParam }) => {
             savePkceParams(codeVerifier, stateParam);
@@ -246,7 +250,7 @@ export function LumoAuthProvider({
                 window.location.href = url;
             }
         });
-    }, [authModule, resolvedRedirectUri]);
+    }, [authModule, resolvedRedirectUri, scope]);
 
     // ── Sign In (unified) ────────────────────────────────────────────
 
@@ -268,7 +272,7 @@ export function LumoAuthProvider({
             const data = await authModule.passwordGrant(
                 email,
                 password,
-                'openid profile email',
+                scope,
                 redirectUri
             );
 
@@ -281,7 +285,7 @@ export function LumoAuthProvider({
             dispatch({ type: 'ERROR', error: err instanceof Error ? err.message : 'Sign in failed' });
             throw err;
         }
-    }, [authStrategy, authModule, redirectUri, fetchUser, session, signInWithRedirect, dispatch]);
+    }, [authStrategy, authModule, redirectUri, scope, fetchUser, session, signInWithRedirect, dispatch]);
 
     // ── Handle OAuth Callback (PKCE) ─────────────────────────────────
 
@@ -382,7 +386,7 @@ export function LumoAuthProvider({
                     client_id: clientId,
                     redirect_uri: resolvedRedirectUri,
                     response_type: 'code',
-                    scope: 'openid profile email',
+                    scope,
                 }).toString();
             if (typeof window !== 'undefined') {
                 window.location.href = signUpUrl;
@@ -411,7 +415,7 @@ export function LumoAuthProvider({
             `registration page (${domain.replace(/\/+$/, '')}/orgs/${encodeURIComponent(orgId)}/register), ` +
             'or set authStrategy: "pkce".',
         );
-    }, [authStrategy, domain, orgId, clientId, resolvedRedirectUri, signIn]);
+    }, [authStrategy, domain, orgId, clientId, resolvedRedirectUri, scope, signIn]);
 
     // ── Magic Link ───────────────────────────────────────────────────
 

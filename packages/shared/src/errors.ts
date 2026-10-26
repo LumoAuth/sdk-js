@@ -6,7 +6,7 @@
 //   LumoAuthError
 //   ├── LumoAuthApiError                      (any 4xx/5xx response)
 //   │   ├── LumoAuthAuthenticationError      (401, AUTHENTICATION_ERROR)
-//   │   ├── LumoAuthPermissionDeniedError    (403, PERMISSION_DENIED)
+//   │   ├── LumoAuthPermissionDeniedError    (403, PERMISSION_DENIED, requiredScopes)
 //   │   ├── LumoAuthNotFoundError            (404, NOT_FOUND)
 //   │   └── LumoAuthRateLimitError           (429, RATE_LIMITED)
 //   ├── LumoAuthValidationError               (VALIDATION_ERROR)
@@ -69,12 +69,32 @@ export type LumoAuthAuthError = LumoAuthAuthenticationError;
 
 /**
  * Thrown when the caller is authenticated but not allowed (HTTP 403).
+ *
+ * When a route needs a user-delegated OAuth scope the credential lacks (for
+ * example `authz:read` on `permissions.list()`), the server answers
+ * `{"error":"forbidden","message":"Insufficient scope: …","status":403,
+ * "details":{"required_scopes":["authz:read"],"granted_scopes":[…]}}`.
+ * {@link requiredScopes} lists the scopes it named; it is empty for a plain
+ * permission denial.
  */
 export class LumoAuthPermissionDeniedError extends LumoAuthApiError {
+    /** Scopes named in `details.required_scopes` of a 403 scope refusal; `[]` otherwise. */
+    public readonly requiredScopes: string[];
+
     constructor(message = 'Permission denied.', body?: unknown) {
         super(message, 'PERMISSION_DENIED', 403, body);
         this.name = 'LumoAuthPermissionDeniedError';
+        this.requiredScopes = extractRequiredScopes(body);
     }
+}
+
+function extractRequiredScopes(body: unknown): string[] {
+    if (typeof body !== 'object' || body === null) return [];
+    const details = (body as Record<string, unknown>).details;
+    if (typeof details !== 'object' || details === null) return [];
+    const raw = (details as Record<string, unknown>).required_scopes;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((s): s is string => typeof s === 'string' && s !== '');
 }
 
 /**

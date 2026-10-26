@@ -40,7 +40,9 @@ const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
  *   `invalid_request`.
  *
  * JIT permission tokens, logout tokens, transaction tokens and other
- * special-purpose JWTs are never accepted under any type.
+ * special-purpose JWTs are never accepted under any type. The subject must
+ * still be an active principal: a deactivated or blocked user, or a suspended
+ * agent, is refused with `invalid_grant`.
  */
 export const TOKEN_TYPES = {
     ACCESS_TOKEN: 'urn:ietf:params:oauth:token-type:access_token',

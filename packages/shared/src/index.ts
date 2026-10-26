@@ -5,7 +5,7 @@
 // server-only surfaces live in @lumoauth/client and @lumoauth/backend.
 
 // ─── Modules ──────────────────────────────────────────────────────────
-export { PermissionsModule, type PermissionsModuleOptions } from './modules/permissions';
+export { PermissionsModule, type PermissionsModuleOptions, type CheckSubjectOptions } from './modules/permissions';
 export { ZanzibarModule } from './modules/zanzibar';
 export { AbacModule } from './modules/abac';
 export {
@@ -71,6 +71,7 @@ export {
 // ─── Schemas (Zod) ────────────────────────────────────────────────────
 export {
     // Permissions
+    CheckSubjectSchema,
     CheckPermissionRequestSchema,
     CheckPermissionResponseSchema,
     CheckBulkRequestSchema,
@@ -86,7 +87,10 @@ export {
     ZanzibarExpandResponseSchema,
     ZanzibarUsersetNodeSchema,
     // ABAC
+    AbacContextSchema,
     AbacCheckRequestSchema,
+    AbacBulkCheckItemSchema,
+    AbacBulkCheckResultSchema,
     AbacCheckResponseSchema,
     AbacBulkCheckRequestSchema,
     AbacBulkCheckResponseSchema,
@@ -101,6 +105,7 @@ export {
 // ─── Types ────────────────────────────────────────────────────────────
 export type {
     // Permissions
+    CheckSubject,
     CheckPermissionRequest,
     CheckPermissionResponse,
     CheckBulkRequest,
@@ -116,7 +121,10 @@ export type {
     ZanzibarExpandResponse,
     ZanzibarUsersetNode,
     // ABAC
+    AbacContext,
     AbacCheckRequest,
+    AbacBulkCheckItem,
+    AbacBulkCheckResult,
     AbacCheckResponse,
     AbacBulkCheckRequest,
     AbacBulkCheckResponse,
@@ -165,4 +173,4 @@ export { PermissionCache, type CacheOptions } from './utils/cache';
 // ─── HTTP ─────────────────────────────────────────────────────────────
 // Exported so @lumoauth/client and @lumoauth/backend can construct the
 // modules above against their own credential model.
-export { HttpClient, type HttpClientConfig } from './utils/http';
+export { HttpClient, ORGANIZATION_API_KEY_PREFIX, type HttpClientConfig, type CredentialSource } from './utils/http';

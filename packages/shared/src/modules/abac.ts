@@ -9,6 +9,7 @@ import {
     AbacUserAttributesResponseSchema,
     AbacResourceAttributesResponseSchema,
     AbacAttributeDefinitionSchema,
+    type AbacContext,
     type AbacCheckRequest,
     type AbacCheckResponse,
     type AbacBulkCheckRequest,
@@ -33,6 +34,10 @@ import { z } from 'zod';
  * `pep.<name>` instead — forward the end user's IP as `context: { pep: { ip } }`
  * and write policies against `pep.ip`.
  *
+ * A user access token needs the `abac:read` scope for checks and attribute
+ * reads, and `abac:write` for setting attributes. Organization API keys are
+ * not accepted on the ABAC routes.
+ *
  * @example
  * ```ts
  * // Check if user can read a classified document
@@ -41,7 +46,7 @@ import { z } from 'zod';
  *   resourceId: 'doc-123',
  *   action: 'read',
  *   context: {
- *     resource: { classification: 'internal' },
+ *     pep: { ip: '203.0.113.7' },
  *   },
  * });
  *
@@ -50,6 +55,19 @@ import { z } from 'zod';
  * }
  * ```
  */
+/**
+ * Build the wire `environment` from the SDK's `context`. Keys of a nested
+ * `environment` object (the 1.0 shape) are merged into the top level, and
+ * `resource` is dropped because LumoAuth reads resource attributes only from
+ * stored attributes.
+ */
+function toEnvironment(context?: AbacContext): Record<string, unknown> | undefined {
+    if (!context) return undefined;
+    const { resource: _resource, environment, ...rest } = context;
+    const merged = { ...(environment ?? {}), ...rest };
+    return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
 export class AbacModule {
     constructor(
         private readonly http: HttpClient,
@@ -94,7 +112,11 @@ export class AbacModule {
      * ```
      */
     async check(params: AbacCheckRequest): Promise<AbacCheckResponse> {
-        const body = AbacCheckRequestSchema.parse(params);
+        const { resourceType, action, resourceId, context } = AbacCheckRequestSchema.parse(params);
+        const body: Record<string, unknown> = { resourceType, action };
+        if (resourceId !== undefined) body.resourceId = resourceId;
+        const environment = toEnvironment(context);
+        if (environment) body.environment = environment;
         const raw = await this.http.post<unknown>(this.path('abac.check'), body);
         return this.validate(AbacCheckResponseSchema, raw);
     }
@@ -121,11 +143,12 @@ export class AbacModule {
 
     /**
      * Check multiple resource/action pairs in a single request (max 100).
+     * LumoAuth applies one environment (`context`) to every check in the call.
      *
      * @example
      * ```ts
      * const { results } = await client.abac.checkBulk({
-     *   requests: [
+     *   checks: [
      *     { resourceType: 'document', resourceId: 'doc-1', action: 'read' },
      *     { resourceType: 'document', resourceId: 'doc-2', action: 'write' },
      *     { resourceType: 'api', action: 'execute' },
@@ -136,7 +159,10 @@ export class AbacModule {
      * ```
      */
     async checkBulk(params: AbacBulkCheckRequest): Promise<AbacBulkCheckResponse> {
-        const body = AbacBulkCheckRequestSchema.parse(params);
+        const parsed = AbacBulkCheckRequestSchema.parse(params);
+        const body: Record<string, unknown> = { checks: parsed.checks ?? parsed.requests };
+        const environment = toEnvironment(parsed.context);
+        if (environment) body.environment = environment;
         const raw = await this.http.post<unknown>(this.path('abac.checkBulk'), body);
         return this.validate(AbacBulkCheckResponseSchema, raw);
     }

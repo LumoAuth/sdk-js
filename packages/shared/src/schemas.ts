@@ -2,10 +2,22 @@ import { z } from 'zod';
 
 // ─── Permission Check Schemas ─────────────────────────────────────────
 
+/**
+ * Wire form of the subject that a permission check is about. Without it,
+ * LumoAuth answers for the caller. A user id is the LumoAuth user id (a
+ * UUID); an agent id is the `agt_…` agent id.
+ */
+export const CheckSubjectSchema = z.object({
+    type: z.enum(['user', 'agent']),
+    id: z.string().min(1, 'Subject id is required'),
+});
+export type CheckSubject = z.infer<typeof CheckSubjectSchema>;
+
 /** Request: single permission check */
 export const CheckPermissionRequestSchema = z.object({
     permission: z.string().min(1, 'Permission slug is required'),
     context: z.record(z.unknown()).optional(),
+    subject: CheckSubjectSchema.optional(),
 });
 export type CheckPermissionRequest = z.infer<typeof CheckPermissionRequestSchema>;
 
@@ -13,7 +25,10 @@ export type CheckPermissionRequest = z.infer<typeof CheckPermissionRequestSchema
 export const CheckPermissionResponseSchema = z.object({
     allowed: z.boolean(),
     permission: z.string(),
-    user_id: z.union([z.string(), z.number()]),
+    /** Present when the subject is a user (legacy alias of `subject_id`). */
+    user_id: z.union([z.string(), z.number()]).optional(),
+    subject_type: z.enum(['user', 'agent']).optional(),
+    subject_id: z.string().optional(),
     context: z.record(z.unknown()).optional(),
 });
 export type CheckPermissionResponse = z.infer<typeof CheckPermissionResponseSchema>;
@@ -22,13 +37,17 @@ export type CheckPermissionResponse = z.infer<typeof CheckPermissionResponseSche
 export const CheckBulkRequestSchema = z.object({
     permissions: z.array(z.string().min(1)).min(1, 'At least one permission required'),
     context: z.record(z.unknown()).optional(),
+    subject: CheckSubjectSchema.optional(),
 });
 export type CheckBulkRequest = z.infer<typeof CheckBulkRequestSchema>;
 
 /** Response: bulk permission check */
 export const CheckBulkResponseSchema = z.object({
     results: z.record(z.boolean()),
-    user_id: z.union([z.string(), z.number()]),
+    /** Present when the subject is a user (legacy alias of `subject_id`). */
+    user_id: z.union([z.string(), z.number()]).optional(),
+    subject_type: z.enum(['user', 'agent']).optional(),
+    subject_id: z.string().optional(),
     context: z.record(z.unknown()).optional(),
 });
 export type CheckBulkResponse = z.infer<typeof CheckBulkResponseSchema>;
@@ -37,6 +56,7 @@ export type CheckBulkResponse = z.infer<typeof CheckBulkResponseSchema>;
 export const CheckMultipleRequestSchema = z.object({
     permissions: z.array(z.string().min(1)).min(1, 'At least one permission required'),
     context: z.record(z.unknown()).optional(),
+    subject: CheckSubjectSchema.optional(),
 });
 export type CheckMultipleRequest = z.infer<typeof CheckMultipleRequestSchema>;
 
@@ -44,7 +64,10 @@ export type CheckMultipleRequest = z.infer<typeof CheckMultipleRequestSchema>;
 export const CheckMultipleResponseSchema = z.object({
     allowed: z.boolean(),
     permissions: z.array(z.string()),
-    user_id: z.union([z.string(), z.number()]),
+    /** Present when the subject is a user (legacy alias of `subject_id`). */
+    user_id: z.union([z.string(), z.number()]).optional(),
+    subject_type: z.enum(['user', 'agent']).optional(),
+    subject_id: z.string().optional(),
     context: z.record(z.unknown()).optional(),
 });
 export type CheckMultipleResponse = z.infer<typeof CheckMultipleResponseSchema>;
@@ -186,33 +209,58 @@ export type AbacGroupCondition = {
 
 export type AbacCondition = AbacLeafCondition | AbacGroupCondition;
 
+/**
+ * Environment attributes for an ABAC evaluation. Any keys are allowed, for
+ * example `{ pep: { ip: '203.0.113.7' } }`. The SDK sends them to LumoAuth as
+ * the request's `environment`.
+ *
+ * Two keys keep their 1.0 meaning: the keys of a nested `environment` object
+ * are merged into the top level, and `resource` is never sent. LumoAuth reads
+ * resource attributes only from the attributes stored for the resource (see
+ * `setResourceAttribute`).
+ */
+export const AbacContextSchema = z
+    .object({
+        /** @deprecated LumoAuth does not read caller-supplied resource attributes; the SDK does not send them. */
+        resource: z.record(z.unknown()).optional(),
+        /** @deprecated Put environment keys at the top level of `context`. */
+        environment: z.record(z.unknown()).optional(),
+    })
+    .catchall(z.unknown());
+export type AbacContext = z.infer<typeof AbacContextSchema>;
+
 /** Request: ABAC check */
 export const AbacCheckRequestSchema = z.object({
     resourceType: z.string().min(1, 'Resource type is required'),
     action: z.string().min(1, 'Action is required'),
     resourceId: z.string().optional(),
-    context: z
-        .object({
-            resource: z.record(z.unknown()).optional(),
-            environment: z.record(z.unknown()).optional(),
-        })
-        .optional(),
+    context: AbacContextSchema.optional(),
 });
 export type AbacCheckRequest = z.infer<typeof AbacCheckRequestSchema>;
 
-/** Matched policy in ABAC response */
-export const AbacMatchedPolicySchema = z.object({
-    id: z.string(),
-    name: z.string(),
-    effect: z.enum(['allow', 'deny']),
-    priority: z.number(),
-});
+/**
+ * Matched policy in an ABAC response. Callers that hold `policies.view` get
+ * the full policy; everyone else gets only `id` and `name`, so every other
+ * field is optional.
+ */
+export const AbacMatchedPolicySchema = z
+    .object({
+        id: z.union([z.string(), z.number()]).nullable().optional(),
+        name: z.string().nullable().optional(),
+        effect: z.enum(['allow', 'deny']).optional(),
+        priority: z.number().optional(),
+    })
+    .passthrough();
 
 /** Response: ABAC check */
 export const AbacCheckResponseSchema = z.object({
     allowed: z.boolean(),
     reason: z.string().optional(),
     matchedPolicies: z.array(AbacMatchedPolicySchema).optional(),
+    user_id: z.union([z.string(), z.number()]).optional(),
+    resourceType: z.string().optional(),
+    action: z.string().optional(),
+    resourceId: z.string().nullable().optional(),
     evaluationContext: z
         .object({
             user: z.record(z.unknown()).optional(),
@@ -223,29 +271,55 @@ export const AbacCheckResponseSchema = z.object({
 });
 export type AbacCheckResponse = z.infer<typeof AbacCheckResponseSchema>;
 
-/** Request: ABAC bulk check */
-export const AbacBulkCheckRequestSchema = z.object({
-    requests: z
-        .array(
-            z.object({
-                resourceType: z.string().min(1),
-                action: z.string().min(1),
-                resourceId: z.string().optional(),
-            })
-        )
-        .min(1, 'At least one check request is required')
-        .max(100, 'Maximum 100 requests per bulk check'),
-    context: z
-        .object({
-            environment: z.record(z.unknown()).optional(),
-        })
-        .optional(),
+/** One entry of an ABAC bulk check. */
+export const AbacBulkCheckItemSchema = z.object({
+    resourceType: z.string().min(1),
+    action: z.string().min(1),
+    resourceId: z.string().optional(),
 });
+export type AbacBulkCheckItem = z.infer<typeof AbacBulkCheckItemSchema>;
+
+const AbacBulkChecksSchema = z
+    .array(AbacBulkCheckItemSchema)
+    .min(1, 'At least one check is required')
+    .max(100, 'Maximum 100 checks per bulk check');
+
+/**
+ * Request: ABAC bulk check. `context` is one environment that LumoAuth
+ * applies to every check in the call. `requests` is the 1.0 name of
+ * `checks` and is still accepted.
+ */
+export const AbacBulkCheckRequestSchema = z
+    .object({
+        checks: AbacBulkChecksSchema.optional(),
+        /** @deprecated Renamed to `checks`. */
+        requests: AbacBulkChecksSchema.optional(),
+        context: AbacContextSchema.optional(),
+    })
+    .refine((v) => (v.checks === undefined) !== (v.requests === undefined), {
+        message: 'Pass exactly one of `checks` or `requests` (the deprecated name)',
+    });
 export type AbacBulkCheckRequest = z.infer<typeof AbacBulkCheckRequestSchema>;
+
+/** One result of an ABAC bulk check, in the order of the checks. */
+export const AbacBulkCheckResultSchema = z
+    .object({
+        index: z.number().optional(),
+        resourceType: z.string().optional(),
+        action: z.string().optional(),
+        resourceId: z.string().nullable().optional(),
+        allowed: z.boolean(),
+        reason: z.string().optional(),
+        /** Present only for an entry that LumoAuth could not evaluate. */
+        error: z.string().optional(),
+    })
+    .passthrough();
+export type AbacBulkCheckResult = z.infer<typeof AbacBulkCheckResultSchema>;
 
 /** Response: ABAC bulk check */
 export const AbacBulkCheckResponseSchema = z.object({
-    results: z.array(AbacCheckResponseSchema),
+    results: z.array(AbacBulkCheckResultSchema),
+    user_id: z.union([z.string(), z.number()]).optional(),
 });
 export type AbacBulkCheckResponse = z.infer<typeof AbacBulkCheckResponseSchema>;
 

@@ -1,6 +1,7 @@
 import { HttpClient } from '../utils/http';
 import { PermissionCache, type CacheOptions } from '../utils/cache';
 import { LumoAuthValidationError } from '../errors';
+import type { CheckSubject } from '../schemas';
 import { ROUTES } from '../routes';
 import {
     CheckPermissionRequestSchema,
@@ -22,6 +23,35 @@ import {
 export interface PermissionsModuleOptions {
     /** Enable client-side caching of check results. Default: `true`. */
     cache?: boolean | CacheOptions;
+}
+
+/**
+ * Who a permission check is about. Leave it out to check the caller (the
+ * signed-in user for a user token, the key's owner for an API key, the agent
+ * for an agent credential).
+ *
+ * Checking someone else needs the `authz:check` scope (organization API keys
+ * can hold it) or the `authz.check` permission; otherwise LumoAuth answers
+ * 403 with code `INSUFFICIENT_PERMISSIONS`. An id that is not in the
+ * organization gets 404 `SUBJECT_NOT_FOUND`.
+ */
+export interface CheckSubjectOptions {
+    /** LumoAuth user id (a UUID), for example the `sub` claim of the user's token. */
+    userId?: string;
+    /** Agent id (`agt_…`). */
+    agentId?: string;
+}
+
+/** Turn {@link CheckSubjectOptions} into the request's `subject` field. */
+function toSubject(options?: CheckSubjectOptions): CheckSubject | undefined {
+    if (!options) return undefined;
+    const { userId, agentId } = options;
+    if (userId && agentId) {
+        throw new LumoAuthValidationError('Pass either userId or agentId, not both', []);
+    }
+    if (userId) return { type: 'user', id: userId };
+    if (agentId) return { type: 'agent', id: agentId };
+    return undefined;
 }
 
 // ─── Module ───────────────────────────────────────────────────────────
@@ -64,7 +94,9 @@ export class PermissionsModule {
      *
      * @param permission  Permission slug, e.g. `"document.edit"`
      * @param context     Optional context attributes for ABAC evaluation
-     * @returns `true` if the user has the permission
+     * @param options     Optional subject: check this user or agent instead of
+     *                    the caller (needs `authz:check`, see {@link CheckSubjectOptions})
+     * @returns `true` if the subject has the permission
      *
      * @example
      * ```ts
@@ -77,20 +109,26 @@ export class PermissionsModule {
      *   document_id: 456,
      *   owner_id: 123,
      * });
+     *
+     * // For another user (the caller needs `authz:check`)
+     * const userMay = await lumo.permissions.check('document.edit', undefined, {
+     *   userId: '0192f0c4-6c1b-7d4e-9a51-2f1e8f6c3b20',
+     * });
      * ```
      */
     async check(
         permission: string,
-        context?: Record<string, unknown>
+        context?: Record<string, unknown>,
+        options?: CheckSubjectOptions
     ): Promise<boolean> {
         // Check cache first
-        const cacheKey = this.buildCacheKey('check', permission, context);
+        const cacheKey = this.buildCacheKey('check', permission, context, options);
         if (this.cache) {
             const cached = this.cache.get(cacheKey);
             if (cached !== undefined) return cached;
         }
 
-        const body = CheckPermissionRequestSchema.parse({ permission, context });
+        const body = CheckPermissionRequestSchema.parse({ permission, context, subject: toSubject(options) });
         const raw = await this.http.post<unknown>(ROUTES['permissions.check'].path, body);
         const result = this.validate(CheckPermissionResponseSchema, raw);
 
@@ -106,9 +144,10 @@ export class PermissionsModule {
      */
     async checkDetailed(
         permission: string,
-        context?: Record<string, unknown>
+        context?: Record<string, unknown>,
+        options?: CheckSubjectOptions
     ): Promise<CheckPermissionResponse> {
-        const body = CheckPermissionRequestSchema.parse({ permission, context });
+        const body = CheckPermissionRequestSchema.parse({ permission, context, subject: toSubject(options) });
         const raw = await this.http.post<unknown>(ROUTES['permissions.check'].path, body);
         return this.validate(CheckPermissionResponseSchema, raw);
     }
@@ -136,16 +175,17 @@ export class PermissionsModule {
      */
     async checkBulk(
         permissions: string[],
-        context?: Record<string, unknown>
+        context?: Record<string, unknown>,
+        options?: CheckSubjectOptions
     ): Promise<CheckBulkResponse> {
-        const body = CheckBulkRequestSchema.parse({ permissions, context });
+        const body = CheckBulkRequestSchema.parse({ permissions, context, subject: toSubject(options) });
         const raw = await this.http.post<unknown>(ROUTES['permissions.checkBulk'].path, body);
         const result = this.validate(CheckBulkResponseSchema, raw);
 
         // Populate cache from bulk results
         if (this.cache) {
             for (const [perm, allowed] of Object.entries(result.results)) {
-                this.cache.set(this.buildCacheKey('check', perm, context), allowed);
+                this.cache.set(this.buildCacheKey('check', perm, context, options), allowed);
             }
         }
 
@@ -168,9 +208,10 @@ export class PermissionsModule {
      */
     async checkAny(
         permissions: string[],
-        context?: Record<string, unknown>
+        context?: Record<string, unknown>,
+        options?: CheckSubjectOptions
     ): Promise<boolean> {
-        const body = CheckMultipleRequestSchema.parse({ permissions, context });
+        const body = CheckMultipleRequestSchema.parse({ permissions, context, subject: toSubject(options) });
         const raw = await this.http.post<unknown>(ROUTES['permissions.checkAny'].path, body);
         const result = this.validate(CheckMultipleResponseSchema, raw);
         return result.allowed;
@@ -189,9 +230,10 @@ export class PermissionsModule {
      */
     async checkAll(
         permissions: string[],
-        context?: Record<string, unknown>
+        context?: Record<string, unknown>,
+        options?: CheckSubjectOptions
     ): Promise<boolean> {
-        const body = CheckMultipleRequestSchema.parse({ permissions, context });
+        const body = CheckMultipleRequestSchema.parse({ permissions, context, subject: toSubject(options) });
         const raw = await this.http.post<unknown>(ROUTES['permissions.checkAll'].path, body);
         const result = this.validate(CheckMultipleResponseSchema, raw);
         return result.allowed;
@@ -202,18 +244,20 @@ export class PermissionsModule {
      */
     async checkAnyDetailed(
         permissions: string[],
-        context?: Record<string, unknown>
+        context?: Record<string, unknown>,
+        options?: CheckSubjectOptions
     ): Promise<CheckMultipleResponse> {
-        const body = CheckMultipleRequestSchema.parse({ permissions, context });
+        const body = CheckMultipleRequestSchema.parse({ permissions, context, subject: toSubject(options) });
         const raw = await this.http.post<unknown>(ROUTES['permissions.checkAny'].path, body);
         return this.validate(CheckMultipleResponseSchema, raw);
     }
 
     async checkAllDetailed(
         permissions: string[],
-        context?: Record<string, unknown>
+        context?: Record<string, unknown>,
+        options?: CheckSubjectOptions
     ): Promise<CheckMultipleResponse> {
-        const body = CheckMultipleRequestSchema.parse({ permissions, context });
+        const body = CheckMultipleRequestSchema.parse({ permissions, context, subject: toSubject(options) });
         const raw = await this.http.post<unknown>(ROUTES['permissions.checkAll'].path, body);
         return this.validate(CheckMultipleResponseSchema, raw);
     }
@@ -223,6 +267,11 @@ export class PermissionsModule {
     /**
      * List all permissions granted to the authenticated user.
      * Returns permission objects including slug, description, and source.
+     *
+     * Needs a user access token that carries `authz:read` (or the blanket
+     * `admin` scope). Organization API keys cannot hold that scope, so with an
+     * API key this throws {@link LumoAuthPermissionDeniedError} whose
+     * `requiredScopes` is `['authz:read']`.
      *
      * @example
      * ```ts
@@ -241,7 +290,7 @@ export class PermissionsModule {
 
     /**
      * Get a flat `Set<string>` of all permission slugs for the current user.
-     * Convenience wrapper around `list()`.
+     * Convenience wrapper around `list()`; needs the same `authz:read` scope.
      */
     async listSlugs(): Promise<Set<string>> {
         const { permissions } = await this.list();
@@ -260,9 +309,11 @@ export class PermissionsModule {
     private buildCacheKey(
         op: string,
         permission: string,
-        context?: Record<string, unknown>
+        context?: Record<string, unknown>,
+        options?: CheckSubjectOptions
     ): string {
-        const base = `${op}:${permission}`;
+        const subject = toSubject(options);
+        const base = subject ? `${op}:${subject.type}:${subject.id}:${permission}` : `${op}:${permission}`;
         if (!context || Object.keys(context).length === 0) return base;
         return `${base}:${JSON.stringify(context)}`;
     }

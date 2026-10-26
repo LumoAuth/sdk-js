@@ -10,9 +10,27 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────
 
+/** A credential value, or a function that returns one per request. */
+export type CredentialSource = string | (() => string | undefined | null | Promise<string | undefined | null>);
+
+/** Prefix of an organization API key. */
+export const ORGANIZATION_API_KEY_PREFIX = 'lmk_';
+
 export interface HttpClientConfig {
     baseUrl: string;
-    token: string | (() => string | Promise<string>);
+    /**
+     * Bearer credential: a user access token, a machine access token or an
+     * agent credential (`agk_…`). A value that starts with `lmk_` is an
+     * organization API key; it is sent in `X-API-Key` instead, because
+     * LumoAuth does not accept API keys as bearer tokens.
+     */
+    token?: CredentialSource;
+    /**
+     * Organization API key (`lmk_…`), sent in the `X-API-Key` header. When a
+     * `token` is also configured and returns a value, the bearer token is
+     * sent instead and the API key is not.
+     */
+    apiKey?: CredentialSource;
     /** Default timeout in milliseconds (30 000 ms). */
     timeout?: number;
     /** Custom fetch implementation (defaults to global `fetch`). */
@@ -36,7 +54,8 @@ interface RequestOptions {
  */
 export class HttpClient {
     private baseUrl: string;
-    private tokenProvider: () => string | Promise<string>;
+    private tokenProvider: () => string | undefined | null | Promise<string | undefined | null>;
+    private apiKeyProvider: () => string | undefined | null | Promise<string | undefined | null>;
     private timeout: number;
     private fetchFn: typeof globalThis.fetch;
     private defaultHeaders: Record<string, string>;
@@ -48,11 +67,34 @@ export class HttpClient {
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
         this.defaultHeaders = config.headers ?? {};
 
-        // Normalise token to a provider function
-        this.tokenProvider =
-            typeof config.token === 'function'
-                ? config.token
-                : () => config.token as string;
+        // Normalise both credentials to provider functions
+        this.tokenProvider = HttpClient.provider(config.token);
+        this.apiKeyProvider = HttpClient.provider(config.apiKey);
+    }
+
+    private static provider(
+        source: CredentialSource | undefined,
+    ): () => string | undefined | null | Promise<string | undefined | null> {
+        if (typeof source === 'function') return source;
+        return () => source;
+    }
+
+    /**
+     * The credential header for one request. A bearer token wins over an API
+     * key; an `lmk_` value always travels in `X-API-Key`.
+     */
+    private async credentialHeaders(): Promise<Record<string, string>> {
+        const token = await this.tokenProvider();
+        if (token) {
+            return token.startsWith(ORGANIZATION_API_KEY_PREFIX)
+                ? { 'X-API-Key': token }
+                : { Authorization: `Bearer ${token}` };
+        }
+        const apiKey = await this.apiKeyProvider();
+        if (apiKey) {
+            return { 'X-API-Key': apiKey };
+        }
+        throw new LumoAuthAuthenticationError('No access token or API key provided.');
     }
 
     // ── Public helpers ──────────────────────────────────────────────────
@@ -76,10 +118,7 @@ export class HttpClient {
     // ── Core request ────────────────────────────────────────────────────
 
     private async request<T>(opts: RequestOptions): Promise<T> {
-        const token = await this.tokenProvider();
-        if (!token) {
-            throw new LumoAuthAuthenticationError('No access token provided.');
-        }
+        const credential = await this.credentialHeaders();
 
         const url = `${this.baseUrl}${opts.path}`;
 
@@ -93,7 +132,7 @@ export class HttpClient {
         }
 
         const headers: Record<string, string> = {
-            Authorization: `Bearer ${token}`,
+            ...credential,
             'Content-Type': 'application/json',
             Accept: 'application/json',
             ...this.defaultHeaders,

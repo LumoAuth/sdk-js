@@ -3,44 +3,56 @@
 [![npm](https://img.shields.io/npm/v/@lumoauth/express.svg)](https://www.npmjs.com/package/@lumoauth/express)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-> Express middleware for LumoAuth. Mounts the login, callback and logout
-> routes, populates `req.user` from the session, and gates routes with
-> `requireAuth()`. The only LumoAuth install an Express app needs.
+`@lumoauth/express` adds LumoAuth sign-in to an Express app. One middleware adds three routes:
+sign-in, callback and sign-out. It also puts the signed-in user on `req.user`. `requireAuth()`
+then guards the routes that need a user. The package also re-exports the server client and the
+error classes from [`@lumoauth/backend`](../backend/README.md), so an Express app needs only this
+one install.
 
-Part of the [LumoAuth JavaScript SDK](../../README.md). Not sure this is the
-package you need? See [Which package do I need?](../../README.md#which-package-do-i-need).
+It is part of the [LumoAuth JavaScript SDK](../../README.md).
 
 ## Contents
 
 - [Is this the right package?](#is-this-the-right-package)
+- [Requirements](#requirements)
 - [Install](#install)
 - [Quick start](#quick-start)
-- [How the flow works](#how-the-flow-works)
+- [Core concepts](#core-concepts)
 - [Configuration](#configuration)
-- [Guarding routes with `requireAuth()`](#guarding-routes-with-requireauth)
-- [Server-side checks inside handlers](#server-side-checks-inside-handlers)
-- [Behind a proxy](#behind-a-proxy)
+- [Guides](#guides)
+  - [How sign-in works](#how-sign-in-works)
+  - [Guard routes with requireAuth()](#guard-routes-with-requireauth)
+  - [Check access inside a handler](#check-access-inside-a-handler)
+  - [Run behind a proxy](#run-behind-a-proxy)
+- [Errors](#errors)
+- [API reference](#api-reference)
+- [Troubleshooting](#troubleshooting)
+- [Limitations](#limitations)
+- [Versioning and compatibility](#versioning-and-compatibility)
 - [Related packages](#related-packages)
-- [Learn more](#learn-more)
-- [License](#license)
+- [Licence](#licence)
 
 ## Is this the right package?
 
-| You are… | Use |
+| You are running… | Use |
 |---|---|
-| Running **Express** 4.18+ with `express-session` | **This package** |
-| Running Fastify, Hono, Koa or a plain Node service | [`@lumoauth/backend`](../backend/README.md) |
-| Running **Next.js** | [`@lumoauth/nextjs`](../nextjs/README.md) |
-| Building a browser SPA that talks to your Express API | [`@lumoauth/react`](../react/README.md) or [`@lumoauth/client`](../client/README.md) in the browser, this package on the server |
+| Express 4.18+ with `express-session` | **This package** |
+| Fastify, Hono, Koa or a plain Node service | [`@lumoauth/backend`](../backend/README.md) |
+| Next.js | [`@lumoauth/nextjs`](../nextjs/README.md) |
+| A browser app that calls your Express API | [`@lumoauth/react`](../react/README.md) or [`@lumoauth/client`](../client/README.md) in the browser |
+
+## Requirements
+
+- Node 18 or newer
+- `express` 4.18 or newer and `express-session` 1.17 or newer (peer dependencies)
+- A LumoAuth organization and an OAuth client. Register `<your origin>/auth/callback` as a
+  redirect URI. A confidential client also needs its client secret.
 
 ## Install
 
 ```bash
 npm install @lumoauth/express express-session
 ```
-
-`express` (4.18+) and `express-session` (1.17+) are peer dependencies. Requires
-Node 18 or newer.
 
 ## Quick start
 
@@ -51,21 +63,21 @@ import { lumoAuthMiddleware, requireAuth } from '@lumoauth/express';
 
 const app = express();
 
-// 1. Sessions must be mounted first — the middleware stores the PKCE state and tokens there.
+// 1. Mount sessions first. LumoAuth stores the sign-in state and the tokens in the session.
 app.use(session({ secret: process.env.SESSION_SECRET!, resave: false, saveUninitialized: false }));
 
-// 2. Mount LumoAuth once. This registers /auth/login, /auth/callback and /auth/logout
-//    and sets req.user on every request that has a session.
+// 2. Mount LumoAuth once. This adds /auth/login, /auth/callback and /auth/logout,
+//    and sets req.user on every request that has a signed-in session.
 app.use(
   lumoAuthMiddleware({
-    baseUrl: process.env.LUMOAUTH_URL!,          // https://app.lumoauth.dev
+    baseUrl: 'https://app.lumoauth.dev',             // EU region: https://eu.app.lumoauth.dev
     organization: 'acme-corp',
     clientId: process.env.LUMOAUTH_CLIENT_ID!,
-    clientSecret: process.env.LUMOAUTH_CLIENT_SECRET, // omit for public PKCE clients
+    clientSecret: process.env.LUMOAUTH_CLIENT_SECRET, // leave out for a public client with PKCE
   }),
 );
 
-// 3. Guard whatever needs a signed-in user.
+// 3. Guard the routes that need a signed-in user.
 app.get('/dashboard', requireAuth(), (req, res) => {
   res.json({ hello: req.user!.email });
 });
@@ -73,45 +85,40 @@ app.get('/dashboard', requireAuth(), (req, res) => {
 app.listen(3000);
 ```
 
-Register `https://your-app.example.com/auth/callback` as a redirect URI on
-your OAuth client in the LumoAuth dashboard, then send users to `/auth/login`.
+Send users to `/auth/login` to sign in, and to `/auth/logout` to sign out.
 
-## How the flow works
+## Core concepts
 
-| Route | Method | What happens |
-|---|---|---|
-| `/auth/login` | GET | Builds an OAuth 2.0 authorization URL with PKCE, stores the verifier and `state` in the session, redirects to LumoAuth. Accepts `?return_to=/path` (same-origin paths only) |
-| `/auth/callback` | GET | Verifies `state`, exchanges the code for tokens, fetches `/userinfo`, regenerates the session ID (defends against fixation), stores tokens and user, redirects to `return_to` |
-| `/auth/logout` | GET or POST | Clears the LumoAuth state from the session and redirects. The rest of your session data is left alone; call `req.session.destroy()` yourself for a hard logout |
-| everything else | any | `req.user` is restored from the session, then `next()` |
+**The session is server-side.** The PKCE verifier, the `state` value and the tokens are stored in your
+`express-session` store. They never appear in a URL or in browser storage. Use a production
+session store, such as Redis, instead of the default memory store.
 
-The prefix `/auth` is configurable. The PKCE verifier and tokens never appear
-in a URL or in browser storage; they live only in the server-side session.
+**`req.user` is the user's profile.** After sign-in, the middleware loads the user's profile from
+the OIDC UserInfo endpoint. It stores the profile in the session and restores it on each request.
 
-If `express-session` is not mounted before this middleware, requests fail
-loudly with a `500` and `session_middleware_missing` rather than silently
-passing through.
+**Guards check the session, not LumoAuth.** `requireAuth()` checks that `req.user` exists and,
+optionally, that the token was granted certain scopes. To check a permission, call LumoAuth
+inside an `authorize` hook or the handler.
+
+Credentials and scopes are explained in the [client README](../client/README.md#core-concepts).
 
 ## Configuration
 
-`lumoAuthMiddleware(options)` accepts:
+`lumoAuthMiddleware(options)` takes these options:
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `baseUrl` | `string` | required | Base URL of your LumoAuth instance |
-| `organization` | `string` | required | Tenant slug that owns the OAuth client |
-| `clientId` | `string` | required | OAuth client ID registered for this app |
-| `clientSecret` | `string` | — | Required for confidential clients. Public, browser-facing clients omit it and rely on PKCE |
-| `prefix` | `string` | `'/auth'` | Path under which the three routes mount |
-| `postLoginRedirect` | `string` | `'/'` | Where to send the user after sign-in when no `return_to` is given |
-| `postLogoutRedirect` | `string` | `'/'` | Where to send the user after sign-out |
-| `scope` | `string` | `'openid profile email'` | OAuth scopes to request |
-| `fetch` | `typeof fetch` | global `fetch` | Override for tests, instrumentation or proxies |
+| `baseUrl` | `string` | required | Root URL of LumoAuth |
+| `organization` | `string` | required | Organization slug that owns the OAuth client |
+| `clientId` | `string` | required | OAuth client ID |
+| `clientSecret` | `string` | none | Needed for a confidential client. A public client leaves it out and relies on PKCE. |
+| `prefix` | `string` | `'/auth'` | Where the three routes are mounted |
+| `postLoginRedirect` | `string` | `'/'` | Where to go after sign-in when there is no `return_to` |
+| `postLogoutRedirect` | `string` | `'/'` | Where to go after sign-out |
+| `scope` | `string` | `'openid profile email'` | OAuth scopes to request. Add `authz:read` if the app lists the user's permissions, or `abac:read` for ABAC checks. The OAuth client must allow them. |
+| `fetch` | `typeof fetch` | global `fetch` | A custom `fetch`, for tests or a proxy |
 
-### `req.user`
-
-After sign-in, `req.user` is the OIDC `/userinfo` payload and is typed on
-Express's `Request` through a global augmentation:
+`req.user` has this type, added to Express's `Request` for you:
 
 ```ts
 interface SessionUser {
@@ -120,79 +127,179 @@ interface SessionUser {
   email_verified?: boolean;
   name?: string;
   picture?: string;
-  [key: string]: unknown;
+  [key: string]: unknown;   // any other UserInfo claim
 }
 ```
 
-## Guarding routes with `requireAuth()`
+## Guides
+
+### How sign-in works
+
+| Route | Method | What happens |
+|---|---|---|
+| `/auth/login` | GET | Builds an authorization URL with PKCE, saves the verifier and `state` in the session, and redirects to LumoAuth. Accepts `?return_to=/path`; only paths on your own site are accepted. |
+| `/auth/callback` | GET | Checks `state`, exchanges the code for tokens, loads the profile, gives the session a new ID, saves the tokens and profile, and redirects to `return_to` |
+| `/auth/logout` | GET or POST | Removes the LumoAuth data from the session and redirects to `postLogoutRedirect` |
+| any other path | any | Restores `req.user` from the session, then calls `next()` |
+
+The new session ID after sign-in prevents session fixation. Sign-out keeps your other session
+data. Call `req.session.destroy()` yourself if you want to remove everything.
+
+If `express-session` is not mounted first, every request fails with `500`
+`session_middleware_missing`.
+
+### Guard routes with requireAuth()
 
 ```ts
 import { requireAuth } from '@lumoauth/express';
 
 // Any signed-in user
-app.get('/me', requireAuth(), handler);
+app.get('/profile', requireAuth(), handler);
 
-// Require scopes granted on the session token
+// Scopes that the user's token must have
 app.get('/billing', requireAuth({ scopes: ['billing:read'] }), handler);
 
-// Programmatic check — return false to deny with 403
-app.delete(
-  '/documents/:id',
-  requireAuth({
-    authorize: (user, req) => lumo.permissions.check('documents.delete'),
-  }),
+// Your own check; return false to answer 403
+app.get(
+  '/admin',
+  requireAuth({ authorize: (user) => user.email?.endsWith('@acme.com') ?? false }),
   handler,
 );
 ```
 
 | Option | Type | Description |
 |---|---|---|
-| `scopes` | `string[]` | Scopes that must all be present on the session's access token. Missing scopes return `403 insufficient_scope` |
-| `authorize` | `(user, req) => boolean \| Promise<boolean>` | Custom check. `false` returns `403 forbidden` |
-| `unauthorizedStatus` | `number` | Override the status code (default `401` for no user, `403` for failed scope or authorize checks) |
+| `scopes` | `string[]` | Every scope must be in the token's granted `scope`. A missing scope answers `403` with `insufficient_scope`. |
+| `authorize` | `(user, req) => boolean \| Promise<boolean>` | Your own check. `false` answers `403` with `forbidden`. |
+| `unauthorizedStatus` | `number` | Replaces the status code. The defaults are `401` without a user and `403` for a failed check. |
 
-## Server-side checks inside handlers
+Without a signed-in user, `requireAuth()` answers `401` with `{ "error": "unauthenticated" }`.
 
-This package re-exports `LumoAuthBackend` and the full error taxonomy from
-[`@lumoauth/backend`](../backend/README.md), so you can run RBAC, Zanzibar and
-ABAC checks with your tenant credential without a second install:
+### Check access inside a handler
+
+`LumoAuthBackend` is re-exported from [`@lumoauth/backend`](../backend/README.md). It calls
+LumoAuth with a server credential.
 
 ```ts
-import { LumoAuthBackend, LumoAuthApiError } from '@lumoauth/express';
+import { LumoAuthBackend } from '@lumoauth/express';
 
 const lumo = new LumoAuthBackend({
-  baseUrl: process.env.LUMOAUTH_URL!,
-  secretKey: process.env.LUMOAUTH_SECRET_KEY!, // lmk_… tenant API key, server only
+  baseUrl: 'https://app.lumoauth.dev',
   orgId: 'acme-corp',
+  secretKey: process.env.LUMOAUTH_API_KEY!,   // lmk_…, with the authz:check scope
 });
 
+app.post('/documents/:id', requireAuth(), async (req, res) => {
+  // RBAC: does the signed-in user hold the permission?
+  const mayEdit = await lumo.permissions.check('document.edit', undefined, { userId: req.user!.sub });
+  if (!mayEdit) return res.status(403).json({ error: 'forbidden' });
+  res.json(await saveDocument(req.params.id, req.body));
+});
+
+app.get('/documents/:id', requireAuth(), async (req, res) => {
+  // ReBAC: is the signed-in user a viewer of this document?
+  const allowed = await lumo.zanzibar.check({
+    object: `document:${req.params.id}`,
+    relation: 'viewer',
+    subject: `user:${req.user!.sub}`,
+  });
+  if (!allowed) return res.status(403).json({ error: 'forbidden' });
+  res.json(await loadDocument(req.params.id));
+});
+```
+
+`LumoAuthBackend` sends an organization API key (`lmk_…`) in the `X-API-Key` header. Checks run
+as the credential's owner unless you name a subject. To ask about the signed-in user, pass
+`{ userId: req.user.sub }` to a permission check, or `user:<sub>` as the subject of a Zanzibar
+check. The `sub` claim is the user's LumoAuth id. A check about another subject needs the
+`authz:check` scope on the key, or the `authz.check` permission.
+
+### Run behind a proxy
+
+The middleware builds the callback URL from the request's protocol and `Host` header. Behind a
+load balancer or a reverse proxy, call `app.set('trust proxy', true)`. Express then reads the
+`X-Forwarded-*` headers, and the callback URL matches the one that you registered.
+
+## Errors
+
+The sign-in routes answer with JSON errors:
+
+| Status | `error` | Cause |
+|---|---|---|
+| 500 | `session_middleware_missing` | `express-session` is not mounted before this middleware. |
+| 400 | `invalid_request` | The callback has no `code` or `state`, or no sign-in is in progress. |
+| 400 | `invalid_state` | The `state` does not match the saved value. |
+| 400 | the provider's error | LumoAuth returned an error to the callback, such as `access_denied`. |
+| 502, or LumoAuth's status | `token_exchange_failed` | The code exchange failed. |
+
+`LumoAuthBackend` throws the SDK error classes, which this package re-exports:
+`LumoAuthError`, `LumoAuthApiError`, `LumoAuthAuthenticationError`,
+`LumoAuthPermissionDeniedError` (with `requiredScopes`), `LumoAuthNotFoundError`,
+`LumoAuthRateLimitError` (with `retryAfter`), `LumoAuthValidationError`, `LumoAuthConfigError`,
+`LumoAuthNetworkError`, `LumoAuthApprovalDeniedError`, `LumoAuthApprovalTimeoutError` and
+`LumoAuthBudgetExceededError`. The [client README](../client/README.md#errors) describes them.
+
+```ts
+import { LumoAuthApiError } from '@lumoauth/express';
+
 app.use((err, req, res, next) => {
-  if (err instanceof LumoAuthApiError) return res.status(err.statusCode ?? 502).json({ error: err.code });
+  if (err instanceof LumoAuthApiError) {
+    return res.status(err.statusCode ?? 502).json({ error: err.code });
+  }
   next(err);
 });
 ```
 
-## Behind a proxy
+## API reference
 
-The callback redirect URI is built from the request's protocol and `Host`
-header. Behind a load balancer or reverse proxy, set
-`app.set('trust proxy', true)` so Express honours `X-Forwarded-*` and the URI
-matches what you registered on the OAuth client.
+| Export | Description |
+|---|---|
+| `lumoAuthMiddleware(options)` | Adds the sign-in routes and restores `req.user` |
+| `requireAuth(options?)` | Guard that needs a signed-in user, with optional scope and custom checks |
+| `LumoAuthBackend` | The server client from `@lumoauth/backend` |
+| Error classes | The SDK error classes, listed in [Errors](#errors) |
+| Types | `LumoAuthMiddlewareOptions`, `RequireAuthOptions`, `SessionUser`, `LumoAuthRequestHandler`, `LumoAuthBackendConfig` |
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `500 session_middleware_missing` | `express-session` is mounted after LumoAuth, or not at all. | Mount it first. |
+| The callback answers `400 invalid_state` | The session was lost between sign-in and callback. This happens with a new memory store after a restart, a cookie that the browser did not send back, or several servers without a shared store. | Use a shared session store. Check the session cookie's `secure` and `sameSite` settings. |
+| LumoAuth rejects the redirect URI | The callback URL that was built does not match a registered one. This is common behind a proxy. | Set `app.set('trust proxy', true)` and register the exact URL. |
+| `403 insufficient_scope` from `requireAuth({ scopes })` | The token was not granted that scope. | Add the scope to the middleware's `scope` option, allow it on the client, and sign in again. |
+| `LumoAuthBackend` calls fail with `401` while using an `lmk_…` key | Organization API keys only work on the admin API, client registration and the authorization checks. ABAC, agent and JIT routes reject them. | Use the key for permission and Zanzibar checks only. |
+| A permission check in a handler answers for the wrong user | No subject was named, so the check answered for the credential's owner. | Pass `{ userId: req.user.sub }` as the third argument. |
+| A check with `userId` gets `403` `INSUFFICIENT_PERMISSIONS` | The key lacks the `authz:check` scope. | Add the scope to the key. |
+
+## Limitations
+
+- The middleware does not refresh the access token. The stored token expires after about an hour,
+  while `req.user` stays until sign-out. Refresh the token yourself, or have the user sign in
+  again, before you call LumoAuth with it.
+- There is no session endpoint for `cookieStorageAdapter` from `@lumoauth/client`. If a browser
+  app needs the token, add a same-origin route that returns `{ accessToken, idToken, expiresAt }`.
+- Sign-out clears the local session only. It does not end the user's LumoAuth session, so the next
+  sign-in may complete without a login screen.
+
+## Versioning and compatibility
+
+This package is version 1.0.0. It needs LumoAuth server API 1.0.0 or newer, Express 4.18 or
+newer, and `express-session` 1.17 or newer.
 
 ## Related packages
 
 | Package | Relationship |
 |---|---|
-| [`@lumoauth/backend`](../backend/README.md) | The server client this package wraps and re-exports |
-| [`@lumoauth/react`](../react/README.md) / [`@lumoauth/client`](../client/README.md) | Browser side. Their `cookieStorageAdapter` expects a same-origin backend like this one to own the OAuth exchange |
-| [`@lumoauth/nextjs`](../nextjs/README.md) | The equivalent of this package for Next.js |
-| [Workspace README](../../README.md) | How all the packages fit together |
+| [`@lumoauth/backend`](../backend/README.md) | The server client that this package re-exports |
+| [`@lumoauth/client`](../client/README.md) | Checks as a user, from a browser or a server |
+| [`@lumoauth/react`](../react/README.md) | Browser components and hooks |
+| [`@lumoauth/nextjs`](../nextjs/README.md) | The same job for Next.js, including token refresh and a session endpoint |
+| [Workspace README](../../README.md) | How the packages fit together |
 
-## Learn more
+More: [Node.js and Express quickstart](https://docs.lumoauth.dev/quickstarts/node/) and the
+[SDK overview](https://docs.lumoauth.dev/developer/sdks/).
 
-- [Node.js / Express quickstart](https://docs.lumoauth.dev/quickstarts/node/)
-- [SDK overview](https://docs.lumoauth.dev/developer/sdks/)
-
-## License
+## Licence
 
 [MIT](./LICENSE)

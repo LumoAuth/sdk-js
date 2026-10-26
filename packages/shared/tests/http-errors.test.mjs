@@ -42,6 +42,28 @@ test('403 → LumoAuthPermissionDeniedError', async () => {
     });
 });
 
+test('403 scope refusal → requiredScopes from details.required_scopes', async () => {
+    const body = {
+        error: 'forbidden',
+        message: 'Insufficient scope: this API key is missing a required scope',
+        status: 403,
+        details: { required_scopes: ['authz:read'], granted_scopes: ['admin:users:read'] },
+    };
+    await assert.rejects(clientReturning(403, body).get('/api/v1/authz/permissions'), (err) => {
+        assert.ok(err instanceof LumoAuthPermissionDeniedError);
+        assert.deepStrictEqual(err.requiredScopes, ['authz:read']);
+        return true;
+    });
+});
+
+test('plain 403 → empty requiredScopes', async () => {
+    await assert.rejects(clientReturning(403, { error: 'nope' }).get('/x'), (err) => {
+        assert.deepStrictEqual(err.requiredScopes, []);
+        return true;
+    });
+    assert.deepStrictEqual(new LumoAuthPermissionDeniedError().requiredScopes, []);
+});
+
 test('404 → LumoAuthNotFoundError', async () => {
     await assert.rejects(clientReturning(404).get('/x'), (err) => {
         assert.ok(err instanceof LumoAuthNotFoundError);

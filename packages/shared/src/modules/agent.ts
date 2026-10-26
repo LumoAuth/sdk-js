@@ -36,6 +36,10 @@ export interface AgentAskResult {
 /** The agent's own identity, capabilities and workspace (`GET /agents/me`). */
 export interface AgentIdentity {
     identity?: Record<string, unknown>;
+    /**
+     * For an agent credential, the agent's capability roles. A user access
+     * token without the `authz:read` scope gets an empty list.
+     */
     capabilities?: string[];
     workspace?: Record<string, unknown>;
     [key: string]: unknown;
@@ -75,6 +79,10 @@ export class AgentsModule {
      * Check whether the agent is authorised to perform `action`. Optimised
      * for LLM tool-calling patterns — use it as a preflight check before
      * executing a tool.
+     *
+     * `ip`, `userAgent`, `requestMethod` and `requestPath` in `context` always
+     * describe the request LumoAuth received. A value you pass under one of
+     * those names is kept under `pep` instead (the same rule as ABAC).
      */
     async ask(
         action: string,
@@ -99,7 +107,10 @@ export class AgentsModule {
 
     // ── Self-inspection ───────────────────────────────────────────────
 
-    /** The agent's own identity, capabilities, and workspace (`GET /agents/me`). */
+    /**
+     * The agent's own identity, capabilities, and workspace (`GET /agents/me`).
+     * A user access token without `authz:read` gets an empty `capabilities` list.
+     */
     async me(): Promise<AgentIdentity> {
         return this.http.get<AgentIdentity>(
             buildPath(ROUTES['agents.me'].path, { orgId: this.requireOrgId() }),
