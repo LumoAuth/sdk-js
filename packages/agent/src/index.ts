@@ -70,4 +70,10 @@ export {
     type ApprovalRequestResult,
     type CreateApprovalRequest,
     type RequireApprovalRequest,
+    type AgentMcpToolDecision,
+    type McpAuthorizeToolOptions,
+    type McpSubject,
+    type McpSubjectType,
+    type McpToolDecision,
+    type McpToolResource,
 } from '@lumoauth/shared';

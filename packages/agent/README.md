@@ -225,11 +225,11 @@ consent steps. The token types and the `resource` option are explained in the
 
 | Namespace | What it does | Methods |
 |---|---|---|
-| `agents` | Agent identity | `ask`, `isAllowed`, `me`, `getCurrentAgent`, `capabilities`, `budget`, `register` |
+| `agents` | Agent identity | `ask`, `isAllowed`, `me`, `getCurrentAgent`, `capabilities`, `budget`, `register`, `authorizeMcpTool(serverId, tool)` |
 | `approvals` | Push approval for agent actions | `require`, `create`, `getStatus`, `wait` |
 | `jit` | Just-in-time permissions | `createTask`, `requestPermission`, `getRequestStatus`, `getToken`, `evaluateTask`, `completeTask`. `listPendingRequests` is the human reviewer's view. It needs a user token with `jit:approve`, so the server rejects an agent's own token |
 | `delegation` | Act for a user, or hand work to a sub-agent, with RFC 8693 token exchange | `getConsentUrl`, `handleConsentCallback`, `setUserToken`, `exchange`, `request`, `delegateToSubAgent`, `revoke`, `revokeAll`, `hasDelegation`, `activeSessions` |
-| `mcp` | Token exchange for secured MCP servers | `getToken`, `getTokenDetailed`. Pass the MCP server's https URL, such as `https://mcp.example.com/mcp`. The SDK sends it as the RFC 8707 `resource`, so the token's `aud` is that URL. Any other ID throws `LumoAuthValidationError` |
+| `mcp` | Secured MCP servers | `getToken`, `getTokenDetailed`. Pass the MCP server's https URL, such as `https://mcp.example.com/mcp`. The SDK sends it as the RFC 8707 `resource`, so the token's `aud` is that URL. Any other ID throws `LumoAuthValidationError`. The token works only at that MCP server. `authorizeTool({ serverId, subject, tool })` lets an MCP server check one tool call with its own `mcp:authorize` token. A deny returns `allowed: false` |
 
 The parameters of each method are in the
 [workspace API reference](../../README.md#api-reference).

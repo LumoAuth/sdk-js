@@ -47,6 +47,12 @@ export {
     McpModule,
     type McpModuleConfig,
     type McpTokenResponse,
+    type McpSubjectType,
+    type McpSubject,
+    type McpToolResource,
+    type McpAuthorizeToolOptions,
+    type McpToolDecision,
+    type AgentMcpToolDecision,
 } from './modules/mcp';
 export {
     AuthModule,

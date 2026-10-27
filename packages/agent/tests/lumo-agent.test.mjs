@@ -226,3 +226,33 @@ test('approvals.require polls the token and maps approved_by {user_id}', async (
     assert.equal(res.status, 'approved');
     assert.deepEqual(res.approvedBy, { userId: 7, email: null });
 });
+
+test('agents.authorizeMcpTool and mcp.authorizeTool use the agent token; deny is a result', async () => {
+    const calls = [];
+    const fetchFn = async (url, init) => {
+        const u = String(url);
+        if (u.endsWith('/oauth/token')) {
+            return jsonResponse({ access_token: 'agent-tok', expires_in: 3600 });
+        }
+        calls.push({ url: u, auth: init.headers.Authorization, body: JSON.parse(init.body) });
+        if (u.endsWith('/agents/me/mcp/authorize')) {
+            return jsonResponse({ allowed: false, agent_id: 'agt_1', resource: { type: 'mcp_tool', id: 'mcp_1/delete' } }, 403);
+        }
+        return jsonResponse({ allowed: true, subject: { type: 'user', id: 'u-1' }, resource: { type: 'mcp_tool', id: 'mcp_1/search' } });
+    };
+    const agent = new LumoAgent({ baseUrl: BASE, orgId: 'acme', clientId: 'agent-1', clientSecret: 's3cret', fetch: fetchFn });
+
+    const self = await agent.authorizeMcpTool('mcp_1', 'delete');
+    assert.deepEqual(self, { allowed: false, agentId: 'agt_1', resource: { type: 'mcp_tool', id: 'mcp_1/delete' } });
+    assert.deepEqual(await agent.agents.authorizeMcpTool('mcp_1', 'delete'), self);
+    assert.equal(calls[0].url, `${BASE}/orgs/acme/api/v1/agents/me/mcp/authorize`);
+    assert.deepEqual(calls[0].body, { server_id: 'mcp_1', tool: 'delete' });
+    assert.equal(calls[0].auth, 'Bearer agent-tok');
+
+    const res = await agent.mcp.authorizeTool({ serverId: 'mcp_1', subject: { type: 'user', id: 'u-1' }, tool: 'search' });
+    assert.equal(res.allowed, true);
+    assert.equal(calls[2].url, `${BASE}/orgs/acme/api/v1/mcp/servers/mcp_1/tools/authorize`);
+    assert.equal(calls[2].auth, 'Bearer agent-tok');
+
+    await assert.rejects(agent.authorizeMcpTool('mcp_1', 'a/b'), LumoAuthValidationError);
+});

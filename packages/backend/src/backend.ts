@@ -122,7 +122,7 @@ export class LumoAuthBackend {
     public readonly delegation: DelegationModule;
     /** Just-in-Time permissions — ephemeral tasks and scoped tokens. */
     public readonly jit: JitModule;
-    /** Token exchange for secured MCP servers. */
+    /** MCP servers: token exchange and per-tool checks (`authorizeTool`). */
     public readonly mcp: McpModule;
 
     private readonly http: HttpClient;
@@ -170,6 +170,7 @@ export class LumoAuthBackend {
             orgId,
             token: this.secretProvider,
             fetch: config.fetch,
+            http: this.http,
         });
         this.delegation = new DelegationModule({
             baseUrl: this.baseUrl,

@@ -133,7 +133,7 @@ from `LUMOAUTH_URL` and `LUMOAUTH_SECRET_KEY`.
 | `approvals` | Push approval for agent actions (agent credentials only) | `require`, `create`, `getStatus`, `wait` |
 | `delegation` | Act for a user with RFC 8693 token exchange | `getConsentUrl`, `handleConsentCallback`, `setUserToken`, `exchange`, `request`, `delegateToSubAgent`, `revoke`, `revokeAll` |
 | `jit` | Just-in-time permissions | `createTask`, `requestPermission`, `getRequestStatus`, `getToken`, `evaluateTask`, `completeTask`, `listPendingRequests` |
-| `mcp` | Tokens for secured MCP servers | `getToken`, `getTokenDetailed`. The server ID is the MCP server's https URL, which becomes the token's `aud` |
+| `mcp` | Secured MCP servers | `getToken`, `getTokenDetailed`. The server ID is the MCP server's https URL, which becomes the token's `aud`. `authorizeTool({ serverId, subject, tool })` checks one tool call. The `secretKey` must be the MCP server's own client-credentials token with `mcp:authorize`. A deny returns `allowed: false` |
 
 `lumo.clearCache()` clears the permission cache. The parameters, return
 values and required credentials of every method are in the

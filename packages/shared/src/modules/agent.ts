@@ -2,6 +2,13 @@ import type { HttpClient } from '../utils/http';
 import { LumoAuthConfigError } from '../errors';
 import { ROUTES, buildPath } from '../routes';
 import {
+    assertMcpName,
+    assertMcpTool,
+    mcpDecision,
+    mcpResource,
+    type AgentMcpToolDecision,
+} from './mcp';
+import {
     ApprovalsModule,
     type RequireApprovalRequest,
     type ApprovalResult,
@@ -115,6 +122,36 @@ export class AgentsModule {
         return this.http.get<AgentIdentity>(
             buildPath(ROUTES['agents.me'].path, { orgId: this.requireOrgId() }),
         );
+    }
+
+    /**
+     * Ask whether this agent may run one tool on a registered MCP server.
+     * The request uses the agent's own credential.
+     *
+     * A deny comes back as `{ allowed: false }` and does not throw. An
+     * unknown or inactive server throws `LumoAuthNotFoundError`. Other errors
+     * throw the usual `LumoAuth*Error` classes.
+     *
+     * @param serverId The registered MCP server id (e.g.
+     *                 `mcp_0123456789abcdef01234567`), not the Resource URI.
+     * @param tool     The tool name.
+     * @throws LumoAuthValidationError before any request when `serverId` or
+     *         `tool` is not valid.
+     */
+    async authorizeMcpTool(serverId: string, tool: string): Promise<AgentMcpToolDecision> {
+        assertMcpName('serverId', serverId);
+        assertMcpTool(tool);
+        const path = buildPath(ROUTES['agents.authorizeMcpTool'].path, {
+            orgId: this.requireOrgId(),
+        });
+        const body = await mcpDecision(() =>
+            this.http.post<Record<string, unknown>>(path, { server_id: serverId, tool }),
+        );
+        return {
+            allowed: body.allowed === true,
+            agentId: typeof body.agent_id === 'string' ? body.agent_id : '',
+            resource: mcpResource(body.resource, serverId, tool),
+        };
     }
 
     /** Alias for {@link me} (Python parity: `get_current_agent`). */

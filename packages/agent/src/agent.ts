@@ -13,6 +13,7 @@ import {
     type AgentAskResult,
     type AgentIdentity,
     type AgentBudget,
+    type AgentMcpToolDecision,
 } from '@lumoauth/shared';
 
 // ─── Types ────────────────────────────────────────────────────────────
@@ -99,7 +100,7 @@ export class LumoAgent {
     readonly delegation: DelegationModule;
     /** Push-approval-for-agent-actions. */
     readonly approvals: ApprovalsModule;
-    /** Token exchange for secured MCP servers. */
+    /** MCP servers: token exchange and per-tool checks (`authorizeTool`). */
     readonly mcp: McpModule;
 
     private readonly clientSecret: string;
@@ -139,6 +140,7 @@ export class LumoAgent {
             orgId: this.orgId,
             token: tokenProvider,
             fetch: options.fetch,
+            http,
         });
         this.delegation = new DelegationModule({
             baseUrl: this.baseUrl,
@@ -235,6 +237,14 @@ export class LumoAgent {
     /** Convenience wrapper: `true` when `action` is allowed. */
     async isAllowed(action: string, context?: Record<string, unknown>): Promise<boolean> {
         return this.agents.isAllowed(action, context);
+    }
+
+    /**
+     * May this agent run `tool` on the registered MCP server `serverId`?
+     * A deny returns `{ allowed: false }` and does not throw.
+     */
+    async authorizeMcpTool(serverId: string, tool: string): Promise<AgentMcpToolDecision> {
+        return this.agents.authorizeMcpTool(serverId, tool);
     }
 
     /** The agent's own identity, capabilities, and workspace. */

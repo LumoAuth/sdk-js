@@ -5,16 +5,24 @@ import {
     LumoAuthValidationError,
 } from '../errors';
 import { ROUTES, buildPath } from '../routes';
+import { HttpClient } from '../utils/http';
 
 /**
- * MCP module — token exchange for secured MCP servers.
+ * MCP module. It covers two jobs for secured MCP servers.
  *
- * Trades the caller's access token for one bound to a specific MCP
- * server (RFC 8693 Token Exchange). The server id is the MCP server's
- * https URL, for example `https://mcp.example.com/mcp`. It goes in the
- * RFC 8707 `resource` parameter, which sets the token's `aud`. (It is also
- * sent as `audience`, which the server ignores.) Mirrors the Python SDK's
- * `get_mcp_token`.
+ * 1. Token exchange (`getToken`). The caller trades its access token for one
+ *    that names exactly one MCP server (RFC 8693 Token Exchange). The
+ *    registered Resource URI of the MCP server, for example
+ *    `https://mcp.example.com/mcp`, goes in the RFC 8707 `resource`
+ *    parameter and sets the token's `aud`. (It is also sent as `audience`,
+ *    which the server ignores.) The new token works only at that MCP server.
+ *    LumoAuth's own API rejects it. If the MCP server requires DPoP, you need
+ *    a DPoP-bound exchange; this helper does not send a DPoP proof. Mirrors
+ *    the Python SDK's `get_mcp_token`.
+ * 2. Per-tool checks (`authorizeTool`). An MCP server asks whether a caller
+ *    that it has already verified may run one tool. The MCP server sends its
+ *    own client-credentials token with the `mcp:authorize` scope. It never
+ *    forwards the caller's token (MCP specification, revision 2026-07-28).
  */
 
 export interface McpModuleConfig {
@@ -26,6 +34,11 @@ export interface McpModuleConfig {
     token: () => string | Promise<string>;
     /** Custom fetch implementation. */
     fetch?: typeof globalThis.fetch;
+    /**
+     * HTTP client for JSON API calls (`authorizeTool`). When it is missing,
+     * the module builds one from `baseUrl`, `token` and `fetch`.
+     */
+    http?: HttpClient;
 }
 
 export interface McpTokenResponse {
@@ -35,25 +48,151 @@ export interface McpTokenResponse {
     scope: string | null;
 }
 
+/** Kind of principal named in a per-tool MCP check. */
+export type McpSubjectType = 'user' | 'agent';
+
+/** The caller that the MCP server has already verified. */
+export interface McpSubject {
+    /** `user` or `agent`. */
+    type: McpSubjectType;
+    /**
+     * For a user, the user UUID (the MCP token's `sub`). For an agent, the
+     * agent id (`agt_…`) or the MCP token's `sub` as is (`agent_agt_…`).
+     */
+    id: string;
+}
+
+/** The resource that a per-tool decision covers. */
+export interface McpToolResource {
+    /** Always `mcp_tool`. */
+    type: string;
+    /** `<serverId>/<tool>`. */
+    id: string;
+}
+
+/** Options for {@link McpModule.authorizeTool}. */
+export interface McpAuthorizeToolOptions {
+    /**
+     * The registered MCP server id (e.g. `mcp_0123456789abcdef01234567`).
+     * This is not the Resource URI.
+     */
+    serverId: string;
+    /** The caller that the MCP server has verified. */
+    subject: McpSubject;
+    /** The tool name, as the MCP server lists it. */
+    tool: string;
+    /** Optional abort signal. */
+    signal?: AbortSignal;
+}
+
+/**
+ * Result of {@link McpModule.authorizeTool}. A deny is a result with
+ * `allowed: false`, not an error.
+ */
+export interface McpToolDecision {
+    allowed: boolean;
+    subject: McpSubject;
+    resource: McpToolResource;
+}
+
+/**
+ * Result of `agents.authorizeMcpTool`. A deny is a result with
+ * `allowed: false`, not an error.
+ */
+export interface AgentMcpToolDecision {
+    allowed: boolean;
+    /** The agent id (`agt_…`). Empty when the server did not return it. */
+    agentId: string;
+    resource: McpToolResource;
+}
+
 export class McpModule {
     private readonly baseUrl: string;
     private readonly orgId: string;
     private readonly token: () => string | Promise<string>;
     private readonly fetchFn: typeof globalThis.fetch;
+    private readonly http: HttpClient;
 
     constructor(config: McpModuleConfig) {
         this.baseUrl = config.baseUrl.replace(/\/+$/, '');
         this.orgId = config.orgId;
         this.token = config.token;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
+        this.http =
+            config.http ??
+            new HttpClient({ baseUrl: this.baseUrl, token: config.token, fetch: config.fetch });
     }
 
     /**
-     * Exchange the caller's token for one scoped to a secured MCP server.
+     * Ask whether a verified caller may run one tool on an MCP server.
      *
-     * @param serverId The MCP server's https URL, which is its RFC 8707
-     *                 resource identifier (e.g. `"https://mcp.example.com/mcp"`).
-     *                 Plain http is accepted for localhost and private hosts.
+     * Call it from the MCP server, with the MCP server's own
+     * client-credentials token as this client's credential. That token needs
+     * the `mcp:authorize` scope, and its client must be a tool authorizer of
+     * the MCP server. Never pass the caller's token here.
+     *
+     * A deny comes back as `{ allowed: false }` and does not throw. Errors
+     * (bad request, wrong token, missing scope, unknown server, rate limit)
+     * throw the usual `LumoAuth*Error` classes.
+     *
+     * @throws LumoAuthValidationError before any request when the subject,
+     *         server id or tool is not valid.
+     */
+    async authorizeTool(options: McpAuthorizeToolOptions): Promise<McpToolDecision> {
+        const { serverId, subject, tool, signal } = options ?? ({} as McpAuthorizeToolOptions);
+        if (!subject || (subject.type !== 'user' && subject.type !== 'agent')) {
+            throw new LumoAuthValidationError(
+                'MCP subject type must be "user" or "agent".',
+                [{ field: 'subject.type', value: subject?.type }],
+            );
+        }
+        if (typeof subject.id !== 'string' || subject.id === '') {
+            throw new LumoAuthValidationError('MCP subject id must not be empty.', [
+                { field: 'subject.id', value: subject.id },
+            ]);
+        }
+        assertMcpName('serverId', serverId);
+        assertMcpTool(tool);
+        if (!this.orgId) {
+            throw new LumoAuthConfigError(
+                'mcp requires `orgId` — pass it to the constructor config.',
+            );
+        }
+
+        const path = buildPath(ROUTES['mcp.authorizeTool'].path, {
+            orgId: this.orgId,
+            serverId,
+        });
+        const body = await mcpDecision(() =>
+            this.http.post<Record<string, unknown>>(
+                path,
+                { subject: { type: subject.type, id: subject.id }, tool },
+                signal,
+            ),
+        );
+        const sub = isObject(body.subject) ? body.subject : {};
+        return {
+            allowed: body.allowed === true,
+            subject: {
+                type: sub.type === 'user' || sub.type === 'agent' ? sub.type : subject.type,
+                id: typeof sub.id === 'string' ? sub.id : subject.id,
+            },
+            resource: mcpResource(body.resource, serverId, tool),
+        };
+    }
+
+    /**
+     * Exchange the caller's token for one that names exactly one MCP server.
+     *
+     * The new token works only at that MCP server. LumoAuth's own API
+     * rejects it. If the MCP server requires DPoP, you need a DPoP-bound
+     * exchange; this helper does not send a DPoP proof.
+     *
+     * @param serverId The registered Resource URI of the MCP server, which is
+     *                 its RFC 8707 resource identifier
+     *                 (e.g. `"https://mcp.example.com/mcp"`). It is sent in
+     *                 `resource`. Plain http is accepted for localhost and
+     *                 private hosts.
      * @returns The access token, with `aud` set to `serverId`.
      * @throws LumoAuthValidationError when `serverId` is not an absolute
      *         http(s) URL.
@@ -134,4 +273,71 @@ function assertMcpServerId(serverId: string): void {
             [{ field: 'serverId', value: serverId }],
         );
     }
+}
+
+// ── Per-tool check helpers (shared with AgentsModule) ─────────────────
+
+const MCP_TOOL_MAX_LENGTH = 80;
+const MCP_FORBIDDEN_CHARS = /[\/:#*]/;
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** @internal Check a server id or tool name before the request. */
+export function assertMcpName(field: 'serverId' | 'tool', value: unknown): void {
+    const label = field === 'serverId' ? 'MCP server id' : 'MCP tool name';
+    if (typeof value !== 'string' || value === '') {
+        throw new LumoAuthValidationError(`${label} must not be empty.`, [{ field, value }]);
+    }
+    if (MCP_FORBIDDEN_CHARS.test(value)) {
+        throw new LumoAuthValidationError(
+            `${label} "${value}" must not contain "/", ":", "#" or "*".`,
+            [{ field, value }],
+        );
+    }
+}
+
+/** @internal Check a tool name before the request. */
+export function assertMcpTool(tool: unknown): void {
+    assertMcpName('tool', tool);
+    if ((tool as string).length > MCP_TOOL_MAX_LENGTH) {
+        throw new LumoAuthValidationError(
+            `MCP tool name must be at most ${MCP_TOOL_MAX_LENGTH} characters.`,
+            [{ field: 'tool', value: tool }],
+        );
+    }
+}
+
+/**
+ * @internal Run a per-tool check request. A 403 whose JSON body has
+ * `allowed: false` is a deny decision, so its body is returned. Every other
+ * error is thrown as is.
+ */
+export async function mcpDecision(
+    send: () => Promise<Record<string, unknown>>,
+): Promise<Record<string, unknown>> {
+    try {
+        const body = await send();
+        return isObject(body) ? body : {};
+    } catch (error) {
+        if (
+            error instanceof LumoAuthApiError &&
+            error.statusCode === 403 &&
+            isObject(error.body) &&
+            error.body.allowed === false
+        ) {
+            return error.body;
+        }
+        throw error;
+    }
+}
+
+/** @internal Read `resource` from a decision body. */
+export function mcpResource(raw: unknown, serverId: string, tool: string): McpToolResource {
+    const r = isObject(raw) ? raw : {};
+    return {
+        type: typeof r.type === 'string' ? r.type : 'mcp_tool',
+        id: typeof r.id === 'string' ? r.id : `${serverId}/${tool}`,
+    };
 }

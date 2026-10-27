@@ -67,6 +67,10 @@ export const ROUTES = {
     // ── Agents (identity) ─────────────────────────────────────────────
     'agents.ask': { method: 'POST', path: '/orgs/{orgId}/api/v1/agents/ask' },
     'agents.me': { method: 'GET', path: '/orgs/{orgId}/api/v1/agents/me' },
+    'agents.authorizeMcpTool': {
+        method: 'POST',
+        path: '/orgs/{orgId}/api/v1/agents/me/mcp/authorize',
+    },
     'agents.register': { method: 'POST', path: '/orgs/{orgId}/api/v1/agents/register' },
 
     // ── Approvals (push-approval-for-actions) ─────────────────────────
@@ -87,6 +91,12 @@ export const ROUTES = {
     },
     'jit.token': { method: 'POST', path: '/orgs/{orgId}/api/v1/jit/request/{requestId}/token' },
     'jit.pending': { method: 'GET', path: '/orgs/{orgId}/api/v1/jit/pending' },
+
+    // ── MCP per-tool checks (MCP server's own client-credentials token) ─
+    'mcp.authorizeTool': {
+        method: 'POST',
+        path: '/orgs/{orgId}/api/v1/mcp/servers/{serverId}/tools/authorize',
+    },
 
     // ── AAuth (agent auth protocol, @lumoauth/agent) ──────────────────
     'aauth.agentToken': { method: 'POST', path: '/orgs/{orgId}/api/v1/aauth/agent/token' },

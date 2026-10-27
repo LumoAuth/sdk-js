@@ -267,7 +267,7 @@ kind.
 | Credential | How it is sent | What it may call |
 |---|---|---|
 | **User access token**, from sign-in | `Authorization: Bearer …` | Calls about that user: permission checks, Zanzibar checks, ABAC, `agents.me`, `agents.ask`, userinfo. Some calls also need a scope (see the next table) |
-| **Agent credential**: a client-credentials token, or an agent API key (`agk_…`) | `Authorization: Bearer …` | Agent calls: `agents.ask`, `agents.me`, approvals, JIT tasks and requests, delegation, MCP tokens. The agent's capabilities determine what it may do |
+| **Agent credential**: a client-credentials token, or an agent API key (`agk_…`) | `Authorization: Bearer …` | Agent calls: `agents.ask`, `agents.me`, `agents.authorizeMcpTool`, approvals, JIT tasks and requests, delegation, MCP tokens. The agent's capabilities determine what it may do |
 | **Organization API key** (`lmk_…`) | `X-API-Key: …` | The admin API, dynamic client registration and the authorization check family (`/api/v1/authz/check…`, Zanzibar check and expand). The server rejects it on the ABAC, agent and JIT routes |
 
 Keep `lmk_…` keys and agent secrets on the server. Never put them in a
@@ -692,7 +692,8 @@ verify it. Clean up with `revoke(sessionId)` or `revokeAll()`.
 ### Get a token for an MCP server
 
 An agent can trade its token for one that a secured MCP server accepts. The
-server ID is the MCP server's https URL. The SDK sends it as the RFC 8707
+new token names exactly one MCP server. Pass the registered Resource URI of
+that server, which is its https URL. The SDK sends it as the RFC 8707
 `resource`, so the new token's `aud` is that URL.
 
 ```ts
@@ -703,6 +704,61 @@ const detail = await agent.mcp.getTokenDetailed('https://mcp.example.com/mcp'); 
 An ID that is not an absolute `https` URL throws `LumoAuthValidationError`
 before any request. Plain `http` works only for localhost and private hosts.
 A `urn:mcp:…` name cannot be bound, so the SDK rejects it.
+
+The token works only at that MCP server. LumoAuth's own API rejects it. If
+the MCP server requires DPoP, you need a DPoP-bound exchange. `getToken()`
+does not send a DPoP proof.
+
+### Check MCP tool calls
+
+An MCP server can ask LumoAuth whether a caller may run a tool. The MCP
+server must not forward the caller's token, as the MCP specification
+(revision 2026-07-28) requires. Instead, it signs in with its own client
+credentials and asks for the `mcp:authorize` scope. An admin must list its
+client as a tool authorizer of the MCP server in LumoAuth.
+
+First the MCP server verifies the caller's token. Then it passes the `sub`
+claim of that token as the subject. `serverId` is the registered MCP server
+ID, such as `mcp_0123456789abcdef01234567`. It is not the Resource URI.
+
+```ts
+import { LumoAgent, type McpSubject } from '@lumoauth/agent';
+
+// The MCP server's own client, not the caller's token.
+const authorizer = new LumoAgent({
+    clientId: process.env.MCP_CLIENT_ID,
+    clientSecret: process.env.MCP_CLIENT_SECRET,
+    scopes: ['mcp:authorize'],
+});
+
+// `claims` holds the verified MCP token of the caller.
+const subject: McpSubject = claims.sub.startsWith('agent_')
+    ? { type: 'agent', id: claims.sub } // agent_agt_…, sent as is
+    : { type: 'user', id: claims.sub }; // the user's UUID
+
+const decision = await authorizer.mcp.authorizeTool({
+    serverId: 'mcp_0123456789abcdef01234567',
+    subject,
+    tool: 'search_files',
+});
+if (!decision.allowed) {
+    // Refuse the tool call.
+}
+```
+
+An agent can also ask about itself with its own credential:
+
+```ts
+const self = await agent.agents.authorizeMcpTool('mcp_0123456789abcdef01234567', 'search_files');
+// { allowed, agentId, resource: { type: 'mcp_tool', id: 'mcp_…/search_files' } }
+```
+
+A deny returns `allowed: false`. It does not throw. Real errors throw the
+usual classes. For example, a token without `mcp:authorize` gets
+`LumoAuthPermissionDeniedError`, and an unknown server gets
+`LumoAuthNotFoundError`. Both methods check their input before the request.
+A tool name or server ID must not be empty or contain `/`, `:`, `#` or `*`.
+A tool name has at most 80 characters.
 
 ### Give an agent a cryptographic identity (AAuth)
 
@@ -863,9 +919,10 @@ says which credential the server accepts; see [Credentials](#credentials).
 | `capabilities()` | `string[]` | as for `me()` |
 | `budget()` | `AgentBudget` | the agent's client-credentials token (read from userinfo) |
 | `register({ name, clientId?, description?, capabilities?, jwksUri? })` | the registration response | user token with `admin:agents:write` |
+| `authorizeMcpTool(serverId, tool)` | `AgentMcpToolDecision`: `{ allowed, agentId, resource }`. A deny returns `allowed: false` | agent credential |
 
-`LumoAgent` also has `ask`, `isAllowed`, `getCurrentAgent`, `capabilities`
-and `budget` at the top level, plus `authenticate(scopes?)`,
+`LumoAgent` also has `ask`, `isAllowed`, `getCurrentAgent`, `capabilities`,
+`budget` and `authorizeMcpTool` at the top level, plus `authenticate(scopes?)`,
 `getAccessToken()` and the `tokenScopes` getter.
 
 ### `approvals` (needs `orgId`, agent credentials only)
@@ -909,6 +966,7 @@ and `budget` at the top level, plus `authenticate(scopes?)`,
 |---|---|
 | `getToken(serverId)` | `string`. `serverId` is the MCP server's https URL |
 | `getTokenDetailed(serverId)` | `{ accessToken, expiresIn, tokenType, scope }` |
+| `authorizeTool({ serverId, subject: { type, id }, tool })` | `McpToolDecision`: `{ allowed, subject, resource }`. `serverId` is the registered `mcp_…` ID. Call it with the MCP server's own token that holds `mcp:authorize`. A deny returns `allowed: false` |
 
 The AAuth API is listed in the
 [agent package README](./packages/agent/README.md#exports).
@@ -928,6 +986,8 @@ The AAuth API is listed in the
 | 401 from a resource server with a delegated token | The token's `aud` is the agent ID | Pass `resource` to `exchange()` |
 | `LumoAuthApprovalNotDeliveredError` from `approvals.require()` | The user has no enrolled push device. With `reason` `email_fallback_sent`, the server emailed them a notice. With `no_enrolled_device`, the email failed too | Ask the user to enrol the LumoAuth app, then ask again |
 | `LumoAuthValidationError` from `mcp.getToken()` | The server ID is not an https URL, for example `urn:mcp:…` | Pass the MCP server's URL, such as `https://mcp.example.com/mcp` |
+| `LumoAuthPermissionDeniedError` from `mcp.authorizeTool()` | The token lacks `mcp:authorize`, or its client is not a tool authorizer of this MCP server | Request `mcp:authorize`, and add the client as a tool authorizer of the server |
+| `LumoAuthNotFoundError` from `agents.authorizeMcpTool()` | The server ID is not an active registered MCP server. The Resource URI does not work here | Pass the `mcp_…` server ID |
 | `LumoAuthRateLimitError` | Too many requests | Wait `retryAfter` seconds, then retry |
 | `LumoAuthConfigError` mentioning `orgId` | An org-scoped namespace without `orgId` | Pass `orgId` to the constructor |
 | 403 `INSUFFICIENT_PERMISSIONS` from a check with `userId` or `agentId` | The caller may not ask about other subjects | Give the API key the `authz:check` scope, or check with the subject's own token |
