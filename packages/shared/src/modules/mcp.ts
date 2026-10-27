@@ -2,15 +2,19 @@ import {
     LumoAuthApiError,
     LumoAuthConfigError,
     LumoAuthNetworkError,
+    LumoAuthValidationError,
 } from '../errors';
 import { ROUTES, buildPath } from '../routes';
 
 /**
  * MCP module — token exchange for secured MCP servers.
  *
- * Trades the caller's access token for one scoped to a specific MCP
- * server (RFC 8693 Token Exchange, `audience` = the server id). Mirrors
- * the Python SDK's `get_mcp_token`.
+ * Trades the caller's access token for one bound to a specific MCP
+ * server (RFC 8693 Token Exchange). The server id is the MCP server's
+ * https URL, for example `https://mcp.example.com/mcp`. It goes in the
+ * RFC 8707 `resource` parameter, which sets the token's `aud`. (It is also
+ * sent as `audience`, which the server ignores.) Mirrors the Python SDK's
+ * `get_mcp_token`.
  */
 
 export interface McpModuleConfig {
@@ -47,9 +51,12 @@ export class McpModule {
     /**
      * Exchange the caller's token for one scoped to a secured MCP server.
      *
-     * @param serverId Audience identifier of the target MCP server
-     *                 (e.g. `"urn:mcp:financial-data"`).
-     * @returns The MCP-scoped access token string.
+     * @param serverId The MCP server's https URL, which is its RFC 8707
+     *                 resource identifier (e.g. `"https://mcp.example.com/mcp"`).
+     *                 Plain http is accepted for localhost and private hosts.
+     * @returns The access token, with `aud` set to `serverId`.
+     * @throws LumoAuthValidationError when `serverId` is not an absolute
+     *         http(s) URL.
      */
     async getToken(serverId: string): Promise<string> {
         const { accessToken } = await this.getTokenDetailed(serverId);
@@ -63,6 +70,7 @@ export class McpModule {
                 'mcp requires `orgId` — pass it to the constructor config.',
             );
         }
+        assertMcpServerId(serverId);
         const subjectToken = await this.token();
 
         const url = `${this.baseUrl}${buildPath(ROUTES['oauth.token'].path, { orgId: this.orgId })}`;
@@ -75,6 +83,7 @@ export class McpModule {
                     grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
                     subject_token: subjectToken,
                     subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+                    resource: serverId,
                     audience: serverId,
                 }),
             });
@@ -103,5 +112,26 @@ export class McpModule {
             tokenType: typeof body.token_type === 'string' ? body.token_type : null,
             scope: typeof body.scope === 'string' ? body.scope : null,
         };
+    }
+}
+
+/**
+ * The token endpoint binds `aud` only from `resource`, which must be an
+ * absolute http(s) URI without a fragment. Check it here, so the caller
+ * gets a clear message instead of a 400 `invalid_target`.
+ */
+function assertMcpServerId(serverId: string): void {
+    let url: URL | null = null;
+    try {
+        url = new URL(serverId);
+    } catch {
+        url = null;
+    }
+    if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.hash !== '' || serverId.includes('#')) {
+        throw new LumoAuthValidationError(
+            `Invalid MCP server id "${serverId}": the MCP server id must be the server's https URL ` +
+                '(its RFC 8707 resource identifier), e.g. https://mcp.example.com/mcp',
+            [{ field: 'serverId', value: serverId }],
+        );
     }
 }

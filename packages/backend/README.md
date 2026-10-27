@@ -130,10 +130,10 @@ from `LUMOAUTH_URL` and `LUMOAUTH_SECRET_KEY`.
 | `abac` | Attribute-based decisions and attributes | `check`, `isAllowed`, `checkBulk`, `getMyAttributes`, `setUserAttribute`, `getResourceAttributes`, `setResourceAttribute`, `getAttributeDefinitions` |
 | `auth` | OAuth 2.0 flows on the server | `buildAuthorizationUrl`, `exchangeCodeForTokens`, `refreshToken`, `revokeToken`, `getUserInfo`, `passwordGrant` |
 | `agents` | Agent identity | `ask`, `isAllowed`, `me`, `getCurrentAgent`, `capabilities`, `budget`, `register` |
-| `approvals` | Push approval for agent actions (agent credentials only) | `require`, `getStatus`, `wait` |
+| `approvals` | Push approval for agent actions (agent credentials only) | `require`, `create`, `getStatus`, `wait` |
 | `delegation` | Act for a user with RFC 8693 token exchange | `getConsentUrl`, `handleConsentCallback`, `setUserToken`, `exchange`, `request`, `delegateToSubAgent`, `revoke`, `revokeAll` |
 | `jit` | Just-in-time permissions | `createTask`, `requestPermission`, `getRequestStatus`, `getToken`, `evaluateTask`, `completeTask`, `listPendingRequests` |
-| `mcp` | Tokens for secured MCP servers | `getToken`, `getTokenDetailed` |
+| `mcp` | Tokens for secured MCP servers | `getToken`, `getTokenDetailed`. The server ID is the MCP server's https URL, which becomes the token's `aud` |
 
 `lumo.clearCache()` clears the permission cache. The parameters, return
 values and required credentials of every method are in the
@@ -200,8 +200,7 @@ how to install it.
 | `LumoAuthConfigError` that mentions a browser | The backend was constructed in browser code | Keep it in a route handler, a server component or an API route |
 | `LumoAuthConfigError` that mentions `@lumoauth/api-client` | `lumo.api` was used without the generated client installed | Install it as described above |
 
-The [workspace README](../../README.md#troubleshooting) has the full list,
-including the known issue with approvals.
+The [workspace README](../../README.md#troubleshooting) has the full list.
 
 ## Related packages
 

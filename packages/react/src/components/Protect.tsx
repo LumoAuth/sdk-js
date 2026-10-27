@@ -1,7 +1,7 @@
 import React from 'react';
 import { usePermission, useZanzibar, useAbac } from '../hooks';
 import { useLumoAuthContext } from '../provider';
-import type { ProtectProps } from '../types';
+import type { LumoAuthUser, ProtectProps } from '../types';
 
 // ─── Protect Component ────────────────────────────────────────────────
 
@@ -18,8 +18,9 @@ import type { ProtectProps } from '../types';
  *   <EditForm />
  * </Protect>
  *
- * // ReBAC (Zanzibar)
- * <Protect zanzibar={{ object: 'doc:123', relation: 'editor', subject: 'user:alice' }}>
+ * // ReBAC (Zanzibar). Without `subject`, the check is about the
+ * // signed-in user (`user:<sub>`).
+ * <Protect zanzibar={{ object: 'doc:123', relation: 'editor' }}>
  *   <EditForm />
  * </Protect>
  *
@@ -36,7 +37,7 @@ export function Protect({
     fallback = null,
     children,
 }: ProtectProps) {
-    const { isLoaded, isSignedIn } = useLumoAuthContext();
+    const { isLoaded, isSignedIn, user } = useLumoAuthContext();
 
     // Determine which check to use
     if (permission) {
@@ -59,6 +60,7 @@ export function Protect({
                 fallback={fallback}
                 isLoaded={isLoaded}
                 isSignedIn={isSignedIn}
+                user={user}
             >
                 {children}
             </ProtectWithZanzibar>
@@ -111,32 +113,78 @@ function ProtectWithPermission({
     return <>{children}</>;
 }
 
-function ProtectWithZanzibar({
+/**
+ * The Zanzibar subject for a `<Protect zanzibar>` check: the explicit
+ * `subject` when given, else `user:<sub>` of the signed-in user. `null` when
+ * there is no subject to ask about (nobody is signed in).
+ *
+ * @internal Exported for tests.
+ */
+export function resolveZanzibarSubject(
+    explicit: string | undefined,
+    user: Pick<LumoAuthUser, 'id' | 'sub'> | null | undefined,
+): string | null {
+    if (explicit) return explicit;
+    const sub = user?.sub || user?.id;
+    return sub ? `user:${sub}` : null;
+}
+
+/** @internal Exported for tests. */
+export function ProtectWithZanzibar({
     zanzibar,
     fallback,
     isLoaded,
     isSignedIn,
+    user,
     children,
 }: {
     zanzibar: { object: string; relation: string; subject?: string };
     fallback: React.ReactNode;
     isLoaded: boolean;
     isSignedIn: boolean;
+    user: Pick<LumoAuthUser, 'id' | 'sub'> | null;
     children: React.ReactNode;
 }) {
-    const { allowed, isLoading } = useZanzibar({
-        object: zanzibar.object,
-        relation: zanzibar.relation,
-        subject: zanzibar.subject || 'user:me',
-    });
-
-    if (!isLoaded || isLoading) {
+    if (!isLoaded) {
         return <div className="la-protect-loading"><span className="la-spinner" /></div>;
     }
-    if (!isSignedIn || !allowed) {
+    const subject = isSignedIn ? resolveZanzibarSubject(zanzibar.subject, user) : null;
+    if (!subject) {
+        // Nobody is signed in (or the profile has no subject yet): there is
+        // no one to ask about, so render the fallback and send no request.
         return <>{fallback}</>;
     }
-    return <>{children}</>;
+    return (
+        <ZanzibarCheck
+            object={zanzibar.object}
+            relation={zanzibar.relation}
+            subject={subject}
+            fallback={fallback}
+        >
+            {children}
+        </ZanzibarCheck>
+    );
+}
+
+function ZanzibarCheck({
+    object,
+    relation,
+    subject,
+    fallback,
+    children,
+}: {
+    object: string;
+    relation: string;
+    subject: string;
+    fallback: React.ReactNode;
+    children: React.ReactNode;
+}) {
+    const { allowed, isLoading } = useZanzibar({ object, relation, subject });
+
+    if (isLoading) {
+        return <div className="la-protect-loading"><span className="la-spinner" /></div>;
+    }
+    return allowed ? <>{children}</> : <>{fallback}</>;
 }
 
 function ProtectWithAbac({

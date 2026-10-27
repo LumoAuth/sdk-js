@@ -14,6 +14,7 @@
 //   ├── LumoAuthNetworkError                  (NETWORK_ERROR)
 //   ├── LumoAuthApprovalDeniedError           (APPROVAL_DENIED)
 //   ├── LumoAuthApprovalTimeoutError          (APPROVAL_TIMEOUT)
+//   ├── LumoAuthApprovalNotDeliveredError     (APPROVAL_NOT_DELIVERED, reason)
 //   └── LumoAuthBudgetExceededError           (BUDGET_EXCEEDED)
 
 /**
@@ -179,6 +180,32 @@ export class LumoAuthApprovalTimeoutError extends LumoAuthError {
     ) {
         super(message, 'APPROVAL_TIMEOUT');
         this.name = 'LumoAuthApprovalTimeoutError';
+    }
+}
+
+/** Why an approval request reached no device. */
+export type ApprovalNotDeliveredReason = 'email_fallback_sent' | 'no_enrolled_device';
+
+/**
+ * Thrown when an approval request could not reach the user's phone, so
+ * nobody can approve it in this call. It never means "approved".
+ *
+ * - `reason: 'email_fallback_sent'`: the server answered 202. The user has
+ *   no enrolled push device, so the server emailed them a notice instead
+ *   (the email holds no approval link). The server gives the same answer
+ *   for an unknown user. There is no approval token to poll.
+ * - `reason: 'no_enrolled_device'`: the server answered 428. The user has
+ *   no enrolled push device, and the notice email could not be sent.
+ */
+export class LumoAuthApprovalNotDeliveredError extends LumoAuthError {
+    constructor(
+        message = 'The approval request did not reach a device.',
+        public readonly reason: ApprovalNotDeliveredReason = 'no_enrolled_device',
+        public readonly taskId: string | null = null,
+        public readonly body?: unknown
+    ) {
+        super(message, 'APPROVAL_NOT_DELIVERED');
+        this.name = 'LumoAuthApprovalNotDeliveredError';
     }
 }
 

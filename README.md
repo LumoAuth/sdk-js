@@ -577,6 +577,35 @@ the wait timed out first. By default the SDK polls every 1.5 seconds for up to
 90 seconds; set `pollIntervalMs` and `timeoutMs` to change that. To poll
 yourself later, call `approvals.getStatus(token)` or `approvals.wait(token)`.
 
+The user may have no enrolled push device. Then no prompt is sent, and
+nobody can approve in this call. `require()` throws
+`LumoAuthApprovalNotDeliveredError` and never returns `approved`. Its
+`reason` tells you what happened:
+
+- `email_fallback_sent`: the server emailed the user a notice. The email has
+  no approval link. The server gives the same answer for an unknown user, so
+  the endpoint does not reveal which emails exist. The SDK does not poll.
+- `no_enrolled_device`: the user has no device, and the email could not be
+  sent.
+
+```ts
+import { LumoAuthApprovalNotDeliveredError } from '@lumoauth/agent';
+
+try {
+  await agent.approvals.require({ taskId: 'wire-001', reason: 'Wire $4,500', onBehalfOf: 'ada@acme.com' });
+} catch (err) {
+  if (err instanceof LumoAuthApprovalNotDeliveredError) {
+    // Ask the user to check their email, or to enrol the LumoAuth app.
+    console.log(err.reason, err.taskId);
+  } else throw err;
+}
+```
+
+To send the request without waiting, call `approvals.create()`. It returns
+`status: 'pending'` with a `token` to poll. When no prompt was sent, it
+returns `status: 'email_fallback_sent'` and `token: null`, and it does not
+throw.
+
 Only agent credentials can create or read approvals. A portal test token gets
 403 `test_token_not_accepted`.
 
@@ -662,12 +691,18 @@ verify it. Clean up with `revoke(sessionId)` or `revokeAll()`.
 
 ### Get a token for an MCP server
 
-An agent can trade its token for one that a secured MCP server accepts:
+An agent can trade its token for one that a secured MCP server accepts. The
+server ID is the MCP server's https URL. The SDK sends it as the RFC 8707
+`resource`, so the new token's `aud` is that URL.
 
 ```ts
-const mcpToken = await agent.mcp.getToken('urn:mcp:financial-data');
-const detail = await agent.mcp.getTokenDetailed('urn:mcp:financial-data'); // accessToken, expiresIn, scope
+const mcpToken = await agent.mcp.getToken('https://mcp.example.com/mcp');
+const detail = await agent.mcp.getTokenDetailed('https://mcp.example.com/mcp'); // accessToken, expiresIn, scope
 ```
+
+An ID that is not an absolute `https` URL throws `LumoAuthValidationError`
+before any request. Plain `http` works only for localhost and private hosts.
+A `urn:mcp:…` name cannot be bound, so the SDK rejects it.
 
 ### Give an agent a cryptographic identity (AAuth)
 
@@ -733,6 +768,7 @@ LumoAuthError
 ├── LumoAuthNetworkError               the request failed or timed out before a response
 ├── LumoAuthApprovalDeniedError        a person declined an approval
 ├── LumoAuthApprovalTimeoutError       nobody answered an approval in time
+├── LumoAuthApprovalNotDeliveredError  the approval prompt reached no device; see reason
 └── LumoAuthBudgetExceededError        the agent ran out of budget
 ```
 
@@ -836,7 +872,8 @@ and `budget` at the top level, plus `authenticate(scopes?)`,
 
 | Method | Returns |
 |---|---|
-| `require({ taskId, reason, onBehalfOf, impact?, meta?, pollIntervalMs?, timeoutMs? })` | `ApprovalResult` |
+| `require({ taskId, reason, onBehalfOf, impact?, meta?, pollIntervalMs?, timeoutMs? })` | `ApprovalResult`. Throws `LumoAuthApprovalNotDeliveredError` when no prompt was sent |
+| `create({ taskId, reason, onBehalfOf, impact?, meta? })` | `{ status: 'pending' \| 'email_fallback_sent', token, taskId, impact, expiresAt, message }`. `token` is `null` when no prompt was sent |
 | `getStatus(approvalToken)` | `ApprovalResult` |
 | `wait(approvalToken, { pollIntervalMs?, timeoutMs? })` | `ApprovalResult` |
 
@@ -870,7 +907,7 @@ and `budget` at the top level, plus `authenticate(scopes?)`,
 
 | Method | Returns |
 |---|---|
-| `getToken(serverId)` | `string` |
+| `getToken(serverId)` | `string`. `serverId` is the MCP server's https URL |
 | `getTokenDetailed(serverId)` | `{ accessToken, expiresIn, tokenType, scope }` |
 
 The AAuth API is listed in the
@@ -889,22 +926,12 @@ The AAuth API is listed in the
 | `invalid_grant` from `delegation.exchange()` | The declared token type does not match the token, the subject is no longer active, or the subject is a JIT token | Declare the right type in `subjectTokenType`, and use an active user or agent token |
 | `invalid_request` when the subject is a refresh token | A refresh token cannot be the subject of an on-behalf-of exchange | Exchange the access token instead |
 | 401 from a resource server with a delegated token | The token's `aud` is the agent ID | Pass `resource` to `exchange()` |
+| `LumoAuthApprovalNotDeliveredError` from `approvals.require()` | The user has no enrolled push device. With `reason` `email_fallback_sent`, the server emailed them a notice. With `no_enrolled_device`, the email failed too | Ask the user to enrol the LumoAuth app, then ask again |
+| `LumoAuthValidationError` from `mcp.getToken()` | The server ID is not an https URL, for example `urn:mcp:…` | Pass the MCP server's URL, such as `https://mcp.example.com/mcp` |
 | `LumoAuthRateLimitError` | Too many requests | Wait `retryAfter` seconds, then retry |
 | `LumoAuthConfigError` mentioning `orgId` | An org-scoped namespace without `orgId` | Pass `orgId` to the constructor |
 | 403 `INSUFFICIENT_PERMISSIONS` from a check with `userId` or `agentId` | The caller may not ask about other subjects | Give the API key the `authz:check` scope, or check with the subject's own token |
 | 404 `SUBJECT_NOT_FOUND` from a check with `userId` | The id is not a LumoAuth user id in this organization | Pass the user's LumoAuth id (the `sub` claim), not your app's own id or an email |
-
-### Known issues
-
-This is a difference between the SDK code and the server. It is listed here
-so that you can work around it.
-
-- **`approvals.require()` throws a plain `Error` when the user has no
-  enrolled device.** The server then emails the user a plain notification
-  with no sign-in link, and it answers 202 `email_fallback_sent` without an
-  approval token. The SDK expects a token, so it throws
-  `Missing route parameter "token"`. Catch the error and treat it as "the
-  user was emailed".
 
 ## Versioning and compatibility
 
@@ -972,10 +999,11 @@ package, build its dependencies first, for example
 `packages/client` on disk, not to the registry. A fresh clone builds without
 any package being published.
 
-**Tests.** `shared`, `client`, `backend`, `agent` and `nextjs` have
-`node --test` suites, which run against the built `dist/`. `express`, `react`
-and `create-lumo-agent` are covered by the type check, the browser test suite
-and the release smoke test. Two suites in `packages/shared/tests` compare the
+**Tests.** `shared`, `client`, `backend`, `express`, `agent`, `react` and
+`nextjs` have `node --test` suites, which run against the built `dist/`. The
+`react` and `nextjs` suites also build one source file into `tests/.build`.
+`create-lumo-agent` is covered by the type check and the release smoke test.
+The browser test suite also covers `react`. Two suites in `packages/shared/tests` compare the
 SDK with its sources of truth. Each one skips with a message when its source
 is missing:
 

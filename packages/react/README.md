@@ -280,8 +280,8 @@ renders `fallback`.
   <AdminPanel />
 </Protect>
 
-// A relationship (Zanzibar). Always pass the subject.
-<Protect zanzibar={{ object: 'document:readme', relation: 'editor', subject: `user:${user.id}` }}>
+// A relationship (Zanzibar). Without subject, the check is about the signed-in user.
+<Protect zanzibar={{ object: 'document:readme', relation: 'editor' }}>
   <EditButton />
 </Protect>
 
@@ -294,7 +294,7 @@ renders `fallback`.
 | Prop | Type | Description |
 |---|---|---|
 | `permission` | `string` | Permission slug |
-| `zanzibar` | `{ object, relation, subject? }` | Relationship check. Without `subject` the SDK sends `user:me`. |
+| `zanzibar` | `{ object, relation, subject? }` | Relationship check. Without `subject`, the SDK asks about `user:<sub>`, where `<sub>` is the signed-in user's subject. When nobody is signed in, `<Protect>` renders `fallback` and sends no request. |
 | `abac` | `{ resourceType, action, resourceId? }` | ABAC check |
 | `fallback` | `ReactNode` | Shown while checking and when denied. Default: nothing. |
 | `children` | `ReactNode` | Shown when allowed |
@@ -611,7 +611,7 @@ The prop and return types are exported too, for example `LumoAuthProviderProps`,
 |---|---|---|
 | `useAbac` and `<Protect abac={…}>` always deny | The token lacks `abac:read`. | Add `abac:read` to the provider's `scope` prop and to the OAuth client's allowed scopes, then sign in again. |
 | `listSlugs()` throws `403` with `requiredScopes: ['authz:read']` | The token lacks `authz:read`. | Add `authz:read` to the `scope` prop and to the OAuth client, then sign in again. |
-| `<Protect zanzibar={…}>` denies a user who has the relation | No `subject` was passed, so the SDK sent `user:me`. | Pass `subject`, such as `` `user:${user.id}` ``. |
+| `<Protect zanzibar={…}>` denies a user who has the relation | The tuple names the user by a different ID than the `sub` claim. | Write the tuple with the user's `sub`, or pass `subject` yourself. |
 | `useZanzibar` about another user always denies | Asking about another subject needs `authz:check`. | Run that check on your server with a credential that holds `authz:check`. |
 | The callback page shows a CORS error | Your origin is not in the OAuth client's allowed origins. | Add it in the LumoAuth dashboard. |
 | The callback fails with a redirect URI error | `redirectUri` does not match a registered redirect URI exactly. | Register `<origin>/auth/callback`, or pass the registered value as `redirectUri`. |

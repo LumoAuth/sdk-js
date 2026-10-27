@@ -23,6 +23,8 @@ export {
     type ApprovalResult,
     type ApprovalImpact,
     type ApprovalWaitOptions,
+    type ApprovalRequestResult,
+    type CreateApprovalRequest,
 } from './modules/approvals';
 export {
     DelegationModule,
@@ -164,6 +166,8 @@ export {
     LumoAuthNetworkError,
     LumoAuthApprovalDeniedError,
     LumoAuthApprovalTimeoutError,
+    LumoAuthApprovalNotDeliveredError,
+    type ApprovalNotDeliveredReason,
     LumoAuthBudgetExceededError,
 } from './errors';
 

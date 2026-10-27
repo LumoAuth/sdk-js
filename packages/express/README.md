@@ -114,7 +114,9 @@ Credentials and scopes are explained in the [client README](../client/README.md#
 | `clientSecret` | `string` | none | Needed for a confidential client. A public client leaves it out and relies on PKCE. |
 | `prefix` | `string` | `'/auth'` | Where the three routes are mounted |
 | `postLoginRedirect` | `string` | `'/'` | Where to go after sign-in when there is no `return_to` |
-| `postLogoutRedirect` | `string` | `'/'` | Where to go after sign-out |
+| `postLogoutRedirect` | `string` | `'/'` | Where to go after sign-out. Use an absolute URL that is registered as a post-logout redirect URI on the OAuth client, so that sign-out also ends the LumoAuth session. A relative path only clears the local session. |
+| `autoRefresh` | `boolean` | `true` | Refresh the access token when it expires in less than 60 seconds |
+| `endSessionOnLogout` | `boolean` | `true` | On sign-out, revoke the refresh token and end the LumoAuth session. `false` only clears the local session. |
 | `scope` | `string` | `'openid profile email'` | OAuth scopes to request. Add `authz:read` if the app lists the user's permissions, or `abac:read` for ABAC checks. The OAuth client must allow them. |
 | `fetch` | `typeof fetch` | global `fetch` | A custom `fetch`, for tests or a proxy |
 
@@ -139,8 +141,8 @@ interface SessionUser {
 |---|---|---|
 | `/auth/login` | GET | Builds an authorization URL with PKCE, saves the verifier and `state` in the session, and redirects to LumoAuth. Accepts `?return_to=/path`; only paths on your own site are accepted. |
 | `/auth/callback` | GET | Checks `state`, exchanges the code for tokens, loads the profile, gives the session a new ID, saves the tokens and profile, and redirects to `return_to` |
-| `/auth/logout` | GET or POST | Removes the LumoAuth data from the session and redirects to `postLogoutRedirect` |
-| any other path | any | Restores `req.user` from the session, then calls `next()` |
+| `/auth/logout` | GET or POST | Removes the LumoAuth data from the session, revokes the refresh token, and redirects through the LumoAuth end-session endpoint to `postLogoutRedirect` |
+| any other path | any | Refreshes the access token when needed, restores `req.user` from the session, then calls `next()` |
 
 The new session ID after sign-in prevents session fixation. Sign-out keeps your other session
 data. Call `req.session.destroy()` yourself if you want to remove everything.
@@ -272,15 +274,37 @@ app.use((err, req, res, next) => {
 | A permission check in a handler answers for the wrong user | No subject was named, so the check answered for the credential's owner. | Pass `{ userId: req.user.sub }` as the third argument. |
 | A check with `userId` gets `403` `INSUFFICIENT_PERMISSIONS` | The key lacks the `authz:check` scope. | Add the scope to the key. |
 
+### Token refresh
+
+Before a request reaches your handlers, the middleware checks the stored access token. When it
+expires in less than 60 seconds and a refresh token is stored, the middleware gets a new one
+with the `refresh_token` grant. It saves the new tokens in the session. If the server sends no
+new refresh token, the old one is kept. Parallel requests on one session share a single refresh.
+
+If the refresh fails, the middleware removes `user` and the tokens from the session. The request
+then counts as signed out, so `requireAuth()` answers `401`. Set `autoRefresh: false` to turn
+this off.
+
+### Sign-out
+
+`/auth/logout` clears the LumoAuth data from the session. Then it does two more things:
+
+1. It revokes the refresh token (RFC 7009). This also revokes the access tokens issued with it.
+   Errors are ignored, so sign-out always completes.
+2. It redirects to the LumoAuth end-session endpoint with `id_token_hint` and
+   `post_logout_redirect_uri`. LumoAuth ends its own session and sends the user back to
+   `postLogoutRedirect`.
+
+The end-session step needs an absolute `postLogoutRedirect`, such as
+`https://app.example.com/`. Register it as a post-logout redirect URI on the OAuth client. With a
+relative path, the middleware still revokes the token, but it redirects straight to that path.
+The LumoAuth session then stays open, so the next sign-in may skip the login screen.
+Set `endSessionOnLogout: false` to only clear the local session.
+
 ## Limitations
 
-- The middleware does not refresh the access token. The stored token expires after about an hour,
-  while `req.user` stays until sign-out. Refresh the token yourself, or have the user sign in
-  again, before you call LumoAuth with it.
 - There is no session endpoint for `cookieStorageAdapter` from `@lumoauth/client`. If a browser
   app needs the token, add a same-origin route that returns `{ accessToken, idToken, expiresAt }`.
-- Sign-out clears the local session only. It does not end the user's LumoAuth session, so the next
-  sign-in may complete without a login screen.
 
 ## Versioning and compatibility
 

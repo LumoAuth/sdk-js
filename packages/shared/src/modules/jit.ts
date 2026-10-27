@@ -228,9 +228,14 @@ export class JitModule {
         const data = await this.http.get<unknown>(
             buildPath(ROUTES['jit.pending'].path, { orgId: this.requireOrgId() }),
         );
+        // The server answers `{ pending_requests, count, data, pagination }`;
+        // `data` and `pending_requests` hold the same list.
         if (Array.isArray(data)) return data as Array<Record<string, unknown>>;
-        if (data && typeof data === 'object' && Array.isArray((data as { requests?: unknown[] }).requests)) {
-            return (data as { requests: Array<Record<string, unknown>> }).requests;
+        if (data && typeof data === 'object') {
+            const body = data as Record<string, unknown>;
+            for (const key of ['data', 'pending_requests', 'requests']) {
+                if (Array.isArray(body[key])) return body[key] as Array<Record<string, unknown>>;
+            }
         }
         return [];
     }

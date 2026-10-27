@@ -48,3 +48,26 @@ export {
 } from './verify';
 
 export { AAuthError } from './errors';
+
+// The shared error taxonomy, so agent code can catch these without a direct
+// dependency on @lumoauth/shared.
+export {
+    LumoAuthError,
+    LumoAuthApiError,
+    LumoAuthAuthenticationError,
+    LumoAuthPermissionDeniedError,
+    LumoAuthNotFoundError,
+    LumoAuthRateLimitError,
+    LumoAuthValidationError,
+    LumoAuthConfigError,
+    LumoAuthNetworkError,
+    LumoAuthApprovalDeniedError,
+    LumoAuthApprovalTimeoutError,
+    LumoAuthApprovalNotDeliveredError,
+    LumoAuthBudgetExceededError,
+    type ApprovalNotDeliveredReason,
+    type ApprovalResult,
+    type ApprovalRequestResult,
+    type CreateApprovalRequest,
+    type RequireApprovalRequest,
+} from '@lumoauth/shared';

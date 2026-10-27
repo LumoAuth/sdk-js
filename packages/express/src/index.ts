@@ -43,6 +43,7 @@ export {
     LumoAuthNetworkError,
     LumoAuthApprovalDeniedError,
     LumoAuthApprovalTimeoutError,
+    LumoAuthApprovalNotDeliveredError,
     LumoAuthBudgetExceededError,
 } from '@lumoauth/backend';
 
@@ -120,8 +121,26 @@ export interface LumoAuthMiddlewareOptions {
   postLoginRedirect?: string;
   /**
    * Where to redirect the user after sign-out. Default: `/`.
+   *
+   * Use an absolute URL (for example `https://app.example.com/`) that is
+   * registered as a post-logout redirect URI on the OAuth client. Then
+   * sign-out also ends the LumoAuth session (see `endSessionOnLogout`). A
+   * relative path only clears the local session.
    */
   postLogoutRedirect?: string;
+  /**
+   * Refresh the session's access token when it expires in less than 60
+   * seconds and a refresh token is stored. When the refresh fails, the
+   * request is treated as signed out. Default: `true`.
+   */
+  autoRefresh?: boolean;
+  /**
+   * On sign-out, revoke the refresh token (RFC 7009) and redirect through
+   * the OIDC end-session endpoint, so the LumoAuth session ends too. The
+   * end-session step needs an absolute `postLogoutRedirect`. Set `false` to
+   * only clear the local session. Default: `true`.
+   */
+  endSessionOnLogout?: boolean;
   /**
    * OAuth scopes to request. Default: `'openid profile email'`.
    */
@@ -186,6 +205,22 @@ export function lumoAuthMiddleware(opts: LumoAuthMiddlewareOptions): LumoAuthReq
   const postLoginRedirect = opts.postLoginRedirect ?? '/';
   const postLogoutRedirect = opts.postLogoutRedirect ?? '/';
   const scope = opts.scope ?? 'openid profile email';
+  const autoRefresh = opts.autoRefresh ?? true;
+  const endSessionOnLogout = opts.endSessionOnLogout ?? true;
+
+  // One refresh per refresh token at a time. Parallel requests on the same
+  // session share it, so a rotating refresh token is redeemed only once.
+  const inflight = new Map<string, Promise<TokenResponse>>();
+  const refresh = (refreshToken: string): Promise<TokenResponse> => {
+    let pending = inflight.get(refreshToken);
+    if (!pending) {
+      pending = auth
+        .refreshToken(refreshToken, { clientSecret: opts.clientSecret })
+        .finally(() => inflight.delete(refreshToken));
+      inflight.set(refreshToken, pending);
+    }
+    return pending;
+  };
 
   const auth = new AuthModule({
     baseUrl: opts.baseUrl,
@@ -210,13 +245,20 @@ export function lumoAuthMiddleware(opts: LumoAuthMiddlewareOptions): LumoAuthReq
       return;
     }
 
-    // Restore `req.user` from session so downstream handlers always see it.
     const sessionState: LumoAuthSessionState = (req.session.__lumoAuth ?? {}) as LumoAuthSessionState;
+    const path = req.path ?? req.url.split('?')[0];
+    const isAuthRoute =
+      path === `${prefix}/login` || path === `${prefix}/callback` || path === `${prefix}/logout`;
+
+    // Refresh a token that is about to expire before anything reads it.
+    if (autoRefresh && !isAuthRoute) {
+      await refreshIfNeeded(req, sessionState, refresh);
+    }
+
+    // Restore `req.user` from session so downstream handlers always see it.
     if (sessionState.user) {
       req.user = sessionState.user;
     }
-
-    const path = req.path ?? req.url.split('?')[0];
 
     if (req.method === 'GET' && path === `${prefix}/login`) {
       await handleLogin(req, res, auth, prefix, scope, sessionState, postLoginRedirect);
@@ -230,7 +272,10 @@ export function lumoAuthMiddleware(opts: LumoAuthMiddlewareOptions): LumoAuthReq
       (req.method === 'GET' || req.method === 'POST') &&
       path === `${prefix}/logout`
     ) {
-      await handleLogout(req, res, sessionState, postLogoutRedirect);
+      await handleLogout(req, res, auth, sessionState, postLogoutRedirect, {
+        endSession: endSessionOnLogout,
+        clientSecret: opts.clientSecret,
+      });
       return;
     }
 
@@ -337,9 +382,13 @@ async function handleCallback(
 async function handleLogout(
   req: Req,
   res: Res,
+  auth: AuthModule,
   sessionState: LumoAuthSessionState,
   postLogoutRedirect: string,
+  options: { endSession: boolean; clientSecret?: string },
 ): Promise<void> {
+  const tokens = sessionState.tokens;
+
   // Wipe LumoAuth-specific state. We DON'T destroy the whole session
   // because the host app may store unrelated data on it. Hosts that want
   // a hard logout should call `req.session.destroy()` themselves.
@@ -347,7 +396,76 @@ async function handleLogout(
   delete sessionState.tokens;
   delete sessionState.flow;
   saveSession(req, sessionState);
-  res.redirect(postLogoutRedirect);
+  req.user = undefined;
+
+  if (!options.endSession) {
+    res.redirect(postLogoutRedirect);
+    return;
+  }
+
+  // Revoke the refresh token (this also revokes the access tokens issued
+  // with it). Best-effort: a failure must not block sign-out.
+  const revocable = tokens?.refresh_token ?? tokens?.access_token;
+  if (revocable) {
+    try {
+      await auth.revokeToken(revocable, undefined, {
+        clientSecret: options.clientSecret,
+        tokenTypeHint: tokens?.refresh_token ? 'refresh_token' : 'access_token',
+      });
+    } catch {
+      // ignored
+    }
+  }
+
+  // End the LumoAuth session too. Otherwise the next /authorize signs the
+  // user straight back in. The end-session endpoint needs an absolute
+  // post-logout redirect URI, so a relative one keeps the local redirect.
+  if (!isAbsoluteHttpUrl(postLogoutRedirect)) {
+    res.redirect(postLogoutRedirect);
+    return;
+  }
+  res.redirect(
+    auth.buildEndSessionUrl({
+      idTokenHint: tokens?.id_token,
+      postLogoutRedirectUri: postLogoutRedirect,
+    }),
+  );
+}
+
+/** Seconds before expiry at which the access token is refreshed. */
+const REFRESH_LEEWAY_SECONDS = 60;
+
+async function refreshIfNeeded(
+  req: Req,
+  sessionState: LumoAuthSessionState,
+  refresh: (refreshToken: string) => Promise<TokenResponse>,
+): Promise<void> {
+  const tokens = sessionState.tokens;
+  if (!tokens?.refresh_token) return;
+  if (tokens.expires_at - nowSeconds() >= REFRESH_LEEWAY_SECONDS) return;
+
+  try {
+    const fresh = await refresh(tokens.refresh_token);
+    sessionState.tokens = {
+      access_token: fresh.access_token,
+      // Keep the old refresh token when the server does not rotate it.
+      refresh_token: fresh.refresh_token ?? tokens.refresh_token,
+      id_token: fresh.id_token ?? tokens.id_token,
+      token_type: fresh.token_type ?? tokens.token_type ?? 'Bearer',
+      expires_at: nowSeconds() + (fresh.expires_in ?? 3600),
+      scope: fresh.scope ?? tokens.scope,
+    };
+  } catch {
+    // The refresh token is no longer good: treat the request as signed out.
+    delete sessionState.user;
+    delete sessionState.tokens;
+    req.user = undefined;
+  }
+  saveSession(req, sessionState);
+}
+
+function isAbsoluteHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
 }
 
 /**

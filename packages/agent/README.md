@@ -79,7 +79,8 @@ const approval = await agent.approvals.require({
 if (approval.status !== 'approved') throw new Error(`not approved: ${approval.status}`);
 
 // 3. Get a short-lived token for a secured MCP server.
-const mcpToken = await agent.mcp.getToken('urn:mcp:financial-data');
+//    The server ID is the MCP server's https URL. It becomes the token's `aud`.
+const mcpToken = await agent.mcp.getToken('https://mcp.example.com/mcp');
 ```
 
 Sign-in is automatic. The first call runs the OAuth 2.0 client credentials
@@ -138,10 +139,30 @@ means that the wait ended before the user answered. `approval.token` lets you
 check again later with `agent.approvals.getStatus(token)` or
 `agent.approvals.wait(token)`.
 
-When the user has no enrolled device, the server emails them a plain
-notification with no sign-in link. In 1.0.0, `require()` then throws a plain
-`Error` (`Missing route parameter "token"`); see
-[Troubleshooting](#troubleshooting).
+When the user has no enrolled push device, no prompt is sent. `require()`
+then throws `LumoAuthApprovalNotDeliveredError`. It never returns
+`approved` in this case. Check `err.reason`:
+
+- `email_fallback_sent`: the server emailed the user a notice with no
+  approval link. There is no token, so the SDK does not poll. An unknown
+  user gets the same answer.
+- `no_enrolled_device`: the email could not be sent either.
+
+```ts
+import { LumoAuthApprovalNotDeliveredError } from '@lumoauth/agent';
+
+try {
+  await agent.approvals.require({ taskId: 'delete-42', reason: 'Delete invoices', onBehalfOf: 'ada@acme.com' });
+} catch (err) {
+  if (err instanceof LumoAuthApprovalNotDeliveredError) {
+    // Ask the user to check their email, or to enrol the LumoAuth app.
+  } else throw err;
+}
+```
+
+`agent.approvals.create()` sends the request without waiting. It returns
+`status: 'pending'` and a `token` when a prompt was sent. Otherwise it
+returns `status: 'email_fallback_sent'` and `token: null`, without throwing.
 
 ### Request just-in-time permissions
 
@@ -205,10 +226,10 @@ consent steps. The token types and the `resource` option are explained in the
 | Namespace | What it does | Methods |
 |---|---|---|
 | `agents` | Agent identity | `ask`, `isAllowed`, `me`, `getCurrentAgent`, `capabilities`, `budget`, `register` |
-| `approvals` | Push approval for agent actions | `require`, `getStatus`, `wait` |
+| `approvals` | Push approval for agent actions | `require`, `create`, `getStatus`, `wait` |
 | `jit` | Just-in-time permissions | `createTask`, `requestPermission`, `getRequestStatus`, `getToken`, `evaluateTask`, `completeTask`. `listPendingRequests` is the human reviewer's view. It needs a user token with `jit:approve`, so the server rejects an agent's own token |
 | `delegation` | Act for a user, or hand work to a sub-agent, with RFC 8693 token exchange | `getConsentUrl`, `handleConsentCallback`, `setUserToken`, `exchange`, `request`, `delegateToSubAgent`, `revoke`, `revokeAll`, `hasDelegation`, `activeSessions` |
-| `mcp` | Token exchange for secured MCP servers | `getToken`, `getTokenDetailed` |
+| `mcp` | Token exchange for secured MCP servers | `getToken`, `getTokenDetailed`. Pass the MCP server's https URL, such as `https://mcp.example.com/mcp`. The SDK sends it as the RFC 8707 `resource`, so the token's `aud` is that URL. Any other ID throws `LumoAuthValidationError` |
 
 The parameters of each method are in the
 [workspace API reference](../../README.md#api-reference).
@@ -332,6 +353,7 @@ most often are:
 | `LumoAuthPermissionDeniedError` | The server rejected the call. `requiredScopes` names a missing scope, when there is one |
 | `LumoAuthRateLimitError` | Too many requests. `retryAfter` holds the wait in seconds |
 | `LumoAuthApprovalDeniedError`, `LumoAuthApprovalTimeoutError` | A person declined, or nobody answered in time |
+| `LumoAuthApprovalNotDeliveredError` | The approval prompt reached no device. `reason` is `email_fallback_sent` or `no_enrolled_device`, and `taskId` names the task |
 | `LumoAuthBudgetExceededError` | The agent ran out of budget |
 | `AAuthError` | An AAuth request or a token check failed |
 
@@ -345,7 +367,8 @@ most often are:
 | 403 on `jit.listPendingRequests()` | It is the reviewer's view and needs a user token with `jit:approve` | Call it from the reviewer's app |
 | `invalid_grant` from `delegation.exchange()` | The declared token type does not match, the user is no longer active, or the subject is a JIT token | Fix `subjectTokenType`, and use an active user token |
 | 401 from an API with a delegated token | The token's `aud` is the agent ID | Pass `resource` to `exchange()` |
-| `approvals.require()` throws `Missing route parameter "token"` | The user has no enrolled device. The server emailed them and answered 202 `email_fallback_sent`, which has no approval token. The SDK does not handle this in 1.0.0 | Catch the error and treat it as "the user was emailed" |
+| `approvals.require()` throws `LumoAuthApprovalNotDeliveredError` | The user has no enrolled push device. With `reason` `email_fallback_sent`, the server emailed them a notice | Ask the user to enrol the LumoAuth app, then ask again |
+| `mcp.getToken()` throws `LumoAuthValidationError` | The server ID is not an https URL, for example `urn:mcp:…` | Pass the MCP server's URL |
 
 ## Related packages
 

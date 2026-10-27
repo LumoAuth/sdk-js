@@ -276,14 +276,22 @@ export class AuthModule {
     // ── Token Refresh ────────────────────────────────────────────────
 
     /**
-     * Refresh an access token using a refresh token.
+     * Refresh an access token using a refresh token
+     * (`grant_type=refresh_token`). A confidential client passes its
+     * `clientSecret`.
      */
-    async refreshToken(refreshToken: string): Promise<TokenResponse> {
+    async refreshToken(
+        refreshToken: string,
+        options: { clientSecret?: string } = {},
+    ): Promise<TokenResponse> {
         const body = new URLSearchParams({
             grant_type: 'refresh_token',
             refresh_token: refreshToken,
             client_id: this.clientId,
         });
+        if (options.clientSecret) {
+            body.set('client_secret', options.clientSecret);
+        }
 
         return this.postTokenRequest(body);
     }
@@ -291,25 +299,55 @@ export class AuthModule {
     // ── Token Revocation ─────────────────────────────────────────────
 
     /**
-     * Revoke a token (access or refresh).
+     * Revoke a token, access or refresh (RFC 7009, `POST …/oauth/revoke`).
+     * The endpoint needs client authentication, so the request carries
+     * `client_id`, and `client_secret` when one is given. Revoking a refresh
+     * token also revokes the access tokens issued with it.
+     *
+     * Best-effort: network errors and error replies are ignored.
      */
-    async revokeToken(token: string, accessToken?: string): Promise<void> {
+    async revokeToken(
+        token: string,
+        accessToken?: string,
+        options: { clientSecret?: string; tokenTypeHint?: 'access_token' | 'refresh_token' } = {},
+    ): Promise<void> {
         const headers: Record<string, string> = {
             'Content-Type': 'application/x-www-form-urlencoded',
         };
         if (accessToken) {
             headers['Authorization'] = `Bearer ${accessToken}`;
         }
+        const body = new URLSearchParams({ token, client_id: this.clientId });
+        if (options.clientSecret) body.set('client_secret', options.clientSecret);
+        if (options.tokenTypeHint) body.set('token_type_hint', options.tokenTypeHint);
 
         try {
             await this.fetchFn(this.routeUrl('oauth.revoke'), {
                 method: 'POST',
                 headers,
-                body: new URLSearchParams({ token }),
+                body,
             });
         } catch {
             // Best-effort revocation — don't throw
         }
+    }
+
+    /**
+     * The OIDC end-session URL (RP-initiated logout, `…/oauth/logout`).
+     * Send the browser here to end the LumoAuth session as well.
+     */
+    buildEndSessionUrl(options: {
+        idTokenHint?: string;
+        postLogoutRedirectUri?: string;
+        state?: string;
+    } = {}): string {
+        const url = new URL(this.routeUrl('oauth.logout'));
+        if (options.idTokenHint) url.searchParams.set('id_token_hint', options.idTokenHint);
+        if (options.postLogoutRedirectUri) {
+            url.searchParams.set('post_logout_redirect_uri', options.postLogoutRedirectUri);
+        }
+        if (options.state) url.searchParams.set('state', options.state);
+        return url.toString();
     }
 
     // ── User Info ────────────────────────────────────────────────────

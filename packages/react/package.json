@@ -21,6 +21,7 @@
         "build": "tsup",
         "dev": "tsup --watch",
         "typecheck": "tsc --noEmit",
+        "test": "npm run build && tsup src/components/Protect.tsx --no-config --format esm -d tests/.build --silent --external react --external react-dom --external @lumoauth/client && node --test tests/*.test.mjs",
         "prepublishOnly": "npm run build"
     },
     "keywords": [

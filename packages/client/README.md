@@ -629,6 +629,7 @@ LumoAuthError
 ├── LumoAuthNetworkError               the request failed or timed out
 ├── LumoAuthApprovalDeniedError        a human declined an approval
 ├── LumoAuthApprovalTimeoutError       nobody answered an approval in time
+├── LumoAuthApprovalNotDeliveredError  the approval prompt reached no device
 └── LumoAuthBudgetExceededError        an agent ran out of budget
 ```
 

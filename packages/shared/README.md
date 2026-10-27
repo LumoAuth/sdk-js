@@ -144,6 +144,7 @@ same in every LumoAuth SDK.
 | `LumoAuthConfigError` | A constructor option is missing or invalid |
 | `LumoAuthNetworkError` | `fetch` failed or timed out |
 | `LumoAuthApprovalDeniedError`, `LumoAuthApprovalTimeoutError` | A person declined an approval, or nobody answered in time |
+| `LumoAuthApprovalNotDeliveredError` | An approval prompt reached no device. `reason` is `email_fallback_sent` (HTTP 202: the user was emailed a notice) or `no_enrolled_device` (HTTP 428) |
 | `LumoAuthBudgetExceededError` | An agent ran out of budget |
 
 On a scope refusal the `code` is `forbidden`, because the SDK takes it from

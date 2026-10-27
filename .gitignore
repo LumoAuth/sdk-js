@@ -12,6 +12,7 @@ dist/
 
 # test-only build artifacts
 packages/nextjs/tests/.build/
+packages/react/tests/.build/
 
 # misc
 .DS_Store
