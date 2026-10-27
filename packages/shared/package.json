@@ -1,7 +1,7 @@
 {
     "name": "@lumoauth/shared",
-    "version": "1.0.0",
-    "description": "Isomorphic core for the LumoAuth SDKs \u2014 types, errors, PKCE, HTTP, and the authorization modules. Runs identically in browsers, Node, and edge runtimes.",
+    "version": "1.1.0",
+    "description": "Isomorphic core for the LumoAuth SDKs — types, errors, PKCE, HTTP, and the authorization modules. Runs identically in browsers, Node, and edge runtimes.",
     "license": "MIT",
     "author": "LumoAuth",
     "publishConfig": {

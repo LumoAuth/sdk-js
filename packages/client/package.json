@@ -1,6 +1,6 @@
 {
     "name": "@lumoauth/client",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Official LumoAuth browser SDK — OAuth 2.0 PKCE, permissions, Zanzibar (ReBAC), and ABAC for any JavaScript/TypeScript application.",
     "license": "MIT",
     "author": "LumoAuth",
