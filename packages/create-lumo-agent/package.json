@@ -1,6 +1,6 @@
 {
   "name": "create-lumo-agent",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "description": "Scaffold a working LumoAuth agent app in 60 seconds.",
   "type": "module",
   "license": "Apache-2.0",

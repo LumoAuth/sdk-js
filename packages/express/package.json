@@ -1,7 +1,7 @@
 {
     "name": "@lumoauth/express",
-    "version": "1.0.0",
-    "description": "Express middleware for LumoAuth \u2014 login, callback, and logout routes plus requireAuth().",
+    "version": "1.1.0",
+    "description": "Express middleware for LumoAuth — login, callback, and logout routes plus requireAuth().",
     "license": "MIT",
     "author": "LumoAuth",
     "publishConfig": {
