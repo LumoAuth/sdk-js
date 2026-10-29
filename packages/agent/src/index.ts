@@ -47,6 +47,52 @@ export {
     type VerifyAuthTokenOptions,
 } from './verify';
 
+// ─── DPoP (RFC 9449) ──────────────────────────────────────────────────
+export {
+    DpopProofSigner,
+    dpopAth,
+    type DpopAlgorithm,
+    type DpopJwk,
+    type DpopProofSignerOptions,
+} from './dpop';
+export {
+    fetchWithDpop,
+    buildDpopHeaders,
+    dpopHtu,
+    DPOP_SCHEME,
+    DPOP_NONCE_HEADER,
+    USE_DPOP_NONCE,
+    type DpopProofProvider,
+    type DpopProofRequest,
+    type DpopHeadersInput,
+    type FetchWithDpopOptions,
+} from '@lumoauth/shared';
+
+// ─── Workload attestation ─────────────────────────────────────────────
+export { attestWorkload, type AttestWorkloadOptions, type AttestWorkloadResult } from './attest';
+
+// ─── Core access token (at+jwt) verification, resource-server side ────
+export {
+    verifyAccessToken,
+    createAccessTokenVerifier,
+    verifyDpopProof,
+    parseAuthorizationHeader,
+    accessTokenScopes,
+    AccessTokenError,
+    JwksCache,
+    InMemoryDpopReplayCache,
+    type AccessTokenClaims,
+    type ActorClaim,
+    type AccessTokenVerifier,
+    type AccessTokenVerifierOptions,
+    type VerifyAccessTokenOptions,
+    type IncomingDpopProof,
+    type IncomingRequest,
+    type DpopReplayCache,
+    type VerifyDpopProofOptions,
+    type VerifiedDpopProof,
+} from './access-token';
+
 export { AAuthError } from './errors';
 
 // The shared error taxonomy, so agent code can catch these without a direct

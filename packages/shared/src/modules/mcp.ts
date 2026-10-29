@@ -5,6 +5,7 @@ import {
     LumoAuthValidationError,
 } from '../errors';
 import { ROUTES, buildPath } from '../routes';
+import { fetchWithDpop, type DpopProofProvider } from '../utils/dpop';
 import { HttpClient } from '../utils/http';
 
 /**
@@ -16,9 +17,12 @@ import { HttpClient } from '../utils/http';
  *    `https://mcp.example.com/mcp`, goes in the RFC 8707 `resource`
  *    parameter and sets the token's `aud`. (It is also sent as `audience`,
  *    which the server ignores.) The new token works only at that MCP server.
- *    LumoAuth's own API rejects it. If the MCP server requires DPoP, you need
- *    a DPoP-bound exchange; this helper does not send a DPoP proof. Mirrors
- *    the Python SDK's `get_mcp_token`.
+ *    LumoAuth's own API rejects it. If the MCP server requires DPoP, pass a
+ *    `dpop` signer in the config: the exchange then carries an RFC 9449
+ *    proof, the new token is bound to that key (`token_type: "DPoP"`), and
+ *    the MCP request must carry `Authorization: DPoP <token>` plus a proof
+ *    with `ath` (see `buildDpopHeaders`). Mirrors the Python SDK's
+ *    `get_mcp_token`.
  * 2. Per-tool checks (`authorizeTool`). An MCP server asks whether a caller
  *    that it has already verified may run one tool. The MCP server sends its
  *    own client-credentials token with the `mcp:authorize` scope. It never
@@ -39,11 +43,23 @@ export interface McpModuleConfig {
      * the module builds one from `baseUrl`, `token` and `fetch`.
      */
     http?: HttpClient;
+    /**
+     * DPoP proof signer (RFC 9449). When set, `getToken` sends a `DPoP`
+     * proof with the exchange, retries once on `use_dpop_nonce`, and the
+     * returned token is sender-constrained (`tokenType: "DPoP"`). Use the
+     * same signer the caller's own token was obtained with: the server binds
+     * the new token to the proof's key.
+     */
+    dpop?: DpopProofProvider;
 }
 
 export interface McpTokenResponse {
     accessToken: string;
     expiresIn: number | null;
+    /**
+     * `DPoP` when the token is sender-constrained, otherwise `Bearer`. Use
+     * the same word as the `Authorization` scheme at the MCP server.
+     */
     tokenType: string | null;
     scope: string | null;
 }
@@ -112,15 +128,17 @@ export class McpModule {
     private readonly token: () => string | Promise<string>;
     private readonly fetchFn: typeof globalThis.fetch;
     private readonly http: HttpClient;
+    private readonly dpop: DpopProofProvider | undefined;
 
     constructor(config: McpModuleConfig) {
         this.baseUrl = config.baseUrl.replace(/\/+$/, '');
         this.orgId = config.orgId;
         this.token = config.token;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
+        this.dpop = config.dpop;
         this.http =
             config.http ??
-            new HttpClient({ baseUrl: this.baseUrl, token: config.token, fetch: config.fetch });
+            new HttpClient({ baseUrl: this.baseUrl, token: config.token, fetch: config.fetch, dpop: config.dpop });
     }
 
     /**
@@ -185,8 +203,10 @@ export class McpModule {
      * Exchange the caller's token for one that names exactly one MCP server.
      *
      * The new token works only at that MCP server. LumoAuth's own API
-     * rejects it. If the MCP server requires DPoP, you need a DPoP-bound
-     * exchange; this helper does not send a DPoP proof.
+     * rejects it. If the MCP server requires DPoP, configure a `dpop` signer:
+     * the exchange then carries a DPoP proof and the token comes back
+     * sender-constrained. Call `getTokenDetailed` to read `tokenType`
+     * (`DPoP` or `Bearer`), and present the token with that scheme.
      *
      * @param serverId The registered Resource URI of the MCP server, which is
      *                 its RFC 8707 resource identifier
@@ -213,19 +233,22 @@ export class McpModule {
         const subjectToken = await this.token();
 
         const url = `${this.baseUrl}${buildPath(ROUTES['oauth.token'].path, { orgId: this.orgId })}`;
+        const init: RequestInit = {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+                subject_token: subjectToken,
+                subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+                resource: serverId,
+                audience: serverId,
+            }),
+        };
         let res: Response;
         try {
-            res = await this.fetchFn(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({
-                    grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-                    subject_token: subjectToken,
-                    subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-                    resource: serverId,
-                    audience: serverId,
-                }),
-            });
+            res = this.dpop
+                ? await fetchWithDpop(this.fetchFn, url, init, this.dpop)
+                : await this.fetchFn(url, init);
         } catch (error) {
             throw new LumoAuthNetworkError(
                 `MCP token exchange failed: ${error instanceof Error ? error.message : String(error)}`,

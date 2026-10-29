@@ -180,6 +180,23 @@ export {
 // ─── Utilities ────────────────────────────────────────────────────────
 export { PermissionCache, type CacheOptions } from './utils/cache';
 
+// ─── DPoP (RFC 9449) transport ────────────────────────────────────────
+// The proof signer lives in @lumoauth/agent (node:crypto). These are the
+// crypto-free parts: the provider interface, the header pair and the fetch
+// wrapper with the `use_dpop_nonce` retry.
+export {
+    fetchWithDpop,
+    buildDpopHeaders,
+    dpopHtu,
+    DPOP_SCHEME,
+    DPOP_NONCE_HEADER,
+    USE_DPOP_NONCE,
+    type DpopProofProvider,
+    type DpopProofRequest,
+    type DpopHeadersInput,
+    type FetchWithDpopOptions,
+} from './utils/dpop';
+
 // ─── HTTP ─────────────────────────────────────────────────────────────
 // Exported so @lumoauth/client and @lumoauth/backend can construct the
 // modules above against their own credential model.

@@ -343,6 +343,7 @@ Every option falls back to an environment variable.
 | `redirectUri` | none | none | The callback URL of the delegation consent flow |
 | `timeout` | none | 30 000 ms | Request timeout |
 | `fetch` | none | global `fetch` | A custom `fetch` |
+| `dpop` | none | none | A `DpopProofSigner` (RFC 9449). Every token the agent obtains is then bound to its key and presented with the `DPoP` scheme |
 
 The constructor throws `LumoAuthConfigError` when the client ID or the client
 secret is missing.
@@ -706,8 +707,12 @@ before any request. Plain `http` works only for localhost and private hosts.
 A `urn:mcp:…` name cannot be bound, so the SDK rejects it.
 
 The token works only at that MCP server. LumoAuth's own API rejects it. If
-the MCP server requires DPoP, you need a DPoP-bound exchange. `getToken()`
-does not send a DPoP proof.
+the MCP server requires DPoP, give the agent a signer: `new LumoAgent({ dpop:
+DpopProofSigner.generate() })`. The exchange then carries an RFC 9449 proof,
+`detail.tokenType` is `DPoP`, and each MCP request needs
+`buildDpopHeaders(dpop, { method, url, accessToken })`. The
+[agent package README](./packages/agent/README.md#dpop-sender-constrained-tokens)
+has the details.
 
 ### Check MCP tool calls
 
@@ -793,9 +798,26 @@ covers consent, multi-hop exchange, refresh, revocation and discovery.
 
 ### Verify tokens on a resource server
 
-A resource server can check an AAuth token without calling LumoAuth for each
-request. `verifyAuthToken()` fetches the issuer's keys and checks the
-signature, the issuer, the audience and the expiry:
+An MCP server or another resource server can check a LumoAuth access token
+(`at+jwt`) without calling LumoAuth for each request. The verifier fetches
+the organization's keys through discovery and checks the signature, `typ`,
+the issuer, the audience, the expiry, that the token is not a test token,
+and the DPoP binding when the token carries `cnf.jkt`:
+
+```ts
+import { createAccessTokenVerifier } from '@lumoauth/agent';
+
+const verifier = createAccessTokenVerifier({
+  issuer: 'https://app.lumoauth.dev/orgs/acme-corp/api/v1',
+  resource: 'https://mcp.example.com/mcp',
+});
+const claims = await verifier.verifyRequest({ method: req.method, url, headers: req.headers });
+```
+
+See [Verify LumoAuth access tokens on an MCP server](./packages/agent/README.md#verify-lumoauth-access-tokens-on-an-mcp-server).
+
+For an AAuth token (`auth+jwt`), `verifyAuthToken()` does the same against
+the AAuth issuer keys:
 
 ```ts
 import { verifyAuthToken } from '@lumoauth/agent';
@@ -965,7 +987,7 @@ says which credential the server accepts; see [Credentials](#credentials).
 | Method | Returns |
 |---|---|
 | `getToken(serverId)` | `string`. `serverId` is the MCP server's https URL |
-| `getTokenDetailed(serverId)` | `{ accessToken, expiresIn, tokenType, scope }` |
+| `getTokenDetailed(serverId)` | `{ accessToken, expiresIn, tokenType, scope }`. `tokenType` is `DPoP` when the agent has a `dpop` signer |
 | `authorizeTool({ serverId, subject: { type, id }, tool })` | `McpToolDecision`: `{ allowed, subject, resource }`. `serverId` is the registered `mcp_…` ID. Call it with the MCP server's own token that holds `mcp:authorize`. A deny returns `allowed: false` |
 
 The AAuth API is listed in the

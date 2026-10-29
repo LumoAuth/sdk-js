@@ -10,6 +10,8 @@ import {
     LumoAuthNetworkError,
     ROUTES,
     buildPath,
+    fetchWithDpop,
+    type DpopProofProvider,
     type AgentAskResult,
     type AgentIdentity,
     type AgentBudget,
@@ -38,10 +40,20 @@ export interface LumoAgentOptions {
     fetch?: typeof globalThis.fetch;
     /** Request timeout in milliseconds. Default: 30 000 ms. */
     timeout?: number;
+    /**
+     * DPoP proof signer (RFC 9449), e.g. `DpopProofSigner.generate()`. When
+     * set, the client-credentials token and every exchanged token (MCP,
+     * delegation) are sender-constrained to its key, and every request
+     * carries `Authorization: DPoP <token>` plus a proof. Needed for MCP
+     * servers registered with "Require DPoP".
+     */
+    dpop?: DpopProofProvider;
 }
 
 interface TokenState {
     accessToken: string;
+    /** `DPoP` or `Bearer`, as the token endpoint reported it. */
+    tokenType: string;
     /** Epoch ms after which we refresh (real expiry minus the safety buffer). */
     refreshAt: number;
     scopes: string[];
@@ -106,6 +118,7 @@ export class LumoAgent {
     private readonly clientSecret: string;
     private readonly scopes: string[] | undefined;
     private readonly fetchFn: typeof globalThis.fetch;
+    private readonly dpop: DpopProofProvider | undefined;
     private token: TokenState | null = null;
     private refreshPromise: Promise<string> | null = null;
 
@@ -116,6 +129,7 @@ export class LumoAgent {
         this.clientSecret = options.clientSecret ?? envVar('AGENT_CLIENT_SECRET') ?? '';
         this.scopes = options.scopes;
         this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
+        this.dpop = options.dpop;
 
         if (!this.clientId || !this.clientSecret) {
             throw new LumoAuthConfigError(
@@ -130,6 +144,7 @@ export class LumoAgent {
             token: tokenProvider,
             timeout: options.timeout,
             fetch: options.fetch,
+            dpop: this.dpop,
         });
 
         this.agents = new AgentsModule(http, this.orgId);
@@ -141,6 +156,7 @@ export class LumoAgent {
             token: tokenProvider,
             fetch: options.fetch,
             http,
+            dpop: this.dpop,
         });
         this.delegation = new DelegationModule({
             baseUrl: this.baseUrl,
@@ -150,6 +166,7 @@ export class LumoAgent {
             redirectUri: options.redirectUri,
             agentToken: tokenProvider,
             fetch: options.fetch,
+            dpop: this.dpop,
         });
     }
 
@@ -170,13 +187,18 @@ export class LumoAgent {
         if (requested?.length) form.scope = requested.join(' ');
 
         const url = `${this.baseUrl}${buildPath(ROUTES['oauth.token'].path, { orgId: this.requireOrgId() })}`;
+        const init: RequestInit = {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(form),
+        };
         let res: Response;
         try {
-            res = await this.fetchFn(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams(form),
-            });
+            // With a DPoP signer the proof binds the new token to our key; a
+            // `use_dpop_nonce` answer is retried once with the server's nonce.
+            res = this.dpop
+                ? await fetchWithDpop(this.fetchFn, url, init, this.dpop)
+                : await this.fetchFn(url, init);
         } catch (error) {
             throw new LumoAuthNetworkError(
                 `Agent authentication failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -199,10 +221,25 @@ export class LumoAgent {
         const expiresIn = typeof body.expires_in === 'number' ? body.expires_in : 3600;
         this.token = {
             accessToken: body.access_token,
+            tokenType: typeof body.token_type === 'string' ? body.token_type : 'Bearer',
             refreshAt: Date.now() + expiresIn * 1000 - TOKEN_REFRESH_BUFFER_MS,
             scopes: typeof body.scope === 'string' ? body.scope.split(' ').filter(Boolean) : [],
         };
         return this.token.accessToken;
+    }
+
+    /**
+     * `token_type` of the last successful authentication: `DPoP` when the
+     * token is sender-constrained, otherwise `Bearer`; `null` before the
+     * first sign-in. Present the token with that `Authorization` scheme.
+     */
+    get tokenType(): string | null {
+        return this.token?.tokenType ?? null;
+    }
+
+    /** The DPoP proof signer this agent was configured with, if any. */
+    get dpopSigner(): DpopProofProvider | undefined {
+        return this.dpop;
     }
 
     /**

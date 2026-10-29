@@ -5,6 +5,7 @@ import {
     LumoAuthPermissionDeniedError,
 } from '../errors';
 import { ROUTES, buildPath } from '../routes';
+import { DPOP_SCHEME, fetchWithDpop, type DpopProofProvider } from '../utils/dpop';
 
 /**
  * Delegation module — Chain of Agency.
@@ -90,6 +91,13 @@ export interface DelegationModuleConfig {
     agentToken: () => string | Promise<string>;
     /** Custom fetch implementation. */
     fetch?: typeof globalThis.fetch;
+    /**
+     * DPoP proof signer (RFC 9449). When set, every token exchange carries a
+     * `DPoP` proof (with a one-time `use_dpop_nonce` retry), the delegated
+     * tokens come back sender-constrained, and `request()` presents them
+     * with `Authorization: DPoP <token>` plus a proof that carries `ath`.
+     */
+    dpop?: DpopProofProvider;
 }
 
 interface UserTokens {
@@ -116,6 +124,7 @@ export class DelegationModule {
     private readonly redirectUri: string;
     private readonly agentToken: () => string | Promise<string>;
     private readonly fetchFn: typeof globalThis.fetch;
+    private readonly dpop: DpopProofProvider | undefined;
 
     /** User consent tokens, keyed by session id. */
     private readonly userTokens = new Map<string, UserTokens>();
@@ -130,6 +139,7 @@ export class DelegationModule {
         this.redirectUri = config.redirectUri ?? '';
         this.agentToken = config.agentToken;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
+        this.dpop = config.dpop;
     }
 
     // ── Step 1: user consent flow ─────────────────────────────────────
@@ -244,16 +254,19 @@ export class DelegationModule {
         if (!token) token = await this.exchange(sessionId);
 
         const url = endpoint.startsWith('http') ? endpoint : `${this.baseUrl}${endpoint}`;
+        const init: RequestInit = {
+            method: method.toUpperCase(),
+            headers: {
+                Authorization: `${this.dpop ? DPOP_SCHEME : 'Bearer'} ${token}`,
+                ...(options.body != null ? { 'Content-Type': 'application/json' } : {}),
+                ...(options.headers ?? {}),
+            },
+            body: options.body != null ? JSON.stringify(options.body) : undefined,
+        };
         try {
-            return await this.fetchFn(url, {
-                method: method.toUpperCase(),
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    ...(options.body != null ? { 'Content-Type': 'application/json' } : {}),
-                    ...(options.headers ?? {}),
-                },
-                body: options.body != null ? JSON.stringify(options.body) : undefined,
-            });
+            return this.dpop
+                ? await fetchWithDpop(this.fetchFn, url, init, this.dpop, { accessToken: token })
+                : await this.fetchFn(url, init);
         } catch (error) {
             throw new LumoAuthNetworkError(
                 `Delegated request to ${endpoint} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -387,7 +400,10 @@ export class DelegationModule {
         form: Record<string, string>,
         label: string,
     ): Promise<string> {
-        const res = await this.postForm(this.tokenUrl(), form);
+        // Token exchanges are the requests that mint tokens, so they carry the
+        // DPoP proof. The consent-code and refresh requests stay plain: they
+        // obtain the user's token, which the agent then presents as subject.
+        const res = await this.postForm(this.tokenUrl(), form, this.dpop);
 
         if (res.ok) {
             const body = (await res.json()) as TokenEndpointResponse;
@@ -458,13 +474,20 @@ export class DelegationModule {
         this.delegatedTokens.delete(sessionId);
     }
 
-    private async postForm(url: string, form: Record<string, string>): Promise<Response> {
+    private async postForm(
+        url: string,
+        form: Record<string, string>,
+        dpop?: DpopProofProvider,
+    ): Promise<Response> {
+        const init: RequestInit = {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(form),
+        };
         try {
-            return await this.fetchFn(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams(form),
-            });
+            return dpop
+                ? await fetchWithDpop(this.fetchFn, url, init, dpop)
+                : await this.fetchFn(url, init);
         } catch (error) {
             throw new LumoAuthNetworkError(
                 `Request to ${url} failed: ${error instanceof Error ? error.message : String(error)}`,

@@ -21,6 +21,8 @@ sure that it is the package that you need? See
 - [Configuration](#configuration)
 - [Guides](#guides)
 - [`LumoAgent` reference](#lumoagent-reference)
+- [DPoP: sender-constrained tokens](#dpop-sender-constrained-tokens)
+- [Verify LumoAuth access tokens on an MCP server](#verify-lumoauth-access-tokens-on-an-mcp-server)
 - [AAuth: cryptographic agent identity](#aauth-cryptographic-agent-identity)
 - [Errors](#errors)
 - [Troubleshooting](#troubleshooting)
@@ -34,7 +36,9 @@ sure that it is the package that you need? See
 |---|---|
 | Writing an agent (LangChain.js, Vercel AI SDK, your own loop) that signs in **as itself**, asks before acting, and gets a person's approval for risky actions | **This package**, `LumoAgent` |
 | Building or calling an agent that needs a verifiable cryptographic identity, signed requests, or delegation between agents | **This package**, `AAuthClient` |
+| Building an MCP server or another resource server that must verify LumoAuth access tokens, with or without DPoP | **This package**, `verifyAccessToken` |
 | Building a resource server that must verify incoming AAuth tokens | **This package**, `verifyAuthToken` |
+| Calling an MCP server that requires DPoP-bound tokens | **This package**, `DpopProofSigner` |
 | Starting a new agent app | [`npx create-lumo-agent`](../create-lumo-agent/README.md) |
 | Writing an ordinary backend that acts for a user, not as an agent | [`@lumoauth/backend`](../backend/README.md) |
 
@@ -100,6 +104,7 @@ grant. The SDK refreshes the token 60 seconds before it expires.
 | `redirectUri` | none | none | The callback URL of the delegation consent flow |
 | `timeout` | none | 30 000 ms | Request timeout |
 | `fetch` | none | global `fetch` | A custom `fetch` |
+| `dpop` | none | none | A `DpopProofSigner`. Every token the agent obtains is then bound to its key, and every request carries a DPoP proof. See [DPoP](#dpop-sender-constrained-tokens) |
 
 The constructor throws `LumoAuthConfigError` when the client ID or the client
 secret is missing. It does not call the server.
@@ -214,6 +219,8 @@ consent steps. The token types and the `resource` option are explained in the
 | `authenticate(scopes?)` | `Promise<string>` | Runs the client credentials grant now. You rarely need it, because every call signs in when needed |
 | `getAccessToken()` | `Promise<string>` | The current access token, refreshed when it is about to expire |
 | `tokenScopes` | `string[]` | The scopes that the server granted to the current token |
+| `tokenType` | `string \| null` | `DPoP` when the current token is sender-constrained, otherwise `Bearer`; `null` before the first sign-in |
+| `dpopSigner` | `DpopProofProvider \| undefined` | The signer passed as `dpop` |
 | `ask(action, context?)` | `Promise<AgentAskResult>` | The full decision for an action |
 | `isAllowed(action, context?)` | `Promise<boolean>` | `ask()` reduced to a boolean |
 | `getCurrentAgent()` | `Promise<AgentIdentity>` | The agent's identity, capabilities and workspace |
@@ -229,10 +236,108 @@ consent steps. The token types and the `resource` option are explained in the
 | `approvals` | Push approval for agent actions | `require`, `create`, `getStatus`, `wait` |
 | `jit` | Just-in-time permissions | `createTask`, `requestPermission`, `getRequestStatus`, `getToken`, `evaluateTask`, `completeTask`. `listPendingRequests` is the human reviewer's view. It needs a user token with `jit:approve`, so the server rejects an agent's own token |
 | `delegation` | Act for a user, or hand work to a sub-agent, with RFC 8693 token exchange | `getConsentUrl`, `handleConsentCallback`, `setUserToken`, `exchange`, `request`, `delegateToSubAgent`, `revoke`, `revokeAll`, `hasDelegation`, `activeSessions` |
-| `mcp` | Secured MCP servers | `getToken`, `getTokenDetailed`. Pass the MCP server's https URL, such as `https://mcp.example.com/mcp`. The SDK sends it as the RFC 8707 `resource`, so the token's `aud` is that URL. Any other ID throws `LumoAuthValidationError`. The token works only at that MCP server. `authorizeTool({ serverId, subject, tool })` lets an MCP server check one tool call with its own `mcp:authorize` token. A deny returns `allowed: false` |
+| `mcp` | Secured MCP servers | `getToken`, `getTokenDetailed`. Pass the MCP server's https URL, such as `https://mcp.example.com/mcp`. The SDK sends it as the RFC 8707 `resource`, so the token's `aud` is that URL. Any other ID throws `LumoAuthValidationError`. The token works only at that MCP server. With a `dpop` signer the token is DPoP-bound (`tokenType: 'DPoP'`). `authorizeTool({ serverId, subject, tool })` lets an MCP server check one tool call with its own `mcp:authorize` token. A deny returns `allowed: false` |
 
 The parameters of each method are in the
 [workspace API reference](../../README.md#api-reference).
+
+## DPoP: sender-constrained tokens
+
+An MCP server registered with "Require DPoP" accepts only tokens that are
+bound to the caller's key (RFC 9449). Give the agent a `DpopProofSigner`.
+The client-credentials token, every MCP token exchange, every delegation
+exchange and every API call then carry a DPoP proof, and the tokens come
+back with `token_type: "DPoP"`. The server's `use_dpop_nonce` answer is
+retried once, and the latest `DPoP-Nonce` is remembered per origin.
+
+```ts
+import { LumoAgent, DpopProofSigner, buildDpopHeaders } from '@lumoauth/agent';
+
+// One key per agent instance. ES256 (P-256) by default; 'EdDSA' reuses an
+// Ed25519 key, so the AAuth key can double as the DPoP key.
+const dpop = DpopProofSigner.generate();
+// Or load one: new DpopProofSigner({ privateKeyPem: process.env.AGENT_DPOP_KEY! })
+
+const agent = new LumoAgent({ dpop });
+
+const mcp = await agent.mcp.getTokenDetailed('https://mcp.example.com/mcp');
+// mcp.tokenType === 'DPoP'
+
+// Each MCP request needs a fresh proof that names the token (ath).
+const headers = await buildDpopHeaders(dpop, {
+  method: 'POST',
+  url: 'https://mcp.example.com/mcp',
+  accessToken: mcp.accessToken,
+  tokenType: mcp.tokenType,   // 'Bearer' here falls back to a plain Bearer header
+});
+await fetch('https://mcp.example.com/mcp', { method: 'POST', headers, body });
+```
+
+`fetchWithDpop(fetch, url, init, dpop, { accessToken })` does the same and
+also retries a `use_dpop_nonce` challenge from the MCP server.
+
+| Export | What it does |
+|---|---|
+| `DpopProofSigner.generate(alg?)` | A new key: `'ES256'` (default), `'EdDSA'` or `'RS256'` |
+| `new DpopProofSigner({ privateKeyPem })` | Loads an EC P-256, Ed25519 or RSA PEM key. `privateKeyPem` reads it back |
+| `signer.createProof({ method, url, accessToken?, nonce? })` | One proof JWT: `typ dpop+jwt`, `jwk`, `jti`, `htm`, `htu` (no query), `iat`, `ath` when a token is given, `nonce` when given or remembered |
+| `signer.jwk`, `signer.thumbprint` | The public key and its RFC 7638 thumbprint (the `cnf.jkt` of bound tokens) |
+| `signer.setNonce(url, nonce)`, `getNonce(url)`, `clearNonces()` | Nonce memory per origin |
+| `buildDpopHeaders(signer, { method, url, accessToken, tokenType? })` | `{ Authorization: 'DPoP …', DPoP }`, or `{ Authorization: 'Bearer …' }` for an unbound token |
+| `fetchWithDpop(fetch, url, init, signer, { accessToken? })` | `fetch` with the proof and the one-time nonce retry |
+| `attestWorkload({ orgId, agentId, attestationToken, dpop? })` | Workload attestation (`POST …/agents/{agentId}/attest`) with an optional proof; returns `{ accessToken, tokenType, expiresIn, scope, identity }` |
+
+## Verify LumoAuth access tokens on an MCP server
+
+The token an MCP server receives is a LumoAuth `at+jwt` access token whose
+`aud` is the server's resource URI. Verify it locally, without a call to
+LumoAuth per request:
+
+```ts
+import { createAccessTokenVerifier } from '@lumoauth/agent';
+
+const verifier = createAccessTokenVerifier({
+  issuer: 'https://app.lumoauth.dev/orgs/acme-corp/api/v1',
+  resource: 'https://mcp.example.com/mcp',   // must be in the token's aud
+});
+const claims = await verifier.verifyRequest({ method: req.method, url: publicUrl, headers: req.headers });
+```
+
+`verifyRequest` reads `Authorization` (scheme `Bearer` or `DPoP`) and the
+`DPoP` header. `verifier.verify(token, dpop?)` takes the token directly, and
+the plain function `verifyAccessToken(token, { issuer, resource, … })` does
+the same with a process-wide key cache.
+
+The verifier fetches the organization's keys from
+`{issuer}/.well-known/openid-configuration` (`jwks_uri`), caches them and
+fetches them again once when a token names an unknown `kid`. Pass `jwks` to
+skip the network. It checks:
+
+- `typ` is `at+jwt` or `application/at+jwt`; `alg` is asymmetric (`none`
+  and `HS*` are refused); `kid` resolves;
+- the signature, `iss`, `aud` (string or array) contains `resource`, `exp`
+  and `nbf` with `clockSkew` seconds of tolerance (default 60), `sub`;
+- `token_use` is not `test`: a portal test token is never accepted;
+- when the token carries `cnf.jkt`, the request used the `DPoP` scheme and
+  its proof is signed by that key, names the request (`htm`, `htu`), the
+  token (`ath`) and a fresh `jti` (replay window 300 s), within the `iat`
+  window. `requireDpop: true` refuses tokens without `cnf.jkt`.
+
+The result is the typed claims: `sub` (`agent_agt_…` or a user id),
+`scope` (`accessTokenScopes(claims)` splits it), `is_agent`,
+`capabilities`, `act` (the actor chain) and `cnf`. A failed check throws
+`AccessTokenError` with `statusCode` 401 and `code` `invalid_token`,
+`invalid_dpop_proof` or `jwks_fetch_failed`. Answer a failure with
+`WWW-Authenticate: DPoP error="<code>"` (or `Bearer …`).
+
+The in-memory `jti` replay cache covers one process. Pass `replayCache`
+(`{ add(key, ttlSeconds) }`) backed by a shared store when the MCP server
+has several replicas. `verifyDpopProof(proof, { method, url, accessToken?,
+nonce? })` is exported on its own for servers that bind tokens differently.
+
+Then ask LumoAuth whether the caller may run the tool with
+[`mcp.authorizeTool`](../../README.md#check-mcp-tool-calls), using
+`claims.sub` as the subject.
 
 ## AAuth: cryptographic agent identity
 
@@ -333,6 +438,8 @@ no clock skew on `exp` unless you set `clockSkew` in seconds. It throws
 | Signing primitives (RFC 9421) | `signRequest`, `buildSignatureBase`, `signatureParams`, `signSignatureBase`, `verifySignatureBase`, `contentDigestSha256`, `generateNonce`, `AAUTH_COVERED_COMPONENTS` |
 | Verification | `verifyAuthToken`, `decodeJwt` |
 | Errors | `AAuthError` |
+| DPoP (RFC 9449) | `DpopProofSigner`, `dpopAth`, `dpopHtu`, `buildDpopHeaders`, `fetchWithDpop`, `DPOP_SCHEME`, `DPOP_NONCE_HEADER`, `USE_DPOP_NONCE`, `attestWorkload` |
+| Access token verification | `verifyAccessToken`, `createAccessTokenVerifier`, `verifyDpopProof`, `parseAuthorizationHeader`, `accessTokenScopes`, `AccessTokenError`, `JwksCache`, `InMemoryDpopReplayCache` |
 
 The signing code is tested byte for byte against the shared test vector in
 [`sdk-contract`](https://github.com/LumoAuth/sdk-contract). Signatures made
@@ -356,6 +463,7 @@ most often are:
 | `LumoAuthApprovalNotDeliveredError` | The approval prompt reached no device. `reason` is `email_fallback_sent` or `no_enrolled_device`, and `taskId` names the task |
 | `LumoAuthBudgetExceededError` | The agent ran out of budget |
 | `AAuthError` | An AAuth request or a token check failed |
+| `AccessTokenError` | `verifyAccessToken` refused a token or its DPoP proof. `code` is `invalid_token`, `invalid_dpop_proof` or `jwks_fetch_failed` |
 
 ## Troubleshooting
 
@@ -369,6 +477,8 @@ most often are:
 | 401 from an API with a delegated token | The token's `aud` is the agent ID | Pass `resource` to `exchange()` |
 | `approvals.require()` throws `LumoAuthApprovalNotDeliveredError` | The user has no enrolled push device. With `reason` `email_fallback_sent`, the server emailed them a notice | Ask the user to enrol the LumoAuth app, then ask again |
 | `mcp.getToken()` throws `LumoAuthValidationError` | The server ID is not an https URL, for example `urn:mcp:…` | Pass the MCP server's URL |
+| 401 `invalid_dpop_proof` from an MCP server | The MCP server requires DPoP and the token is not bound, or the request has no proof | Pass `dpop: DpopProofSigner.generate()` to `LumoAgent`, and send each request with `buildDpopHeaders()` |
+| `invalid_dpop_proof` on the token endpoint | The proof's `htu` or `iat` is off | Check the clock, and build the proof from the exact request URL |
 
 ## Related packages
 

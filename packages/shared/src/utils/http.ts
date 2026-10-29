@@ -7,6 +7,7 @@ import {
     LumoAuthRateLimitError,
     LumoAuthNetworkError,
 } from '../errors';
+import { fetchWithDpop, type DpopProofProvider } from './dpop';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -37,6 +38,13 @@ export interface HttpClientConfig {
     fetch?: typeof globalThis.fetch;
     /** Additional default headers merged into every request. */
     headers?: Record<string, string>;
+    /**
+     * DPoP proof signer (RFC 9449). When set, the bearer `token` is treated
+     * as DPoP-bound: it travels as `Authorization: DPoP <token>` with a
+     * `DPoP` proof that carries `ath`, and a `use_dpop_nonce` answer is
+     * retried once. Set it when the token was obtained with the same signer.
+     */
+    dpop?: DpopProofProvider;
 }
 
 interface RequestOptions {
@@ -59,6 +67,7 @@ export class HttpClient {
     private timeout: number;
     private fetchFn: typeof globalThis.fetch;
     private defaultHeaders: Record<string, string>;
+    private dpop: DpopProofProvider | undefined;
 
     constructor(config: HttpClientConfig) {
         // Normalise trailing slash
@@ -66,6 +75,7 @@ export class HttpClient {
         this.timeout = config.timeout ?? 30_000;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
         this.defaultHeaders = config.headers ?? {};
+        this.dpop = config.dpop;
 
         // Normalise both credentials to provider functions
         this.tokenProvider = HttpClient.provider(config.token);
@@ -80,19 +90,25 @@ export class HttpClient {
     }
 
     /**
-     * The credential header for one request. A bearer token wins over an API
-     * key; an `lmk_` value always travels in `X-API-Key`.
+     * The credential for one request. A bearer token wins over an API key;
+     * an `lmk_` value always travels in `X-API-Key`. A DPoP-bound access
+     * token (a `dpop` signer is configured) is returned as `dpopToken`, so
+     * the request can carry the `DPoP` scheme and a proof.
      */
-    private async credentialHeaders(): Promise<Record<string, string>> {
+    private async credential(): Promise<{ headers: Record<string, string>; dpopToken?: string }> {
         const token = await this.tokenProvider();
         if (token) {
-            return token.startsWith(ORGANIZATION_API_KEY_PREFIX)
-                ? { 'X-API-Key': token }
-                : { Authorization: `Bearer ${token}` };
+            if (token.startsWith(ORGANIZATION_API_KEY_PREFIX)) {
+                return { headers: { 'X-API-Key': token } };
+            }
+            if (this.dpop) {
+                return { headers: {}, dpopToken: token };
+            }
+            return { headers: { Authorization: `Bearer ${token}` } };
         }
         const apiKey = await this.apiKeyProvider();
         if (apiKey) {
-            return { 'X-API-Key': apiKey };
+            return { headers: { 'X-API-Key': apiKey } };
         }
         throw new LumoAuthAuthenticationError('No access token or API key provided.');
     }
@@ -118,7 +134,7 @@ export class HttpClient {
     // ── Core request ────────────────────────────────────────────────────
 
     private async request<T>(opts: RequestOptions): Promise<T> {
-        const credential = await this.credentialHeaders();
+        const credential = await this.credential();
 
         const url = `${this.baseUrl}${opts.path}`;
 
@@ -132,19 +148,23 @@ export class HttpClient {
         }
 
         const headers: Record<string, string> = {
-            ...credential,
+            ...credential.headers,
             'Content-Type': 'application/json',
             Accept: 'application/json',
             ...this.defaultHeaders,
         };
 
         try {
-            const response = await this.fetchFn(url, {
+            const init: RequestInit = {
                 method: opts.method,
                 headers,
                 body: opts.body != null ? JSON.stringify(opts.body) : undefined,
                 signal: controller.signal,
-            });
+            };
+            const response =
+                this.dpop && credential.dpopToken
+                    ? await fetchWithDpop(this.fetchFn, url, init, this.dpop, { accessToken: credential.dpopToken })
+                    : await this.fetchFn(url, init);
 
             clearTimeout(timeoutId);
 
