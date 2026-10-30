@@ -1,6 +1,6 @@
 {
   "name": "@lumoauth/nextjs",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "LumoAuth for Next.js — server-side auth() for App Router, route protection middleware, and a backend-for-frontend that keeps tokens out of the browser.",
   "license": "MIT",
   "author": "LumoAuth",
