@@ -97,6 +97,8 @@ export interface McpAuthorizeToolOptions {
     subject: McpSubject;
     /** The tool name, as the MCP server lists it. */
     tool: string;
+    /** Optional W3C `traceparent` header to correlate the decision in LumoAuth's audit log. */
+    traceparent?: string;
     /** Optional abort signal. */
     signal?: AbortSignal;
 }
@@ -157,7 +159,7 @@ export class McpModule {
      *         server id or tool is not valid.
      */
     async authorizeTool(options: McpAuthorizeToolOptions): Promise<McpToolDecision> {
-        const { serverId, subject, tool, signal } = options ?? ({} as McpAuthorizeToolOptions);
+        const { serverId, subject, tool, traceparent, signal } = options ?? ({} as McpAuthorizeToolOptions);
         if (!subject || (subject.type !== 'user' && subject.type !== 'agent')) {
             throw new LumoAuthValidationError(
                 'MCP subject type must be "user" or "agent".',
@@ -181,11 +183,13 @@ export class McpModule {
             orgId: this.orgId,
             serverId,
         });
+        const extraHeaders = traceparent ? { traceparent } : undefined;
         const body = await mcpDecision(() =>
             this.http.post<Record<string, unknown>>(
                 path,
                 { subject: { type: subject.type, id: subject.id }, tool },
                 signal,
+                extraHeaders,
             ),
         );
         const sub = isObject(body.subject) ? body.subject : {};

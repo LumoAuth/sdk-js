@@ -52,6 +52,7 @@ interface RequestOptions {
     path: string;
     body?: unknown;
     signal?: AbortSignal;
+    headers?: Record<string, string>;
 }
 
 // ─── HTTP Client ──────────────────────────────────────────────────────
@@ -119,8 +120,8 @@ export class HttpClient {
         return this.request<T>({ method: 'GET', path, signal });
     }
 
-    async post<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-        return this.request<T>({ method: 'POST', path, body, signal });
+    async post<T>(path: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>): Promise<T> {
+        return this.request<T>({ method: 'POST', path, body, signal, headers });
     }
 
     async put<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -152,6 +153,7 @@ export class HttpClient {
             'Content-Type': 'application/json',
             Accept: 'application/json',
             ...this.defaultHeaders,
+            ...opts.headers,
         };
 
         try {
