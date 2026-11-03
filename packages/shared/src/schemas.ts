@@ -16,7 +16,7 @@ export type CheckSubject = z.infer<typeof CheckSubjectSchema>;
 /** Request: single permission check */
 export const CheckPermissionRequestSchema = z.object({
     permission: z.string().min(1, 'Permission slug is required'),
-    context: z.record(z.unknown()).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
     subject: CheckSubjectSchema.optional(),
 });
 export type CheckPermissionRequest = z.infer<typeof CheckPermissionRequestSchema>;
@@ -29,33 +29,33 @@ export const CheckPermissionResponseSchema = z.object({
     user_id: z.union([z.string(), z.number()]).optional(),
     subject_type: z.enum(['user', 'agent']).optional(),
     subject_id: z.string().optional(),
-    context: z.record(z.unknown()).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
 });
 export type CheckPermissionResponse = z.infer<typeof CheckPermissionResponseSchema>;
 
 /** Request: bulk permission check */
 export const CheckBulkRequestSchema = z.object({
     permissions: z.array(z.string().min(1)).min(1, 'At least one permission required'),
-    context: z.record(z.unknown()).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
     subject: CheckSubjectSchema.optional(),
 });
 export type CheckBulkRequest = z.infer<typeof CheckBulkRequestSchema>;
 
 /** Response: bulk permission check */
 export const CheckBulkResponseSchema = z.object({
-    results: z.record(z.boolean()),
+    results: z.record(z.string(), z.boolean()),
     /** Present when the subject is a user (legacy alias of `subject_id`). */
     user_id: z.union([z.string(), z.number()]).optional(),
     subject_type: z.enum(['user', 'agent']).optional(),
     subject_id: z.string().optional(),
-    context: z.record(z.unknown()).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
 });
 export type CheckBulkResponse = z.infer<typeof CheckBulkResponseSchema>;
 
 /** Request: check-any / check-all */
 export const CheckMultipleRequestSchema = z.object({
     permissions: z.array(z.string().min(1)).min(1, 'At least one permission required'),
-    context: z.record(z.unknown()).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
     subject: CheckSubjectSchema.optional(),
 });
 export type CheckMultipleRequest = z.infer<typeof CheckMultipleRequestSchema>;
@@ -68,7 +68,7 @@ export const CheckMultipleResponseSchema = z.object({
     user_id: z.union([z.string(), z.number()]).optional(),
     subject_type: z.enum(['user', 'agent']).optional(),
     subject_id: z.string().optional(),
-    context: z.record(z.unknown()).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
 });
 export type CheckMultipleResponse = z.infer<typeof CheckMultipleResponseSchema>;
 
@@ -222,9 +222,9 @@ export type AbacCondition = AbacLeafCondition | AbacGroupCondition;
 export const AbacContextSchema = z
     .object({
         /** @deprecated LumoAuth does not read caller-supplied resource attributes; the SDK does not send them. */
-        resource: z.record(z.unknown()).optional(),
+        resource: z.record(z.string(), z.unknown()).optional(),
         /** @deprecated Put environment keys at the top level of `context`. */
-        environment: z.record(z.unknown()).optional(),
+        environment: z.record(z.string(), z.unknown()).optional(),
     })
     .catchall(z.unknown());
 export type AbacContext = z.infer<typeof AbacContextSchema>;
@@ -263,9 +263,9 @@ export const AbacCheckResponseSchema = z.object({
     resourceId: z.string().nullable().optional(),
     evaluationContext: z
         .object({
-            user: z.record(z.unknown()).optional(),
-            resource: z.record(z.unknown()).optional(),
-            environment: z.record(z.unknown()).optional(),
+            user: z.record(z.string(), z.unknown()).optional(),
+            resource: z.record(z.string(), z.unknown()).optional(),
+            environment: z.record(z.string(), z.unknown()).optional(),
         })
         .optional(),
 });
@@ -324,11 +324,11 @@ export const AbacBulkCheckResponseSchema = z.object({
 export type AbacBulkCheckResponse = z.infer<typeof AbacBulkCheckResponseSchema>;
 
 /** ABAC user attributes response */
-export const AbacUserAttributesResponseSchema = z.record(z.unknown());
+export const AbacUserAttributesResponseSchema = z.record(z.string(), z.unknown());
 export type AbacUserAttributesResponse = z.infer<typeof AbacUserAttributesResponseSchema>;
 
 /** ABAC resource attributes response */
-export const AbacResourceAttributesResponseSchema = z.record(z.unknown());
+export const AbacResourceAttributesResponseSchema = z.record(z.string(), z.unknown());
 export type AbacResourceAttributesResponse = z.infer<typeof AbacResourceAttributesResponseSchema>;
 
 /** ABAC attribute definition */
@@ -339,7 +339,7 @@ export const AbacAttributeDefinitionSchema = z.object({
     description: z.string().nullable().optional(),
     attributeType: z.enum(['user', 'resource', 'environment']),
     dataType: z.enum(['string', 'number', 'boolean', 'array', 'date']),
-    validationRules: z.record(z.unknown()).nullable().optional(),
+    validationRules: z.record(z.string(), z.unknown()).nullable().optional(),
     isActive: z.boolean().optional(),
 });
 export type AbacAttributeDefinition = z.infer<typeof AbacAttributeDefinitionSchema>;

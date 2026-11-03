@@ -79,16 +79,18 @@ function decodeSub(accessToken: string): string | null {
  * successful exchange.
  */
 export async function auth(overrides: Partial<LumoAuthNextConfig> = {}): Promise<AuthObject> {
-    const cfg = resolveConfig(overrides);
-
     // Prefer the header: if middleware refreshed during THIS request, the
     // request cookie still holds the pre-refresh value.
+    // Call headers()/cookies() before resolveConfig() so Next.js detects
+    // dynamic usage during `next build` without requiring runtime secrets
+    // at build time.
     const hdrs = await headers();
+    const jar = await cookies();
+    const cfg = resolveConfig(overrides);
     const fromHeader = await unseal<ServerSession>(
         hdrs.get(REFRESHED_SESSION_HEADER) ?? undefined,
         cfg.secret,
     );
-    const jar = await cookies();
     const session =
         fromHeader ?? (await unseal<ServerSession>(jar.get(SESSION_COOKIE)?.value, cfg.secret));
 
@@ -113,12 +115,13 @@ export async function auth(overrides: Partial<LumoAuthNextConfig> = {}): Promise
 export async function currentUser(
     overrides: Partial<LumoAuthNextConfig> = {},
 ): Promise<UserInfo | null> {
-    const cfg = resolveConfig(overrides);
     const { getToken, isSignedIn } = await auth(overrides);
     if (!isSignedIn) return null;
 
     const token = getToken();
     if (!token) return null;
+
+    const cfg = resolveConfig(overrides);
 
     try {
         const mod = new AuthModule({ baseUrl: cfg.domain, orgId: cfg.orgId, clientId: cfg.clientId });

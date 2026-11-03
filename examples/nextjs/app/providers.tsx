@@ -18,14 +18,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
     return (
         <LumoAuthProvider
-            domain={process.env.NEXT_PUBLIC_LUMOAUTH_DOMAIN!}
-            orgId={process.env.NEXT_PUBLIC_LUMOAUTH_ORG_ID!}
-            clientId={process.env.NEXT_PUBLIC_LUMOAUTH_CLIENT_ID!}
+            domain={process.env.NEXT_PUBLIC_LUMOAUTH_DOMAIN || 'https://localhost:8000'}
+            orgId={process.env.NEXT_PUBLIC_LUMOAUTH_ORG_ID || 'acme-corp'}
+            clientId={process.env.NEXT_PUBLIC_LUMOAUTH_CLIENT_ID || 'replace-me'}
             // From env, not a window effect. Deferring render until after mount
             // to read window.location.origin would mean the server never renders
             // the tree — hiding the useSyncExternalStore server-snapshot path and
             // any hydration mismatch along with it.
-            redirectUri={process.env.NEXT_PUBLIC_REDIRECT_URI!}
+            redirectUri={process.env.NEXT_PUBLIC_REDIRECT_URI || 'http://localhost:3100/auth/callback'}
             afterSignInUrl="/"
             afterSignOutUrl="/"
             storage={storage}
