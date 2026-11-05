@@ -21,6 +21,7 @@ sure that it is the package that you need? See
 - [Configuration](#configuration)
 - [Guides](#guides)
 - [`LumoAgent` reference](#lumoagent-reference)
+- [Private key JWT: sign in without a secret](#private-key-jwt-sign-in-without-a-secret)
 - [DPoP: sender-constrained tokens](#dpop-sender-constrained-tokens)
 - [Verify LumoAuth access tokens on an MCP server](#verify-lumoauth-access-tokens-on-an-mcp-server)
 - [AAuth: cryptographic agent identity](#aauth-cryptographic-agent-identity)
@@ -99,15 +100,19 @@ grant. The SDK refreshes the token 60 seconds before it expires.
 | `baseUrl` | `LUMOAUTH_URL` | `https://app.lumoauth.dev` | The LumoAuth host. Use `https://eu.app.lumoauth.dev` for the EU region |
 | `orgId` | `LUMOAUTH_ORG_ID` | none | The organization slug. Every namespace needs it |
 | `clientId` | `AGENT_CLIENT_ID` | required | The agent's OAuth client ID |
-| `clientSecret` | `AGENT_CLIENT_SECRET` | required | The agent's OAuth client secret |
+| `clientSecret` | `AGENT_CLIENT_SECRET` | required unless `privateKey` | The agent's OAuth client secret |
+| `privateKey` | `AGENT_PRIVATE_KEY` (PEM) | none | For a **Private key JWT** agent: a `ClientAssertionSigner` or the PEM private key. The agent then signs a client assertion instead of sending a secret. See [Private key JWT](#private-key-jwt-sign-in-without-a-secret) |
+| `keyId` | `AGENT_KEY_ID` | none | The `kid` of the registered public key, used with a PEM `privateKey` |
+| `issuer` | none | `{baseUrl}/orgs/{orgId}/api/v1` | The organization's issuer identifier, the assertion's `aud`. Set it on a custom domain |
 | `scopes` | none | the agent's defaults | Scopes to request |
 | `redirectUri` | none | none | The callback URL of the delegation consent flow |
 | `timeout` | none | 30 000 ms | Request timeout |
 | `fetch` | none | global `fetch` | A custom `fetch` |
 | `dpop` | none | none | A `DpopProofSigner`. Every token the agent obtains is then bound to its key, and every request carries a DPoP proof. See [DPoP](#dpop-sender-constrained-tokens) |
 
-The constructor throws `LumoAuthConfigError` when the client ID or the client
-secret is missing. It does not call the server.
+The constructor throws `LumoAuthConfigError` when the client ID is missing, when
+neither a client secret nor a private key is given, or when both are. It does not
+call the server.
 
 ## Guides
 
@@ -240,6 +245,31 @@ consent steps. The token types and the `resource` option are explained in the
 
 The parameters of each method are in the
 [workspace API reference](../../README.md#api-reference).
+
+## Private key JWT: sign in without a secret
+
+An agent registered with the **Private key JWT** identity type has no client
+secret. Whenever it needs a token, it signs a short-lived JWT (a client
+assertion, RFC 7523) with its private key. Only the public key is registered.
+
+```ts
+import { ClientAssertionSigner, LumoAgent } from '@lumoauth/agent';
+
+const signer = ClientAssertionSigner.generate('ES256', 'agent-2026-11');
+// Store signer.privateKeyPem in your secret store; paste signer.jwks into the agent's public keys.
+
+const agent = new LumoAgent({
+    clientId: 'agt_0123456789abcdef',
+    privateKey: ClientAssertionSigner.fromPem(process.env.AGENT_PRIVATE_KEY!, { keyId: 'agent-2026-11' }),
+});
+await agent.authenticate();
+```
+
+Every token request carries a new assertion: `iss` and `sub` are the agent ID,
+`aud` is the organization's issuer identifier, `exp` is 60 seconds ahead and
+`jti` is random. `ClientAssertionSigner` signs with ES256, ES384, ES512,
+EdDSA, RS256 to RS512 or PS256 to PS512; `agent.createClientAssertion()` gives
+you one for another call. Combine it with `dpop` to also bind the tokens to a key.
 
 ## DPoP: sender-constrained tokens
 

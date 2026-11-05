@@ -47,6 +47,18 @@ export {
     type VerifyAuthTokenOptions,
 } from './verify';
 
+// ─── private_key_jwt client assertions (RFC 7523) ─────────────────────
+export {
+    ClientAssertionSigner,
+    CLIENT_ASSERTION_TYPE,
+    CLIENT_ASSERTION_TYP,
+    MAX_ASSERTION_LIFETIME_SECONDS,
+    issuerFor,
+    type ClientAssertionAlgorithm,
+    type ClientAssertionJwk,
+    type ClientAssertionSignerOptions,
+} from './client-assertion';
+
 // ─── DPoP (RFC 9449) ──────────────────────────────────────────────────
 export {
     DpopProofSigner,

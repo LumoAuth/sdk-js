@@ -17,6 +17,7 @@ import {
     type AgentBudget,
     type AgentMcpToolDecision,
 } from '@lumoauth/shared';
+import { CLIENT_ASSERTION_TYPE, ClientAssertionSigner, issuerFor } from './client-assertion';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -32,6 +33,20 @@ export interface LumoAgentOptions {
     clientId?: string;
     /** OAuth client secret. Defaults to `process.env.AGENT_CLIENT_SECRET`. */
     clientSecret?: string;
+    /**
+     * For an agent registered with the **Private key JWT** identity type: a
+     * `ClientAssertionSigner`, or the PEM private key. The agent then signs a
+     * client assertion (RFC 7523) for every token request and needs no
+     * `clientSecret`. Defaults to `process.env.AGENT_PRIVATE_KEY` (PEM).
+     */
+    privateKey?: ClientAssertionSigner | string;
+    /** `kid` of the registered public key, used with a PEM `privateKey`. Defaults to `process.env.AGENT_KEY_ID`. */
+    keyId?: string;
+    /**
+     * The organization's issuer identifier, the assertion's `aud`. Defaults to
+     * `{baseUrl}/orgs/{orgId}/api/v1`; set it on a custom domain.
+     */
+    issuer?: string;
     /** Scopes to request. When omitted the server grants the agent's defaults. */
     scopes?: string[];
     /** OAuth callback URL for the delegation consent flow. */
@@ -116,6 +131,8 @@ export class LumoAgent {
     readonly mcp: McpModule;
 
     private readonly clientSecret: string;
+    private readonly assertionSigner: ClientAssertionSigner | undefined;
+    private readonly issuer: string | undefined;
     private readonly scopes: string[] | undefined;
     private readonly fetchFn: typeof globalThis.fetch;
     private readonly dpop: DpopProofProvider | undefined;
@@ -126,15 +143,32 @@ export class LumoAgent {
         this.baseUrl = (options.baseUrl ?? envVar('LUMOAUTH_URL') ?? 'https://app.lumoauth.dev').replace(/\/+$/, '');
         this.orgId = options.orgId ?? envVar('LUMOAUTH_ORG_ID') ?? '';
         this.clientId = options.clientId ?? envVar('AGENT_CLIENT_ID') ?? '';
-        this.clientSecret = options.clientSecret ?? envVar('AGENT_CLIENT_SECRET') ?? '';
+        const privateKey = options.privateKey ?? envVar('AGENT_PRIVATE_KEY');
+        const keyId = options.keyId ?? envVar('AGENT_KEY_ID');
+        this.assertionSigner =
+            privateKey === undefined || privateKey === ''
+                ? undefined
+                : privateKey instanceof ClientAssertionSigner
+                  ? privateKey
+                  : ClientAssertionSigner.fromPem(privateKey, { keyId });
+        // A private key JWT agent has no secret; an AGENT_CLIENT_SECRET left
+        // in the environment must not become a second method.
+        this.clientSecret = options.clientSecret ?? (this.assertionSigner ? '' : envVar('AGENT_CLIENT_SECRET') ?? '');
+        this.issuer = options.issuer;
         this.scopes = options.scopes;
         this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
         this.dpop = options.dpop;
 
-        if (!this.clientId || !this.clientSecret) {
+        if (!this.clientId || (!this.clientSecret && !this.assertionSigner)) {
             throw new LumoAuthConfigError(
                 'Agent credentials required. Set AGENT_CLIENT_ID and AGENT_CLIENT_SECRET ' +
-                    'environment variables or pass clientId/clientSecret to the constructor.',
+                    '(or AGENT_PRIVATE_KEY for a private key JWT agent), or pass clientId with ' +
+                    'clientSecret or privateKey to the constructor.',
+            );
+        }
+        if (this.clientSecret && this.assertionSigner) {
+            throw new LumoAuthConfigError(
+                'Pass clientSecret or privateKey, not both: an agent authenticates with one method.',
             );
         }
 
@@ -181,8 +215,13 @@ export class LumoAgent {
         const form: Record<string, string> = {
             grant_type: 'client_credentials',
             client_id: this.clientId,
-            client_secret: this.clientSecret,
         };
+        if (this.assertionSigner) {
+            form.client_assertion_type = CLIENT_ASSERTION_TYPE;
+            form.client_assertion = this.createClientAssertion();
+        } else {
+            form.client_secret = this.clientSecret;
+        }
         const requested = scopes ?? this.scopes;
         if (requested?.length) form.scope = requested.join(' ');
 
@@ -235,6 +274,23 @@ export class LumoAgent {
      */
     get tokenType(): string | null {
         return this.token?.tokenType ?? null;
+    }
+
+    /**
+     * A new `private_key_jwt` client assertion for this agent (single-use),
+     * addressed to `issuer` or `{baseUrl}/orgs/{orgId}/api/v1`.
+     */
+    createClientAssertion(): string {
+        if (!this.assertionSigner) {
+            throw new LumoAuthConfigError('This agent signs no client assertions: create it with privateKey.');
+        }
+        const audience = this.issuer ?? issuerFor(this.baseUrl, this.requireOrgId());
+        return this.assertionSigner.create(this.clientId, audience);
+    }
+
+    /** The client assertion signer this agent was configured with, if any. */
+    get clientAssertionSigner(): ClientAssertionSigner | undefined {
+        return this.assertionSigner;
     }
 
     /** The DPoP proof signer this agent was configured with, if any. */
