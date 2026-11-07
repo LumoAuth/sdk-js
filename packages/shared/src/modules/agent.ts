@@ -65,10 +65,25 @@ export interface RegisterAgentRequest {
     jwksUri?: string;
 }
 
-/** Budget policy attached to the agent, from the UserInfo endpoint. */
+/**
+ * Budget policy attached to the agent, from the UserInfo endpoint: the limits
+ * that are set, the usage in the current UTC windows, and `exhausted`.
+ */
 export interface AgentBudget {
+    max_api_calls_per_hour?: number;
+    max_api_calls_per_day?: number;
+    max_tokens_per_hour?: number;
     max_tokens_per_day?: number;
+    max_cost_per_day_usd?: number;
+    max_cost_per_month_usd?: number;
+    api_calls_this_hour?: number;
+    api_calls_today?: number;
+    tokens_used_this_hour?: number;
     tokens_used_today?: number;
+    cost_today_usd?: number;
+    cost_this_month_usd?: number;
+    /** True when any limit is reached, so the next metered call would get 429. */
+    exhausted?: boolean;
     [key: string]: unknown;
 }
 
