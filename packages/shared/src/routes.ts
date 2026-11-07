@@ -67,6 +67,7 @@ export const ROUTES = {
     // ── Agents (identity) ─────────────────────────────────────────────
     'agents.ask': { method: 'POST', path: '/orgs/{orgId}/api/v1/agents/ask' },
     'agents.me': { method: 'GET', path: '/orgs/{orgId}/api/v1/agents/me' },
+    'agents.reportUsage': { method: 'POST', path: '/orgs/{orgId}/api/v1/agents/me/usage' },
     'agents.authorizeMcpTool': {
         method: 'POST',
         path: '/orgs/{orgId}/api/v1/agents/me/mcp/authorize',

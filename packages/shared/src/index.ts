@@ -15,6 +15,8 @@ export {
     type AgentAskResult,
     type AgentIdentity,
     type AgentBudget,
+    type UsageReport,
+    type UsageReportResult,
     type RegisterAgentRequest,
 } from './modules/agent';
 export {

@@ -231,13 +231,14 @@ consent steps. The token types and the `resource` option are explained in the
 | `getCurrentAgent()` | `Promise<AgentIdentity>` | The agent's identity, capabilities and workspace |
 | `capabilities()` | `Promise<string[]>` | The agent's capabilities |
 | `budget()` | `Promise<AgentBudget>` | The agent's budget policy, or `{}` when none is set |
+| `reportUsage({ tokens, costUsd })` | `Promise<UsageReportResult>` | Report model tokens and cost; token and cost limits count only reported usage |
 | `baseUrl`, `orgId`, `clientId` | `string` | The resolved configuration |
 
 ### Namespaces
 
 | Namespace | What it does | Methods |
 |---|---|---|
-| `agents` | Agent identity | `ask`, `isAllowed`, `me`, `getCurrentAgent`, `capabilities`, `budget`, `register`, `authorizeMcpTool(serverId, tool)` |
+| `agents` | Agent identity | `ask`, `isAllowed`, `me`, `getCurrentAgent`, `capabilities`, `budget`, `reportUsage`, `register`, `authorizeMcpTool(serverId, tool)` |
 | `approvals` | Push approval for agent actions | `require`, `create`, `getStatus`, `wait` |
 | `jit` | Just-in-time permissions | `createTask`, `requestPermission`, `getRequestStatus`, `getToken`, `evaluateTask`, `completeTask`. `listPendingRequests` is the human reviewer's view. It needs a user token with `jit:approve`, so the server rejects an agent's own token |
 | `delegation` | Act for a user, or hand work to a sub-agent, with RFC 8693 token exchange | `getConsentUrl`, `handleConsentCallback`, `setUserToken`, `exchange`, `request`, `delegateToSubAgent`, `revoke`, `revokeAll`, `hasDelegation`, `activeSessions` |

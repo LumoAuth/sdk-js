@@ -1,5 +1,5 @@
 import type { HttpClient } from '../utils/http';
-import { LumoAuthConfigError } from '../errors';
+import { LumoAuthConfigError, LumoAuthValidationError } from '../errors';
 import { ROUTES, buildPath } from '../routes';
 import {
     assertMcpName,
@@ -87,6 +87,20 @@ export interface AgentBudget {
     [key: string]: unknown;
 }
 
+/** A usage report: model tokens and cost since the last report. */
+export interface UsageReport {
+    tokens?: number;
+    costUsd?: number;
+}
+
+/** The answer to {@link AgentsModule.reportUsage}. */
+export interface UsageReportResult {
+    recorded: { tokens: number; cost_usd: number };
+    /** The budget after the report; `exhausted` means that the next metered call gets 429. */
+    budget: AgentBudget;
+    [key: string]: unknown;
+}
+
 export class AgentsModule {
     private approvalsDelegate: ApprovalsModule | null = null;
 
@@ -125,6 +139,35 @@ export class AgentsModule {
     ): Promise<boolean> {
         const result = await this.ask(action, context);
         return result.allowed === true;
+    }
+
+    // ── Usage ─────────────────────────────────────────────────────────
+
+    /**
+     * Report the model tokens and cost that the agent used.
+     *
+     * LumoAuth does not see the agent's model calls, so token and cost
+     * limits (`max_tokens_per_day`, `max_cost_per_month_usd`, …) count only
+     * the usage reported here. Report after each model call, or batch a few.
+     * The report is not a metered call and is accepted when the budget is
+     * spent; `budget.exhausted` says whether it is. Agent credentials only.
+     */
+    async reportUsage(report: UsageReport): Promise<UsageReportResult> {
+        const tokens = report.tokens ?? 0;
+        const costUsd = report.costUsd ?? 0;
+        if (!Number.isInteger(tokens) || tokens < 0) {
+            throw new LumoAuthValidationError('tokens must be a non-negative integer', [{ field: 'tokens', value: tokens }]);
+        }
+        if (typeof costUsd !== 'number' || !Number.isFinite(costUsd) || costUsd < 0) {
+            throw new LumoAuthValidationError('costUsd must be a non-negative number', [{ field: 'costUsd', value: costUsd }]);
+        }
+        if (tokens === 0 && costUsd === 0) {
+            throw new LumoAuthValidationError('report tokens or costUsd greater than zero', [{ field: 'tokens', value: tokens }, { field: 'costUsd', value: costUsd }]);
+        }
+        return this.http.post<UsageReportResult>(
+            buildPath(ROUTES['agents.reportUsage'].path, { orgId: this.requireOrgId() }),
+            { tokens, cost_usd: costUsd },
+        );
     }
 
     // ── Self-inspection ───────────────────────────────────────────────

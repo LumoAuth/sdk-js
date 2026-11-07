@@ -16,6 +16,8 @@ import {
     type AgentIdentity,
     type AgentBudget,
     type AgentMcpToolDecision,
+    type UsageReport,
+    type UsageReportResult,
 } from '@lumoauth/shared';
 import { CLIENT_ASSERTION_TYPE, ClientAssertionSigner, issuerFor } from './client-assertion';
 
@@ -353,6 +355,23 @@ export class LumoAgent {
     /** The agent's budget policy (empty object when no policy is set). */
     async budget(): Promise<AgentBudget> {
         return this.agents.budget();
+    }
+
+    /**
+     * Report the model tokens and cost that the agent just used, for example
+     * the `usage` that the model provider returned. LumoAuth does not see
+     * model calls, so token and cost limits count only reported usage. The
+     * result's `budget.exhausted` says whether the next metered call (Ask,
+     * token or JIT request) will get 429.
+     *
+     * ```ts
+     * const resp = await llm.chat(...);
+     * const { budget } = await agent.reportUsage({ tokens: resp.usage.total_tokens, costUsd: 0.0042 });
+     * if (budget.exhausted) throw new Error('budget spent');
+     * ```
+     */
+    async reportUsage(report: UsageReport): Promise<UsageReportResult> {
+        return this.agents.reportUsage(report);
     }
 
     // ── Internal ──────────────────────────────────────────────────────

@@ -547,6 +547,10 @@ const decision = await agent.ask('tickets.read', { ticket: 'T-42' });
 const me = await agent.getCurrentAgent();       // identity, capabilities, workspace
 const capabilities = await agent.capabilities(); // string[]
 const budget = await agent.budget();             // {} when no budget is set
+
+// LumoAuth does not see your model calls: report their tokens and cost so that
+// token and cost limits apply. `budget.exhausted` means the next call gets 429.
+const report = await agent.reportUsage({ tokens: resp.usage.total_tokens, costUsd: 0.0042 });
 ```
 
 The server always sets `ip`, `userAgent`, `requestMethod` and `requestPath`
