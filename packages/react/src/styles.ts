@@ -23,6 +23,65 @@ export function injectStyles(): void {
     injected = true;
 }
 
+// ─── Theme colours ────────────────────────────────────────────────────
+// One list for each theme, so that every selector that applies a theme
+// (the default, the operating system, a class, an attribute) uses the same
+// values.
+
+const LIGHT_THEME = `
+    --la-bg: #ffffff;
+    --la-bg-subtle: #f8f9fb;
+    --la-bg-muted: #f1f3f5;
+    --la-bg-hover: #e9ecef;
+    --la-border: #dee2e6;
+    --la-border-focus: #7c5cfc;
+    --la-text: #1a1a2e;
+    --la-text-secondary: #6c757d;
+    --la-text-muted: #adb5bd;
+    --la-primary: #7c5cfc;
+    --la-primary-hover: #6a4ce0;
+    --la-primary-text: #ffffff;
+    --la-danger: #e74c3c;
+    --la-danger-bg: #fef2f2;
+    --la-success: #27ae60;
+    --la-success-bg: #f0fdf4;
+    --la-link: #7c5cfc;
+    --la-overlay: rgba(0,0,0,0.5);
+    --la-card-shadow: var(--la-shadow-xl);
+    --la-badge-success-bg: #dcfce7;
+    --la-badge-success-text: #166534;
+    --la-badge-warning-bg: #fef9c3;
+    --la-badge-warning-text: #854d0e;
+    --la-badge-muted-bg: var(--la-bg-muted);
+`;
+
+const DARK_THEME = `
+    --la-bg: #1a1a2e;
+    --la-bg-subtle: #16213e;
+    --la-bg-muted: #0f3460;
+    --la-bg-hover: #1a3a6a;
+    --la-border: #2a2a4a;
+    --la-border-focus: #9d85f7;
+    --la-text: #e8e8f0;
+    --la-text-secondary: #a0a0b8;
+    --la-text-muted: #6a6a88;
+    --la-primary: #9d85f7;
+    --la-primary-hover: #b39dff;
+    --la-primary-text: #1a1a2e;
+    --la-danger: #ff6b6b;
+    --la-danger-bg: #2d1b1b;
+    --la-success: #51cf66;
+    --la-success-bg: #1b2d1b;
+    --la-link: #9d85f7;
+    --la-overlay: rgba(0,0,0,0.7);
+    --la-card-shadow: 0 20px 25px -5px rgba(0,0,0,0.3), 0 10px 10px -5px rgba(0,0,0,0.2);
+    --la-badge-success-bg: rgba(22, 163, 74, 0.15);
+    --la-badge-success-text: #4ade80;
+    --la-badge-warning-bg: rgba(234, 179, 8, 0.15);
+    --la-badge-warning-text: #facc15;
+    --la-badge-muted-bg: rgba(255, 255, 255, 0.08);
+`;
+
 // ─── CSS Content ──────────────────────────────────────────────────────
 
 const CSS_CONTENT = `
@@ -53,75 +112,35 @@ const CSS_CONTENT = `
     --la-shadow-xl: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
 
     --la-transition: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-
-    /* Light theme (default) */
-    --la-bg: #ffffff;
-    --la-bg-subtle: #f8f9fb;
-    --la-bg-muted: #f1f3f5;
-    --la-bg-hover: #e9ecef;
-    --la-border: #dee2e6;
-    --la-border-focus: #7c5cfc;
-    --la-text: #1a1a2e;
-    --la-text-secondary: #6c757d;
-    --la-text-muted: #adb5bd;
-    --la-primary: #7c5cfc;
-    --la-primary-hover: #6a4ce0;
-    --la-primary-text: #ffffff;
-    --la-danger: #e74c3c;
-    --la-danger-bg: #fef2f2;
-    --la-success: #27ae60;
-    --la-success-bg: #f0fdf4;
-    --la-link: #7c5cfc;
-    --la-overlay: rgba(0,0,0,0.5);
-    --la-card-shadow: var(--la-shadow-xl);
 }
 
-/* Dark theme */
-[data-lumoauth-theme="dark"],
-.la-dark {
-    --la-bg: #1a1a2e;
-    --la-bg-subtle: #16213e;
-    --la-bg-muted: #0f3460;
-    --la-bg-hover: #1a3a6a;
-    --la-border: #2a2a4a;
-    --la-border-focus: #9d85f7;
-    --la-text: #e8e8f0;
-    --la-text-secondary: #a0a0b8;
-    --la-text-muted: #6a6a88;
-    --la-primary: #9d85f7;
-    --la-primary-hover: #b39dff;
-    --la-primary-text: #1a1a2e;
-    --la-danger: #ff6b6b;
-    --la-danger-bg: #2d1b1b;
-    --la-success: #51cf66;
-    --la-success-bg: #1b2d1b;
-    --la-link: #9d85f7;
-    --la-overlay: rgba(0,0,0,0.7);
-    --la-card-shadow: 0 20px 25px -5px rgba(0,0,0,0.3), 0 10px 10px -5px rgba(0,0,0,0.2);
+/*
+ * Colours. Three ways choose the theme, from weakest to strongest:
+ *
+ *   1. the operating system (prefers-color-scheme), when nothing else is set;
+ *   2. a class or attribute on an ancestor or on the component itself:
+ *      .la-light / .la-dark, or data-lumoauth-theme="light" | "dark"
+ *      (the appearance.theme prop sets the class on the component);
+ *   3. appearance.variables, which is inline style on the component.
+ *
+ * The light values are repeated under .la-light so that a component can be
+ * light on a page that the operating system made dark.
+ */
+:root,
+.la-light,
+[data-lumoauth-theme="light"] {
+${LIGHT_THEME}
 }
 
 @media (prefers-color-scheme: dark) {
     :root:not([data-lumoauth-theme="light"]):not(.la-light) {
-        --la-bg: #1a1a2e;
-        --la-bg-subtle: #16213e;
-        --la-bg-muted: #0f3460;
-        --la-bg-hover: #1a3a6a;
-        --la-border: #2a2a4a;
-        --la-border-focus: #9d85f7;
-        --la-text: #e8e8f0;
-        --la-text-secondary: #a0a0b8;
-        --la-text-muted: #6a6a88;
-        --la-primary: #9d85f7;
-        --la-primary-hover: #b39dff;
-        --la-primary-text: #1a1a2e;
-        --la-danger: #ff6b6b;
-        --la-danger-bg: #2d1b1b;
-        --la-success: #51cf66;
-        --la-success-bg: #1b2d1b;
-        --la-link: #9d85f7;
-        --la-overlay: rgba(0,0,0,0.7);
-        --la-card-shadow: 0 20px 25px -5px rgba(0,0,0,0.3), 0 10px 10px -5px rgba(0,0,0,0.2);
+${DARK_THEME}
     }
+}
+
+.la-dark,
+[data-lumoauth-theme="dark"] {
+${DARK_THEME}
 }
 
 /* ─── Card Container ─────────────────────────────────────────────────── */
@@ -613,7 +632,7 @@ const CSS_CONTENT = `
     justify-content: center;
     font-family: var(--la-font-family);
     font-weight: var(--la-font-weight-semibold);
-    color: #fff;
+    color: var(--la-primary-text);
     background: var(--la-primary);
     overflow: hidden;
     flex-shrink: 0;
@@ -636,6 +655,9 @@ const CSS_CONTENT = `
 }
 
 /* ─── UserProfile Card ───────────────────────────────────────────────── */
+
+/* --la-text-primary is an optional override that older apps set. It has no
+   default: the text colour is --la-text. */
 
 .la-profile-card {
     max-width: 420px;
@@ -670,7 +692,7 @@ const CSS_CONTENT = `
 .la-profile-name {
     font-size: var(--la-font-size-lg);
     font-weight: var(--la-font-weight-semibold);
-    color: var(--la-text-primary);
+    color: var(--la-text-primary, var(--la-text));
     line-height: 1.3;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -704,7 +726,7 @@ const CSS_CONTENT = `
     gap: 0.625rem;
     padding: 0.5rem 0;
     font-size: var(--la-font-size-base);
-    color: var(--la-text-primary);
+    color: var(--la-text-primary, var(--la-text));
 }
 
 .la-profile-row svg {
@@ -738,32 +760,17 @@ const CSS_CONTENT = `
 }
 
 .la-badge-success {
-    background: #dcfce7;
-    color: #166534;
+    background: var(--la-badge-success-bg);
+    color: var(--la-badge-success-text);
 }
 
 .la-badge-warning {
-    background: #fef9c3;
-    color: #854d0e;
+    background: var(--la-badge-warning-bg);
+    color: var(--la-badge-warning-text);
 }
 
 .la-badge-muted {
-    background: var(--la-bg-muted);
-    color: var(--la-text-secondary);
-}
-
-.la-dark .la-badge-success {
-    background: rgba(22, 163, 74, 0.15);
-    color: #4ade80;
-}
-
-.la-dark .la-badge-warning {
-    background: rgba(234, 179, 8, 0.15);
-    color: #facc15;
-}
-
-.la-dark .la-badge-muted {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--la-badge-muted-bg);
     color: var(--la-text-secondary);
 }
 
@@ -802,7 +809,7 @@ const CSS_CONTENT = `
 .la-btn-outline {
     background: transparent;
     border: 1px solid var(--la-border);
-    color: var(--la-text-primary);
+    color: var(--la-text-primary, var(--la-text));
     padding: 0.625rem 1rem;
     border-radius: var(--la-radius-md);
     font-size: var(--la-font-size-base);

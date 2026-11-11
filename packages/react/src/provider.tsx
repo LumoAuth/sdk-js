@@ -471,7 +471,12 @@ export function LumoAuthProvider({
         // assignment that overwrites our pending logout navigation — sending
         // the user straight back to /authorize where the IdP session is still
         // alive and silently re-issues a code (defeating logout entirely).
-        if (accessToken) {
+        //
+        // With a server-managed store (the cookie adapter) the logout route
+        // of the app's server revokes the tokens. A second revocation from
+        // the browser would arrive with a token that is already revoked and
+        // show up as a failed request in the console.
+        if (accessToken && !storage?.serverManaged) {
             authModule.revokeToken(accessToken, accessToken).catch(() => { });
         }
         tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
@@ -486,7 +491,7 @@ export function LumoAuthProvider({
         // Block forever — the page is unloading. This guarantees no caller
         // code runs after signOut() resolves and tries to navigate elsewhere.
         await new Promise<void>(() => { });
-    }, [authModule, domain, orgId, afterSignOutUrl, session, dispatch]);
+    }, [authModule, domain, orgId, afterSignOutUrl, session, storage, dispatch]);
 
     // ── Initialize (check for existing session) ──────────────────────
 

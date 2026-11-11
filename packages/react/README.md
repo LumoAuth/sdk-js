@@ -255,7 +255,8 @@ is signed in.
 | `appearance` | `AppearanceProps` | none |
 
 **`<UserProfile>`** shows a profile card with account details, security status, roles, groups and
-a sign-out button.
+a sign-out button. The MFA row, the roles and the groups appear only when the UserInfo response
+holds the `mfa_enabled`, `roles` and `groups` claims. With the default scopes it holds none of them.
 
 ```tsx
 <UserProfile afterSignOutUrl="/" />
@@ -545,13 +546,41 @@ Every ready-made component accepts an `appearance` prop:
 
 | Option | Type | Description |
 |---|---|---|
-| `theme` | `'light' \| 'dark'` | Force a theme. The default follows the system setting. |
+| `theme` | `'light' \| 'dark'` | Force a theme for this component. The default follows the system setting. |
 | `className` | `string` | Extra class on the component's root element |
 | `variables` | `Record<string, string>` | Values for CSS custom properties |
 
-Commonly changed properties: `--la-primary`, `--la-primary-hover`, `--la-bg`,
-`--la-text-primary`, `--la-text-secondary`, `--la-border`, `--la-radius-md` and
-`--la-font-family`. The stylesheet defines more for spacing, shadows, font sizes and states.
+Commonly changed properties: `--la-primary`, `--la-primary-hover`, `--la-primary-text`, `--la-bg`,
+`--la-text`, `--la-text-secondary`, `--la-border`, `--la-radius-md` and `--la-font-family`. The
+stylesheet defines more for spacing, shadows, font sizes and states.
+
+**Follow the theme of your app.** Without a choice the components follow the colour scheme of the
+operating system, so a light app can get dark components. Choose the theme in one of three ways:
+
+| Where | How |
+|---|---|
+| The whole app | `data-lumoauth-theme="light"` or `"dark"` on `<html>`, or the class `la-light` / `la-dark`. Change it when your theme switch changes. |
+| A part of the page | The same attribute or class on any element that wraps the components |
+| One component | `appearance={{ theme: 'light' }}` |
+
+To use your own colours in both themes, map the properties to the design tokens of your app. The
+values change with your theme, so the components follow it:
+
+```tsx
+const appearance = {
+  variables: {
+    '--la-font-family': 'inherit',
+    '--la-bg': 'var(--card)',
+    '--la-text': 'var(--card-foreground)',
+    '--la-text-secondary': 'var(--muted-foreground)',
+    '--la-border': 'var(--border)',
+    '--la-primary': 'var(--primary)',
+    '--la-primary-text': 'var(--primary-foreground)',
+  },
+};
+
+<UserButton appearance={appearance} />
+```
 
 ## Sign-in strategies
 

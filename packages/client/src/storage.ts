@@ -50,6 +50,13 @@ export interface TokenStorage {
      * cookies) can implement this so other tabs stay in sync.
      */
     subscribe?(onExternalChange: () => void): () => void;
+    /**
+     * Optional. `true` when a same-origin server holds the tokens and
+     * `clear()` asks that server to end the session (the cookie adapter).
+     * The server then revokes the tokens, so the browser must not send a
+     * revocation request of its own.
+     */
+    readonly serverManaged?: boolean;
 }
 
 const TOKEN_KEY = 'lumoauth_tokens';
@@ -201,6 +208,7 @@ export function cookieStorageAdapter(options: CookieStorageOptions = {}): TokenS
 
     return {
         name: 'cookie',
+        serverManaged: true,
         async get() {
             if (!hasWindow()) return EMPTY_TOKENS;
             try {
@@ -226,7 +234,16 @@ export function cookieStorageAdapter(options: CookieStorageOptions = {}): TokenS
         async clear() {
             if (!hasWindow()) return;
             try {
-                await doFetch(logoutEndpoint, { method: 'POST', credentials: 'include' });
+                // The logout route answers with a redirect to the LumoAuth
+                // logout page. Do not follow it: the caller navigates there
+                // itself, and following it from fetch() is a cross-origin
+                // request that the browser blocks and logs as a CORS error.
+                // The cookie is cleared by the redirect response either way.
+                await doFetch(logoutEndpoint, {
+                    method: 'POST',
+                    credentials: 'include',
+                    redirect: 'manual',
+                });
             } catch {
                 /* best-effort */
             }

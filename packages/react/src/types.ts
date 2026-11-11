@@ -16,7 +16,10 @@ export interface LumoAuthUser {
     avatarUrl?: string;
     /** Whether email has been verified */
     emailVerified: boolean;
-    /** Whether MFA is enabled */
+    /**
+     * Whether MFA is enabled. Also `false` when the UserInfo response has no
+     * `mfa_enabled` claim; check `claims.mfa_enabled` to tell the two apart.
+     */
     mfaEnabled: boolean;
     /** List of role slugs */
     roles: string[];
@@ -103,7 +106,12 @@ export interface LumoAuthProviderProps {
 // ─── Appearance ───────────────────────────────────────────────────────
 
 export interface AppearanceProps {
-    /** Force light or dark theme (defaults to system preference) */
+    /**
+     * Force the light or the dark theme for this component. Without it the
+     * component follows the nearest ancestor that has the class `la-light` /
+     * `la-dark` or the attribute `data-lumoauth-theme="light" | "dark"`, and
+     * otherwise the colour scheme of the operating system.
+     */
     theme?: 'light' | 'dark';
     /** Override CSS custom properties */
     variables?: Record<string, string>;
@@ -241,7 +249,9 @@ export interface UserProfileProps {
     afterSignOutUrl?: string;
     /**
      * Display mode:
-     * - `'full'` — shows all sections (account, security, roles)
+     * - `'full'` — shows all sections (account, security, roles). The MFA
+     *   row and the roles and groups appear only when the UserInfo response
+     *   holds those claims.
      * - `'compact'` — shows only account details
      * @default 'full'
      */

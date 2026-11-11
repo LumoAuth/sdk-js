@@ -29,10 +29,16 @@ export function UserAvatar({
 }: UserAvatarProps) {
     const { user, isSignedIn } = useLumoAuthContext();
 
+    const themeClass = appearance?.theme === 'dark'
+        ? 'la-dark'
+        : appearance?.theme === 'light'
+            ? 'la-light'
+            : '';
+
     if (!isSignedIn || !user) {
         return (
             <span
-                className={`la-avatar la-avatar-${shape} ${appearance?.className || ''}`}
+                className={`la-avatar la-avatar-${shape} ${themeClass} ${appearance?.className || ''}`}
                 style={{
                     width: size,
                     height: size,
@@ -52,12 +58,6 @@ export function UserAvatar({
         .filter(Boolean)
         .map((n) => n!.charAt(0).toUpperCase())
         .join('') || user.email.charAt(0).toUpperCase();
-
-    const themeClass = appearance?.theme === 'dark'
-        ? 'la-dark'
-        : appearance?.theme === 'light'
-            ? 'la-light'
-            : '';
 
     return (
         <span

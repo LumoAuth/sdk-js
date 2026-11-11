@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useLumoAuthContext } from '../provider';
-import type { UserProfileProps } from '../types';
+import type { LumoAuthUser, UserProfileProps } from '../types';
 
 // ─── User Profile Icons ───────────────────────────────────────────────
 
@@ -46,6 +46,21 @@ const ICONS = {
         </svg>
     ),
 };
+
+// ─── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Whether the profile can state the MFA status of this user.
+ *
+ * `user.mfaEnabled` is `false` both when MFA is off and when the UserInfo
+ * response has no `mfa_enabled` claim, which is the case with the default
+ * scopes. Showing "Disabled" for the second case would tell every user that
+ * their account has no second factor. So the row is shown only when the claim
+ * is present.
+ */
+export function hasMfaStatus(user: Pick<LumoAuthUser, 'claims'>): boolean {
+    return typeof user.claims?.mfa_enabled === 'boolean';
+}
 
 // ─── UserProfile Component ────────────────────────────────────────────
 
@@ -150,18 +165,20 @@ export function UserProfile({
 
             {mode === 'full' && (
                 <>
-                    {/* Security */}
-                    <div className="la-profile-section">
-                        <div className="la-profile-section-title">Security</div>
-                        <div className="la-profile-row">
-                            {ICONS.shield}
-                            <span className="la-profile-row-label">MFA</span>
-                            <span className={`la-profile-badge ${user.mfaEnabled ? 'la-badge-success' : 'la-badge-muted'}`}>
-                                {user.mfaEnabled ? ICONS.check : ICONS.x}
-                                {user.mfaEnabled ? 'Enabled' : 'Disabled'}
-                            </span>
+                    {/* Security: only when UserInfo states the MFA status */}
+                    {hasMfaStatus(user) && (
+                        <div className="la-profile-section">
+                            <div className="la-profile-section-title">Security</div>
+                            <div className="la-profile-row">
+                                {ICONS.shield}
+                                <span className="la-profile-row-label">MFA</span>
+                                <span className={`la-profile-badge ${user.mfaEnabled ? 'la-badge-success' : 'la-badge-muted'}`}>
+                                    {user.mfaEnabled ? ICONS.check : ICONS.x}
+                                    {user.mfaEnabled ? 'Enabled' : 'Disabled'}
+                                </span>
+                            </div>
                         </div>
-                    </div>
+                    )}
 
                     {/* Roles & Groups */}
                     {(user.roles.length > 0 || user.groups.length > 0) && (
