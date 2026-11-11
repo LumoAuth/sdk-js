@@ -72,6 +72,11 @@ export interface PkceState {
     state: string;
     /** Where to send the user once the exchange completes. */
     returnTo: string;
+    /**
+     * The redirect_uri of the authorization request. The token request repeats
+     * it. Missing in a cookie that an older version of this package wrote.
+     */
+    redirectUri?: string;
 }
 
 const IV_BYTES = 12;

@@ -31,6 +31,7 @@ It is part of the [LumoAuth JavaScript SDK](../../README.md).
   - [Call LumoAuth or your API with the user's token](#call-lumoauth-or-your-api-with-the-users-token)
   - [Use components and hooks in client components](#use-components-and-hooks-in-client-components)
   - [Request more scopes](#request-more-scopes)
+  - [The callback URL](#the-callback-url)
 - [How the session is protected](#how-the-session-is-protected)
 - [Sessions and access tokens](#sessions-and-access-tokens)
 - [API reference](#api-reference)
@@ -56,7 +57,8 @@ It is part of the [LumoAuth JavaScript SDK](../../README.md).
 - Node 18 or newer. The cookie code uses Web Crypto, so it also runs in the edge runtime.
 - A LumoAuth organization and an OAuth client. Register the callback URL
   (`<your origin>/api/auth/callback`) as a redirect URI. Register your sign-out landing page
-  (by default `<your origin>/`) as a post-logout redirect URI.
+  (by default `<your origin>/`) as a post-logout redirect URI. See
+  [The callback URL](#the-callback-url).
 
 ## Install
 
@@ -73,10 +75,10 @@ with this package.
 
 ```bash
 # .env.local
-NEXT_PUBLIC_LUMOAUTH_DOMAIN=https://app.lumoauth.dev      # EU region: https://eu.app.lumoauth.dev
 NEXT_PUBLIC_LUMOAUTH_ORG_ID=acme-corp
 NEXT_PUBLIC_LUMOAUTH_CLIENT_ID=your-client-id
-NEXT_PUBLIC_REDIRECT_URI=http://localhost:3000/api/auth/callback
+# Only for an organization in the EU region. The default is https://app.lumoauth.dev (US).
+# NEXT_PUBLIC_LUMOAUTH_DOMAIN=https://eu.app.lumoauth.dev
 
 # Encrypts the session cookie. Server only. At least 32 characters: openssl rand -hex 32
 LUMOAUTH_SECRET=replace-with-64-hex-characters
@@ -134,6 +136,10 @@ to a page after sign-in, add `?return_to=/path`.
 with PKCE. It stores the tokens in a cookie named `lumo_session`. The cookie is encrypted, so the
 browser cannot read or change it. The refresh token never leaves your server.
 
+**The callback path is fixed, the address is not.** The sign-in response always comes back to
+`/api/auth/callback` on the address that the browser used. No environment variable names that
+URL. See [The callback URL](#the-callback-url).
+
 **The session outlives the access token.** A session lasts 30 days by default. An access token
 lasts about an hour. The middleware replaces the access token when it is about to expire. See
 [Sessions and access tokens](#sessions-and-access-tokens).
@@ -153,10 +159,10 @@ environment.
 
 | Option | Environment variable | Required | Default | Description |
 |---|---|---|---|---|
-| `domain` | `NEXT_PUBLIC_LUMOAUTH_DOMAIN` | yes | none | Root URL of LumoAuth |
+| `domain` | `NEXT_PUBLIC_LUMOAUTH_DOMAIN` | no | `https://app.lumoauth.dev` | Root URL of the region. EU: `https://eu.app.lumoauth.dev` |
 | `orgId` | `NEXT_PUBLIC_LUMOAUTH_ORG_ID` | yes | none | Organization slug |
 | `clientId` | `NEXT_PUBLIC_LUMOAUTH_CLIENT_ID` | yes | none | OAuth client ID |
-| `redirectUri` | `NEXT_PUBLIC_REDIRECT_URI` | yes | none | Absolute callback URL, registered on the client |
+| `redirectUri` | `NEXT_PUBLIC_REDIRECT_URI` | no | `<origin>/api/auth/callback` of each request | Pins the callback URL, and the origin of every redirect back to the app. See [The callback URL](#the-callback-url). |
 | `secret` | `LUMOAUTH_SECRET` | yes | none | Encrypts the session cookie. At least 32 characters. |
 | `clientSecret` | `LUMOAUTH_CLIENT_SECRET` | confidential clients only | none | Never give it a `NEXT_PUBLIC_` prefix. |
 | `afterSignInUrl` | none | no | `'/'` | Where a user goes after sign-in when there is no `return_to` |
@@ -166,7 +172,8 @@ environment.
 
 The public values use the `NEXT_PUBLIC_` prefix, so the client provider and the server read the
 same names. The two secrets do not, because Next.js puts every `NEXT_PUBLIC_` value into the
-browser bundle. A missing required value throws an error that names it.
+browser bundle. A missing required value throws an error that names it. An empty variable counts
+as unset.
 
 Pass the same overrides everywhere when you do not use environment variables:
 
@@ -236,18 +243,15 @@ their own. Your API must still check the token and the user's permissions.
 
 ```ts
 // app/api/documents/[id]/route.ts
-import { auth } from '@lumoauth/nextjs/server';
+import { auth, resolveConfig } from '@lumoauth/nextjs/server';
 import { LumoAuth } from '@lumoauth/client';
 
 export async function DELETE(req: Request) {
   const token = (await auth()).getToken();
   if (!token) return new Response('Unauthorized', { status: 401 });
 
-  const lumo = new LumoAuth({
-    baseUrl: process.env.NEXT_PUBLIC_LUMOAUTH_DOMAIN!,
-    orgId: process.env.NEXT_PUBLIC_LUMOAUTH_ORG_ID!,
-    token,
-  });
+  const { domain, orgId } = resolveConfig();
+  const lumo = new LumoAuth({ baseUrl: domain, orgId, token });
   if (!(await lumo.permissions.check('document.delete'))) {
     return new Response('Forbidden', { status: 403 });
   }
@@ -263,7 +267,8 @@ above covers API routes.
 ### Use components and hooks in client components
 
 Wrap the app in `<LumoAuthNextProvider>`. It takes the same props as `<LumoAuthProvider>` from
-`@lumoauth/react`, except `storage`, plus `basePath`.
+`@lumoauth/react`, except `storage`, plus `basePath`. `domain` is optional and defaults to
+`https://app.lumoauth.dev`.
 
 ```tsx
 // app/providers.tsx
@@ -273,7 +278,7 @@ import { LumoAuthNextProvider } from '@lumoauth/nextjs';
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <LumoAuthNextProvider
-      domain={process.env.NEXT_PUBLIC_LUMOAUTH_DOMAIN!}
+      domain={process.env.NEXT_PUBLIC_LUMOAUTH_DOMAIN}
       orgId={process.env.NEXT_PUBLIC_LUMOAUTH_ORG_ID!}
       clientId={process.env.NEXT_PUBLIC_LUMOAUTH_CLIENT_ID!}
     >
@@ -337,6 +342,30 @@ export const { GET, POST } = createRouteHandler({
 
 The new scopes apply after the user signs in again. The full table is in the
 [client README](../client/README.md#scopes).
+
+### The callback URL
+
+The route handler sends `<origin>/api/auth/callback` as the redirect URI. `<origin>` is the
+address in the browser. The handler reads it from the `X-Forwarded-Host` and
+`X-Forwarded-Proto` headers, which Next.js sets on every request, or from the `Host` header.
+`request.url` is not used, because a Next.js server behind a proxy sees its own address there,
+such as `http://localhost:3000`. Auth.js and nextjs-auth0 read the same headers.
+
+So one build signs in on `http://localhost:3000`, on a preview deployment and in production.
+For each address, register two URLs on the OAuth client:
+
+| Portal field | Value |
+|---|---|
+| **Configuration → Redirect URIs** | `<origin>/api/auth/callback` |
+| **Configuration → Logout → Post-logout redirect URIs** | `<origin>/` (`<origin><afterSignOutUrl>`) |
+
+LumoAuth compares redirect URIs exactly: scheme, host, port and path. When an address is not
+registered, LumoAuth shows an **Invalid Redirect URL** page that names the URL to add.
+
+To pin the app to one address, set `NEXT_PUBLIC_REDIRECT_URI` to the full callback URL, for
+example `https://app.example.com/api/auth/callback`. Its origin then also becomes the origin of
+the redirects after sign-in and sign-out. Pin it when a proxy in front of the app sends neither
+`X-Forwarded-Host` nor the public `Host` header.
 
 ## How the session is protected
 
@@ -429,6 +458,9 @@ the build)
 | `getToken()` returns `null` while `isSignedIn` is `true` | The access token expired and no middleware ran on this route. | Install `lumoAuthMiddleware()` and make sure its `matcher` covers the route. |
 | After sign-in the user lands on `afterSignOutUrl` | The callback failed. The `state` did not match, the PKCE cookie expired after 10 minutes, or the code exchange failed. | Start sign-in again. Check that the redirect URI and the client secret are correct. |
 | After sign-out the user is still signed in at LumoAuth | `<origin><afterSignOutUrl>` is not a registered post-logout redirect URI. | Register it on the OAuth client. |
+| LumoAuth shows **Invalid Redirect URL** | The callback URL of this address is not registered. | Add the URL that the page names under **Configuration → Redirect URIs**. See [The callback URL](#the-callback-url). |
+| After sign-in the browser goes to `http://localhost:3000` instead of the public address | A proxy in front of the app sends neither `X-Forwarded-Host` nor the public `Host`. | Set `NEXT_PUBLIC_REDIRECT_URI` to the public callback URL. |
+| The login page does not load inside a preview frame | LumoAuth's login page cannot be shown in a frame, and the session cookie is not sent in a frame of another site. | Open the app in its own browser tab. |
 | A `403` with `requiredScopes`, such as `['authz:read']` | The token lacks a scope. | Add the scope to `scope` and sign in again. |
 | Hooks show the user as signed out after `<SignInButton>` | A browser sign-in cannot save tokens into the cookie session. | Link to `/api/auth/login` instead. |
 | The cookie stops working after you change `LUMOAUTH_SECRET` | The old cookie cannot be decrypted. | This is expected. The middleware clears the cookie and the user signs in again. |

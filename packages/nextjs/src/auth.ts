@@ -1,6 +1,7 @@
 import { cookies, headers } from 'next/headers';
 import { AuthModule, type UserInfo } from '@lumoauth/shared';
 import { resolveConfig, type LumoAuthNextConfig } from './config';
+import { LOGIN_PATH } from './defaults';
 import {
     SESSION_COOKIE,
     REFRESHED_SESSION_HEADER,
@@ -149,7 +150,7 @@ export async function protectPage(opts: { returnTo?: string } = {}): Promise<Aut
     if (!result.isSignedIn) {
         const { redirect } = await import('next/navigation');
         const qs = opts.returnTo ? `?return_to=${encodeURIComponent(opts.returnTo)}` : '';
-        redirect(`/api/auth/login${qs}`);
+        redirect(`${LOGIN_PATH}${qs}`);
     }
     return result;
 }

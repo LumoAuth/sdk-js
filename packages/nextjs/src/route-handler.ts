@@ -7,6 +7,7 @@ import {
     buildPath,
 } from '@lumoauth/shared';
 import { resolveConfig, type LumoAuthNextConfig } from './config';
+import { appOrigin, callbackUrl } from './origin';
 import {
     SESSION_COOKIE,
     PKCE_COOKIE,
@@ -27,6 +28,11 @@ import {
  * import { createRouteHandler } from '@lumoauth/nextjs/server';
  * export const { GET, POST } = createRouteHandler();
  * ```
+ *
+ * Register `{app origin}/api/auth/callback` as a redirect URI of the
+ * application, for every address the app runs on (localhost, previews,
+ * production). The handler builds that URL from each request, so no
+ * environment variable names it.
  *
  * The server owns the whole OAuth exchange, so tokens live in an httpOnly
  * cookie and never reach JavaScript. That is what makes `auth()` work in a
@@ -62,9 +68,13 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
         const cfg = getCfg();
         const action = (await segments(context))[0];
         const url = new URL(request.url);
-        const secure = url.protocol === 'https:';
+        // The address that the browser used, not the one that Next.js
+        // listens on. See appOrigin().
+        const origin = appOrigin(request, cfg);
+        const secure = origin.startsWith('https:');
 
         if (action === 'login') {
+            const redirectUri = callbackUrl(origin, cfg);
             const codeVerifier = generateCodeVerifier();
             const state = generateState();
             const codeChallenge = await generateCodeChallenge(codeVerifier);
@@ -74,7 +84,7 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
             );
             authorize.searchParams.set('response_type', 'code');
             authorize.searchParams.set('client_id', cfg.clientId);
-            authorize.searchParams.set('redirect_uri', cfg.redirectUri);
+            authorize.searchParams.set('redirect_uri', redirectUri);
             authorize.searchParams.set('scope', cfg.scope!);
             authorize.searchParams.set('code_challenge', codeChallenge);
             authorize.searchParams.set('code_challenge_method', 'S256');
@@ -84,6 +94,9 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
                 codeVerifier,
                 state,
                 returnTo: safeReturnTo(url.searchParams.get('return_to'), cfg.afterSignInUrl!),
+                // The token request must repeat the redirect_uri of the
+                // authorization request exactly, so keep the one that was sent.
+                redirectUri,
             };
 
             const res = Response.redirect(authorize.toString(), 302);
@@ -101,18 +114,18 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
             const pkce = await unseal<PkceState>(readCookie(request, PKCE_COOKIE), cfg.secret);
 
             if (!code || !returnedState || !pkce) {
-                return redirectTo(url.origin + cfg.afterSignOutUrl!, [clearCookie(PKCE_COOKIE, secure)]);
+                return redirectTo(origin + cfg.afterSignOutUrl!, [clearCookie(PKCE_COOKIE, secure)]);
             }
             // CSRF: the state we issued must match the one that came back.
             if (returnedState !== pkce.state) {
-                return redirectTo(url.origin + cfg.afterSignOutUrl!, [clearCookie(PKCE_COOKIE, secure)]);
+                return redirectTo(origin + cfg.afterSignOutUrl!, [clearCookie(PKCE_COOKIE, secure)]);
             }
 
             try {
                 const tokens = await authModule(cfg).exchangeCodeForTokens({
                     code,
                     codeVerifier: pkce.codeVerifier,
-                    redirectUri: cfg.redirectUri,
+                    redirectUri: pkce.redirectUri ?? callbackUrl(origin, cfg),
                     ...(cfg.clientSecret ? { clientSecret: cfg.clientSecret } : {}),
                 });
                 const session: ServerSession = {
@@ -125,12 +138,12 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
                     // passes, however many access tokens come and go.
                     sessionExpiresAt: Date.now() + cfg.sessionMaxAge! * 1000,
                 };
-                return redirectTo(url.origin + pkce.returnTo, [
+                return redirectTo(origin + pkce.returnTo, [
                     `${SESSION_COOKIE}=${await seal(session, cfg.secret)}; ${serialize(cookieOptions(cfg.sessionMaxAge!, secure))}`,
                     clearCookie(PKCE_COOKIE, secure),
                 ]);
             } catch {
-                return redirectTo(url.origin + cfg.afterSignOutUrl!, [clearCookie(PKCE_COOKIE, secure)]);
+                return redirectTo(origin + cfg.afterSignOutUrl!, [clearCookie(PKCE_COOKIE, secure)]);
             }
         }
 
@@ -151,7 +164,7 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
             });
         }
 
-        if (action === 'logout') return doLogout(cfg, url, request, secure);
+        if (action === 'logout') return doLogout(cfg, origin, request, secure);
 
         return new Response('Not found', { status: 404 });
     }
@@ -159,14 +172,14 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
     async function POST(request: Request, context: Ctx): Promise<Response> {
         const cfg = getCfg();
         const action = (await segments(context))[0];
-        const url = new URL(request.url);
-        if (action === 'logout') return doLogout(cfg, url, request, url.protocol === 'https:');
+        const origin = appOrigin(request, cfg);
+        if (action === 'logout') return doLogout(cfg, origin, request, origin.startsWith('https:'));
         return new Response('Not found', { status: 404 });
     }
 
     async function doLogout(
         cfg: LumoAuthNextConfig,
-        url: URL,
+        origin: string,
         request: Request,
         secure: boolean,
     ): Promise<Response> {
@@ -185,7 +198,7 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
         const logout = new URL(
             `${cfg.domain.replace(/\/+$/, '')}${buildPath(ROUTES['oauth.logout'].path, { orgId: cfg.orgId })}`,
         );
-        logout.searchParams.set('post_logout_redirect_uri', url.origin + cfg.afterSignOutUrl!);
+        logout.searchParams.set('post_logout_redirect_uri', origin + cfg.afterSignOutUrl!);
         if (session?.idToken) logout.searchParams.set('id_token_hint', session.idToken);
 
         return redirectTo(logout.toString(), [clearCookie(SESSION_COOKIE, secure)]);

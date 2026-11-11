@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { AuthModule } from '@lumoauth/shared';
 import { resolveConfig, type LumoAuthNextConfig } from './config';
+import { LOGIN_PATH } from './defaults';
+import { appOrigin } from './origin';
 import {
     SESSION_COOKIE,
     REFRESHED_SESSION_HEADER,
@@ -78,6 +80,9 @@ export function lumoAuthMiddleware(options: MiddlewareOptions = {}) {
                 : protect.map(toMatcher).some((m) => m.test(req.nextUrl.pathname));
 
         const cfg = resolveConfig(configOverrides);
+        // req.nextUrl.origin is the address Next.js listens on, which behind a
+        // proxy is not the one the browser used. See appOrigin().
+        const origin = appOrigin(req, cfg);
         const rawCookie = req.cookies.get(SESSION_COOKIE)?.value;
         const session = await unseal<ServerSession>(rawCookie, cfg.secret);
 
@@ -89,7 +94,7 @@ export function lumoAuthMiddleware(options: MiddlewareOptions = {}) {
                 res.cookies.delete(SESSION_COOKIE);
                 return res;
             }
-            const login = new URL('/api/auth/login', req.nextUrl.origin);
+            const login = new URL(LOGIN_PATH, origin);
             login.searchParams.set('return_to', req.nextUrl.pathname + req.nextUrl.search);
             const res = NextResponse.redirect(login);
             // Drop the cookie whenever one was sent but is unusable — expired,
@@ -108,7 +113,7 @@ export function lumoAuthMiddleware(options: MiddlewareOptions = {}) {
             // Nothing to refresh with. The session is only as live as the
             // access token, which has just gone stale.
             if (!isProtected) return NextResponse.next();
-            const login = new URL('/api/auth/login', req.nextUrl.origin);
+            const login = new URL(LOGIN_PATH, origin);
             login.searchParams.set('return_to', req.nextUrl.pathname + req.nextUrl.search);
             return NextResponse.redirect(login);
         }
@@ -139,7 +144,7 @@ export function lumoAuthMiddleware(options: MiddlewareOptions = {}) {
             const res = NextResponse.next({ request: { headers } });
 
             // ...and persist for the next one.
-            const opts = cookieOptions(cfg.sessionMaxAge!, req.nextUrl.protocol === 'https:');
+            const opts = cookieOptions(cfg.sessionMaxAge!, origin.startsWith('https:'));
             res.cookies.set(SESSION_COOKIE, sealed, opts);
             return res;
         } catch {
@@ -147,7 +152,7 @@ export function lumoAuthMiddleware(options: MiddlewareOptions = {}) {
             // session ended server-side. Treat it as signed out rather than
             // leaving a cookie that can never succeed.
             const res = isProtected
-                ? NextResponse.redirect(new URL('/api/auth/login', req.nextUrl.origin))
+                ? NextResponse.redirect(new URL(LOGIN_PATH, origin))
                 : NextResponse.next();
             res.cookies.delete(SESSION_COOKIE);
             return res;

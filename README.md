@@ -361,7 +361,7 @@ every value explicitly; the names below are the convention to load them from.
 | `LUMOAUTH_SECRET_KEY` | `backend` (by convention) | The server credential. Never make it public. The Python, Go, PHP, Java and .NET SDKs call this `LUMOAUTH_API_KEY` |
 | `AGENT_CLIENT_ID`, `AGENT_CLIENT_SECRET` | `agent` (fallback) | The agent's OAuth client credentials |
 | `AGENT_PRIVATE_KEY` | AAuth (by convention) | The PEM private key for RFC 9421 signing |
-| `NEXT_PUBLIC_LUMOAUTH_DOMAIN`, `NEXT_PUBLIC_LUMOAUTH_ORG_ID`, `NEXT_PUBLIC_LUMOAUTH_CLIENT_ID`, `NEXT_PUBLIC_REDIRECT_URI` | `nextjs` (fallback) | Public OAuth settings. They are safe in the browser bundle |
+| `NEXT_PUBLIC_LUMOAUTH_DOMAIN`, `NEXT_PUBLIC_LUMOAUTH_ORG_ID`, `NEXT_PUBLIC_LUMOAUTH_CLIENT_ID`, `NEXT_PUBLIC_REDIRECT_URI` | `nextjs` (fallback) | Public OAuth settings. They are safe in the browser bundle. The domain defaults to `https://app.lumoauth.dev`. The redirect URI is optional: by default each request uses `<origin>/api/auth/callback` |
 | `LUMOAUTH_SECRET`, `LUMOAUTH_CLIENT_SECRET` | `nextjs` (fallback) | The secret that seals the session cookie, and the secret of a confidential client. Server only |
 
 The browser packages take their options in code; see

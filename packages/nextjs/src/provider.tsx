@@ -3,8 +3,14 @@
 import { useMemo } from 'react';
 import { LumoAuthProvider, type LumoAuthProviderProps } from '@lumoauth/react';
 import { cookieStorageAdapter } from '@lumoauth/client';
+import { DEFAULT_DOMAIN } from './defaults';
 
-export type LumoAuthNextProviderProps = Omit<LumoAuthProviderProps, 'storage'> & {
+export type LumoAuthNextProviderProps = Omit<LumoAuthProviderProps, 'storage' | 'domain'> & {
+    /**
+     * Base URL of the LumoAuth region of the organization.
+     * @default 'https://app.lumoauth.dev' (US). EU: 'https://eu.app.lumoauth.dev'.
+     */
+    domain?: string;
     /** Base path where createRouteHandler is mounted. @default '/api/auth' */
     basePath?: string;
 };
@@ -19,6 +25,7 @@ export type LumoAuthNextProviderProps = Omit<LumoAuthProviderProps, 'storage'> &
  */
 export function LumoAuthNextProvider({
     basePath = '/api/auth',
+    domain,
     children,
     ...rest
 }: LumoAuthNextProviderProps) {
@@ -34,7 +41,9 @@ export function LumoAuthNextProvider({
     );
 
     return (
-        <LumoAuthProvider {...rest} storage={storage}>
+        // `||`, not a parameter default: an unset NEXT_PUBLIC_ variable can
+        // arrive as an empty string.
+        <LumoAuthProvider {...rest} domain={domain || DEFAULT_DOMAIN} storage={storage}>
             {children}
         </LumoAuthProvider>
     );
