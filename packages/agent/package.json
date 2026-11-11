@@ -1,6 +1,6 @@
 {
     "name": "@lumoauth/agent",
-    "version": "1.4.1",
+    "version": "1.4.2",
     "description": "LumoAuth AAuth client — agent identity, HTTP message signing (RFC 9421), and agent-to-agent delegation. Node 18+ only.",
     "license": "MIT",
     "author": "LumoAuth",
@@ -37,7 +37,7 @@
         "ai-agent"
     ],
     "dependencies": {
-        "@lumoauth/shared": "^1.0.0"
+        "@lumoauth/shared": "^1.4.2"
     },
     "devDependencies": {
         "@types/node": "^20.19.43",

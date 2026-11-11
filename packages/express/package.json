@@ -1,6 +1,6 @@
 {
     "name": "@lumoauth/express",
-    "version": "1.4.1",
+    "version": "1.4.2",
     "description": "Express middleware for LumoAuth — login, callback, and logout routes plus requireAuth().",
     "license": "MIT",
     "author": "LumoAuth",
@@ -36,15 +36,15 @@
         "middleware"
     ],
     "dependencies": {
-        "@lumoauth/backend": "^1.0.0",
-        "@lumoauth/shared": "^1.0.0"
+        "@lumoauth/backend": "^1.4.2",
+        "@lumoauth/shared": "^1.4.2"
     },
     "devDependencies": {
+        "@types/express": "^4.17.21",
+        "@types/express-session": "^1.18.0",
         "@types/node": "^20.19.43",
         "tsup": "^8.0.0",
-        "typescript": "^5.5.0",
-        "@types/express": "^4.17.21",
-        "@types/express-session": "^1.18.0"
+        "typescript": "^5.5.0"
     },
     "engines": {
         "node": ">=18.0.0"
