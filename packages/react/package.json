@@ -1,6 +1,6 @@
 {
     "name": "@lumoauth/react",
-    "version": "1.4.2",
+    "version": "1.5.0",
     "description": "Official LumoAuth React SDK — Drop-in authentication components and hooks for React & Next.js applications.",
     "main": "dist/index.js",
     "module": "dist/index.mjs",
@@ -46,7 +46,7 @@
         "provenance": true
     },
     "dependencies": {
-        "@lumoauth/client": "^1.4.2",
+        "@lumoauth/client": "^1.5.0",
         "zod": "^4.6.7"
     },
     "devDependencies": {
