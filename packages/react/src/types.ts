@@ -273,16 +273,25 @@ export interface RedirectToSignInProps {
  */
 export interface UseMagicLinkReturn {
     /**
-     * Send a magic sign-in link to the given email.
-     * The server never reveals whether the email exists.
+     * Ask for a sign-in link to be mailed to the address. See
+     * {@link LumoAuthContextValue.sendMagicLink}. A refusal does not throw
+     * here: it sets `error` and `errorCode`.
      */
-    sendMagicLink: (email: string, redirectUri?: string) => Promise<void>;
+    sendMagicLink: (email: string, returnTo?: string, options?: { captchaToken?: string }) => Promise<void>;
     /** True while the request is in-flight */
     isLoading: boolean;
-    /** True after the request completes (link was dispatched) */
+    /**
+     * True after the server accepted the request. It does not mean that the
+     * address belongs to an account: the server answers the same either way.
+     */
     isSent: boolean;
     /** Error message if the request failed */
     error: string | null;
+    /**
+     * The server's reason when it refused the request, for example
+     * `captcha_required`, `origin_not_allowed` or `rate_limited`; null otherwise.
+     */
+    errorCode: string | null;
     /** Reset sent/error state back to idle */
     reset: () => void;
 }
@@ -350,11 +359,19 @@ export interface LumoAuthContextValue extends AuthState {
     /** Handle the OAuth callback — exchange code for tokens */
     handleCallback: () => Promise<void>;
     /**
-     * Request a magic sign-in link for the given email.
-     * Shows a "Check your inbox" page — works for both email-first and
-     * magic-link-only organization configurations.
+     * Ask for a sign-in link to be mailed to the address. Resolves when the
+     * server accepted the request (it answers the same whether or not the
+     * address belongs to an account) and rejects with a `LumoAuthApiError`
+     * when it refused: `code` is the server's reason, for example
+     * `magic_link_disabled`, `origin_not_allowed` or `captcha_required`.
+     *
+     * The link signs the person in on the LumoAuth origin and returns them to
+     * `returnTo`: a page of your app on one of the application's allowed
+     * origins or redirect URI origins. Without it they return to the page
+     * they are on, and the provider finishes the sign-in there by itself.
+     * With your own `returnTo`, call `signIn()` on that page.
      */
-    sendMagicLink: (email: string, redirectUri?: string) => Promise<void>;
+    sendMagicLink: (email: string, returnTo?: string, options?: { captchaToken?: string }) => Promise<void>;
     /**
      * Check whether an account with the given email exists in the organization.
      * Used to implement email-first login flows.

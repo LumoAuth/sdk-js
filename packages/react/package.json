@@ -21,7 +21,7 @@
         "build": "tsup",
         "dev": "tsup --watch",
         "typecheck": "tsc --noEmit",
-        "test": "npm run build && tsup --entry.Protect src/components/Protect.tsx --entry.UserProfile src/components/UserProfile.tsx --entry.styles src/styles.ts --clean --no-config --format esm -d tests/.build --silent --external react --external react-dom --external @lumoauth/client && node --test tests/*.test.mjs",
+        "test": "npm run build && tsup --entry.Protect src/components/Protect.tsx --entry.UserProfile src/components/UserProfile.tsx --entry.styles src/styles.ts --entry.magicLink src/utils/magicLink.ts --clean --no-config --format esm -d tests/.build --silent --external react --external react-dom --external @lumoauth/client && node --test tests/*.test.mjs",
         "prepublishOnly": "npm run build"
     },
     "keywords": [

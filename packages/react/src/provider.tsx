@@ -1,4 +1,5 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { defaultMagicLinkReturnTo, takeMagicLinkContinue } from './utils/magicLink';
 import { LumoAuthSession, type EmailCheckResult } from '@lumoauth/client';
 import { AuthModule } from '@lumoauth/client';
 import type {
@@ -121,6 +122,7 @@ export function LumoAuthProvider({
     const [user, setUser] = useState<LumoAuthUser | null>(null);
     const tokensRef = useRef<TokenState>({ accessToken: null, refreshToken: null, expiresAt: null, idToken: null });
     const callbackHandledRef = useRef(false);
+    const magicLinkContinueRef = useRef(false);
     const callbackInflightRef = useRef<{ code: string; promise: Promise<void> } | null>(null);
 
     // Inject styles once
@@ -419,8 +421,16 @@ export function LumoAuthProvider({
 
     // ── Magic Link ───────────────────────────────────────────────────
 
-    const sendMagicLink = useCallback(async (email: string, redirectUri?: string) => {
-        await authModule.requestMagicLink({ email, redirectUri });
+    // The link signs the person in on the LumoAuth origin and returns them
+    // to `returnTo`. Without one they come back to this page, marked so that
+    // the effect below can finish the sign-in here (see utils/magicLink).
+    const sendMagicLink = useCallback(async (email: string, returnTo?: string, options?: { captchaToken?: string }) => {
+        const target = returnTo
+            ?? (typeof window !== 'undefined' ? defaultMagicLinkReturnTo(window.location.href) : undefined);
+        const result = await authModule.requestMagicLink({ email, returnTo: target, captchaToken: options?.captchaToken });
+        if (!result.sent) {
+            throw new Error('The sign-in link request was not accepted.');
+        }
     }, [authModule]);
 
     // ── Email-First: check email existence ───────────────────────────
@@ -501,6 +511,16 @@ export function LumoAuthProvider({
         async function init() {
             if (typeof window === 'undefined') return;
 
+            // Back from a mailed sign-in link (see utils/magicLink): take the
+            // marker off the URL now; the sign-in itself starts below, once
+            // the store has said that nobody is signed in here. The ref
+            // survives React StrictMode running this effect twice.
+            const back = takeMagicLinkContinue(window.location.href);
+            if (back.found) {
+                magicLinkContinueRef.current = true;
+                window.history.replaceState(window.history.state, '', back.cleanUrl);
+            }
+
             // ── Check for OAuth callback params (code + state in URL) ──
             const params = new URLSearchParams(window.location.search);
             const code = params.get('code');
@@ -540,13 +560,19 @@ export function LumoAuthProvider({
             // session with no user attached.
         }
 
-        init().then(() => {
+        init().then(async () => {
             // Settle status, tokens and the refresh timer from whichever
             // storage adapter is configured.
-            if (!cancelled) void session.hydrate();
+            if (cancelled) return;
+            await session.hydrate();
+            if (cancelled || !magicLinkContinueRef.current) return;
+            magicLinkContinueRef.current = false;
+            if (!session.getSnapshot().isSignedIn) {
+                signInWithRedirect();
+            }
         });
         return () => { cancelled = true; };
-    }, [fetchUser, handleCallback, refreshAccessToken, session]);
+    }, [fetchUser, handleCallback, refreshAccessToken, session, signInWithRedirect]);
 
     // Keep the user in sync with the session.
     //

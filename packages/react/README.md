@@ -363,7 +363,7 @@ return <button onClick={() => signOut()}>Sign out {user!.displayName}</button>;
 | `signOut({ afterSignOutUrl? })` | function | Revokes the access token, clears local tokens, and ends the LumoAuth session through the logout endpoint |
 | `getToken()` | `() => Promise<string \| null>` | A valid access token. It refreshes first when needed. |
 | `handleCallback()` | function | Exchanges the code on the callback page. `<AuthCallback>` calls it for you. |
-| `sendMagicLink(email, redirectUri?)` | function | Emails a sign-in link |
+| `sendMagicLink(email, returnTo?, { captchaToken? }?)` | function | Emails a sign-in link. Rejects with a `LumoAuthApiError` when the server refuses the request. |
 | `checkEmail(email)` | `(email) => Promise<EmailCheckResult>` | Reports the sign-in methods for an email address |
 | `authStrategy` | `'pkce' \| 'password'` | The strategy in use |
 | `config` | object | The provider's `domain`, `orgId`, `clientId` and redirect URLs |
@@ -416,7 +416,7 @@ const canRead = useAbac({ resourceType: 'document', action: 'read', resourceId: 
 A Zanzibar check about a user other than the signed-in user needs the `authz:check` scope or
 permission. `useAbac` needs `abac:read`; see [Core concepts](#core-concepts).
 
-**`useMagicLink()`** returns `{ sendMagicLink, isLoading, isSent, error, reset }`:
+**`useMagicLink()`** returns `{ sendMagicLink, isLoading, isSent, error, errorCode, reset }`:
 
 ```tsx
 function PasswordlessForm() {
@@ -443,6 +443,30 @@ function PasswordlessForm() {
 ```
 
 `isSent` becomes `true` whether or not the account exists. The server never reveals that.
+
+How the sign-in completes:
+
+1. The person opens the link from the email and confirms on the LumoAuth page. They are now
+   signed in at LumoAuth, in the browser that opened the link.
+2. LumoAuth sends them back to the page that the request was made from.
+3. `<LumoAuthProvider>` sees that they came back and starts the normal sign-in. It completes
+   without a prompt, and your app receives its tokens on the callback page.
+
+To send the person to another page of your app, pass it as the second argument:
+`sendMagicLink(email, 'https://myapp.example.com/welcome')`. Call `signIn()` on that page.
+
+What the request needs:
+
+- The organization has sign-in links switched on (`magicLinkEnabled` from `checkEmail()`).
+- The origin of your app is one of the allowed origins of the application (`clientId`).
+- The return address is on an allowed origin or on the origin of a redirect URI of the
+  application, and has at most 1,024 characters.
+- When the organization protects sign-in link requests with a CAPTCHA, render the widget in
+  your form and pass its token: `sendMagicLink(email, undefined, { captchaToken })`.
+
+When the server refuses the request, `error` holds the message and `errorCode` the reason:
+`magic_link_disabled`, `origin_not_allowed`, `invalid_return_to`, `captcha_required`,
+`captcha_failed` or `rate_limited`.
 
 **`useEmailFirst()`** returns `{ checkEmail, isLoading, result, exists, reset }`. Use it to build
 a sign-in screen that asks for the email address first. `checkEmail(email)` resolves to an
@@ -627,7 +651,7 @@ yourself, it throws the error classes that are described in the
 | `usePermission(slug)` | hook | `{ allowed, isLoading }` |
 | `useZanzibar(request)` | hook | `{ allowed, isLoading }` |
 | `useAbac(request)` | hook | `{ allowed, isLoading }`; needs `abac:read` |
-| `useMagicLink()` | hook | `{ sendMagicLink, isLoading, isSent, error, reset }` |
+| `useMagicLink()` | hook | `{ sendMagicLink, isLoading, isSent, error, errorCode, reset }` |
 | `useEmailFirst()` | hook | `{ checkEmail, isLoading, result, exists, reset }` |
 | `LumoAuth` | class | The browser client, re-exported from `@lumoauth/client` |
 

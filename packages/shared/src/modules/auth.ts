@@ -69,21 +69,38 @@ export interface UserInfo {
     [key: string]: unknown;
 }
 
-/** Options for requesting a passwordless magic sign-in link. */
+/** Options for requesting a sign-in link by email. */
 export interface MagicLinkOptions {
-    /** The user's email address */
+    /** The address to mail the sign-in link to. */
     email: string;
-    /** Optional redirect URI to send the user to after clicking the link */
+    /**
+     * Page of your application that the person goes to after they open the
+     * link and sign in. An absolute `https` URL (`http` only on localhost), at
+     * most 1,024 characters, whose origin is one of the application's allowed
+     * origins or the origin of one of its redirect URIs. Start your normal
+     * sign-in there: it completes without a prompt, because the person now
+     * has a session. Without it they go to the organization's default page.
+     */
+    returnTo?: string;
+    /**
+     * Token from the CAPTCHA widget. Needed when the organization protects
+     * sign-in link requests with a CAPTCHA; the request is refused with the
+     * code `captcha_required` without it.
+     */
+    captchaToken?: string;
+    /** @deprecated Use `returnTo`. Kept as an alias. */
     redirectUri?: string;
 }
 
 /**
- * Result of a magic link request.
- * `sent` is always `true` — the server never reveals whether the email exists
- * in order to prevent user enumeration.
+ * Result of a sign-in link request.
+ *
+ * `sent` means that the server accepted the request. It never says whether
+ * the address belongs to an account: the answer is the same either way, so
+ * that the request cannot be used to find out who has an account.
  */
 export interface MagicLinkResult {
-    /** Whether the request was accepted (always true — server never reveals if email exists) */
+    /** The server accepted the request. */
     sent: boolean;
 }
 
@@ -377,41 +394,78 @@ export class AuthModule {
     // ── Magic Link ───────────────────────────────────────────────────
 
     /**
-     * Request a magic sign-in link for the given email.
+     * Ask the server to mail a sign-in link to an address, from your own
+     * sign-in form.
      *
-     * The server always returns a success response regardless of whether
-     * the email exists, to prevent user enumeration. The link is sent to
-     * the user's inbox and redirects back to the organization login flow.
+     * The request names your application (`clientId`) and sends no cookie.
+     * From a browser it must come from one of the application's allowed
+     * origins. The server answers the same way whether or not the address
+     * belongs to an account, and mails the link only when it does.
+     *
+     * The link opens a confirmation page on the LumoAuth origin. After the
+     * person confirms, they are signed in there and sent to `returnTo`. This
+     * method signs nobody in and returns no tokens: on that page, start the
+     * normal sign-in (`buildAuthorizationUrl()`), which now completes without
+     * a prompt.
+     *
+     * @throws {LumoAuthApiError} when the server refuses the request. `code`
+     *   is the server's reason: `magic_link_disabled`, `invalid_client`,
+     *   `origin_not_allowed`, `invalid_return_to`, `captcha_required`,
+     *   `captcha_failed`, `rate_limited` or `invalid_request`.
+     * @throws {LumoAuthNetworkError} when the server cannot be reached.
      *
      * @example
      * ```ts
-     * await auth.requestMagicLink({ email: 'user@example.com' });
-     * // Show "Check your inbox" UI — server handles the rest
+     * await auth.requestMagicLink({
+     *   email: 'user@example.com',
+     *   returnTo: 'https://app.example.com/signed-in',
+     * });
+     * // Show "Check your inbox".
      * ```
      */
     async requestMagicLink(options: MagicLinkOptions): Promise<MagicLinkResult> {
         const url = this.routeUrl('web.magicLink');
 
-        const body = new URLSearchParams({ email: options.email });
-        if (options.redirectUri) {
-            body.set('_target_path', options.redirectUri);
+        const payload: Record<string, string> = {
+            email: options.email,
+            client_id: this.clientId,
+        };
+        const returnTo = options.returnTo ?? options.redirectUri;
+        if (returnTo) {
+            payload.return_to = returnTo;
+        }
+        if (options.captchaToken) {
+            payload.captcha_token = options.captchaToken;
         }
 
+        let res: Response;
         try {
-            const res = await this.fetchFn(url, {
+            // No `credentials`: the endpoint reads no cookie.
+            res = await this.fetchFn(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body,
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify(payload),
             });
-            // The server renders an HTML page on success — any non-network
-            // response (including 200 HTML) counts as "sent".
-            return { sent: res.ok };
         } catch (error) {
             throw new LumoAuthNetworkError(
                 `Magic link request failed: ${error instanceof Error ? error.message : String(error)}`,
                 error
             );
         }
+
+        const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!res.ok) {
+            throw new LumoAuthApiError(
+                typeof data.message === 'string' ? data.message : `Magic link request failed: ${res.status}`,
+                typeof data.error === 'string' ? data.error : 'MAGIC_LINK_ERROR',
+                res.status,
+                data
+            );
+        }
+
+        // Only the server's own answer counts. Anything else (an HTML page
+        // from a proxy, an older server) is not "sent".
+        return { sent: data.status === 'sent' };
     }
 
     // ── Email-First: check if account exists ─────────────────────────

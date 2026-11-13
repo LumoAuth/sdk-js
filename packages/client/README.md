@@ -346,9 +346,9 @@ const found = await client.auth.checkEmailExists('ada@example.com');
 // found.exists, found.passwordEnabled, found.passkeyEnabled, found.magicLinkEnabled,
 // found.hasPasskey, found.hasPushDevice, found.maskedEmail, …
 
-// Email a one-time sign-in link. The result is always { sent: true },
-// so the response never reveals whether the account exists.
-await client.auth.requestMagicLink({ email: 'ada@example.com', redirectUri: 'https://myapp.example.com/' });
+// Email a one-time sign-in link. The answer is { sent: true } whether or not
+// the account exists, so the response never reveals that.
+await client.auth.requestMagicLink({ email: 'ada@example.com', returnTo: 'https://myapp.example.com/signed-in' });
 
 // Sign in with a password on your own form
 const result = await client.auth.loginWithPassword({ email, password });
@@ -362,6 +362,16 @@ if (result.status === 'complete') {
 
 `checkEmailExists` never throws for a network failure or an unknown email. It returns an object
 in which every flag is `false`, so your screen can fall back to the hosted login page.
+
+`requestMagicLink` names your application (`clientId`) and sends no cookie. From a browser, the
+origin of your app must be one of the application's allowed origins. The link opens a
+confirmation page at LumoAuth. After the person confirms, they are signed in at LumoAuth and sent
+to `returnTo`: a page of your app on an allowed origin or on the origin of a redirect URI, with at
+most 1,024 characters. Start the PKCE redirect on that page. LumoAuth issues a code without
+showing its own login page. The call throws a `LumoAuthApiError` when the server refuses the
+request. `code` holds the reason: `magic_link_disabled`, `invalid_client`, `origin_not_allowed`,
+`invalid_return_to`, `captcha_required`, `captcha_failed` or `rate_limited`. When the organization
+protects sign-in link requests with a CAPTCHA, pass the token of the widget as `captchaToken`.
 
 `loginWithPassword` returns one of these statuses: `complete`, `mfa_required`,
 `invalid_credentials`, `blocked`, `inactive`, `rate_limited`, `invalid_request` or `error`. The
@@ -702,7 +712,7 @@ Every request and response also has a Zod schema, exported with its type, such a
 | | `revokeToken(token, accessToken?)` | `void` | `orgId`, `clientId` |
 | | `getUserInfo(accessToken)` | `UserInfo` | `orgId` |
 | | `checkEmailExists(email)` | `EmailCheckResult` | `orgId` |
-| | `requestMagicLink({ email, redirectUri? })` | `{ sent: true }` | `orgId` |
+| | `requestMagicLink({ email, returnTo?, captchaToken? })` | `{ sent: true }` | `orgId`, `clientId` |
 | | `loginWithPassword({ email, password })` | `{ status, challengeUrl? }` | `orgId` |
 | | `passwordGrant(username, password, …)` | `TokenResponse` | older grant; the organization must allow it |
 | `agents` | `ask(action, context?)` / `isAllowed(action, context?)` | decision / `boolean` | `orgId` |

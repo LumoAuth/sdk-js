@@ -270,10 +270,16 @@ export function useAbac(request: AbacCheckRequest): { allowed: boolean; isLoadin
 // ─── useMagicLink ─────────────────────────────────────────────────────
 
 /**
- * Hook for requesting a magic sign-in link.
+ * Hook for requesting a sign-in link by email from your own form.
  *
- * Handles loading/sent/error state so you can build a fully-controlled
- * "passwordless sign-in" form without any extra local state.
+ * It keeps the loading, sent and error state. `isSent` means that the server
+ * accepted the request; the link is mailed only when the address belongs to
+ * an account. The person opens the link, confirms on the LumoAuth page and
+ * comes back to the page the request was made from, where the provider signs
+ * them in. Pass a second argument to `sendMagicLink` to return them elsewhere.
+ *
+ * The request must come from one of the application's allowed origins, and
+ * the organization must have sign-in links switched on.
  *
  * @example
  * ```tsx
@@ -297,15 +303,20 @@ export function useMagicLink(): UseMagicLinkReturn {
     const [isLoading, setIsLoading] = useState(false);
     const [isSent, setIsSent] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [errorCode, setErrorCode] = useState<string | null>(null);
 
-    const sendMagicLink = useCallback(async (email: string, redirectUri?: string) => {
+    const sendMagicLink = useCallback(async (email: string, returnTo?: string, options?: { captchaToken?: string }) => {
         setIsLoading(true);
+        setIsSent(false);
         setError(null);
+        setErrorCode(null);
         try {
-            await sendMagicLinkCtx(email, redirectUri);
+            await sendMagicLinkCtx(email, returnTo, options);
             setIsSent(true);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to send magic link');
+            const code = (err as { code?: unknown } | null)?.code;
+            setErrorCode(typeof code === 'string' ? code : null);
         } finally {
             setIsLoading(false);
         }
@@ -314,10 +325,11 @@ export function useMagicLink(): UseMagicLinkReturn {
     const reset = useCallback(() => {
         setIsSent(false);
         setError(null);
+        setErrorCode(null);
         setIsLoading(false);
     }, []);
 
-    return { sendMagicLink, isLoading, isSent, error, reset };
+    return { sendMagicLink, isLoading, isSent, error, errorCode, reset };
 }
 
 // ─── useEmailFirst ────────────────────────────────────────────────────

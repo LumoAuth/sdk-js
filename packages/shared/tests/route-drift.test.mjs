@@ -27,12 +27,10 @@ const SPEC_CANDIDATES = [
  * reason; anything else missing from the spec fails the suite.
  */
 const KNOWN_DRIFT = {
-    // Served by the web (HTML) firewall for identifier-first sign-in — they
-    // are Symfony web routes, not part of the JSON API, so Nelmio never
-    // documents them. The SDK calls them from AuthModule.checkEmailExists()
-    // and AuthModule.requestMagicLink().
+    // Served by the web (HTML) firewall for identifier-first sign-in — a
+    // Symfony web route, not part of the JSON API, so Nelmio never documents
+    // it. The SDK calls it from AuthModule.checkEmailExists().
     'web.checkEmail': 'web route (POST /orgs/{orgId}/check-email) — not in the API spec',
-    'web.magicLink': 'web route (POST /orgs/{orgId}/magic-link) — not in the API spec',
 };
 
 function loadSpec() {
