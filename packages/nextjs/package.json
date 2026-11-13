@@ -1,6 +1,6 @@
 {
   "name": "@lumoauth/nextjs",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "LumoAuth for Next.js — server-side auth() for App Router, route protection middleware, and a backend-for-frontend that keeps tokens out of the browser.",
   "license": "MIT",
   "author": "LumoAuth",
@@ -45,9 +45,9 @@
     "middleware"
   ],
   "dependencies": {
-    "@lumoauth/client": "^1.4.2",
-    "@lumoauth/react": "^1.4.2",
-    "@lumoauth/shared": "^1.4.2",
+    "@lumoauth/client": "^1.5.0",
+    "@lumoauth/react": "^1.5.0",
+    "@lumoauth/shared": "^1.5.0",
     "server-only": "^0.0.1"
   },
   "peerDependencies": {
