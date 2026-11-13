@@ -1,6 +1,6 @@
 {
     "name": "@lumoauth/backend",
-    "version": "1.4.2",
+    "version": "1.5.0",
     "description": "Official LumoAuth server SDK — token verification and server-side auth. Never import this from browser code.",
     "license": "MIT",
     "author": "LumoAuth",
@@ -37,7 +37,7 @@
         "jwt"
     ],
     "dependencies": {
-        "@lumoauth/shared": "^1.4.2",
+        "@lumoauth/shared": "^1.5.0",
         "zod": "^4.6.7"
     },
     "devDependencies": {
