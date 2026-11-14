@@ -337,20 +337,23 @@ export function useMagicLink(): UseMagicLinkReturn {
 /**
  * Hook for email-first login flows.
  *
- * Checks whether an account exists for the given email before showing
- * the password or magic-link step.
+ * Asks which sign-in methods the organization offers, so that your form can
+ * show the next step after an address was typed. The answer is the same for
+ * every address: it does not say whether the address has an account, so do
+ * not branch on "known user" versus "new user". `exists` is `true` whenever
+ * the server answered, and `false` only when the check was not available.
  *
  * @example
  * ```tsx
- * const { checkEmail, isLoading, exists, reset } = useEmailFirst();
+ * const { checkEmail, isLoading, reset } = useEmailFirst();
+ * const { signIn } = useAuth();
  *
  * async function handleEmailSubmit(email: string) {
- *   const found = await checkEmail(email);
- *   if (found) {
- *     // show password / magic-link step
- *   } else {
- *     // show "no account found" or sign-up prompt
- *   }
+ *   const methods = await checkEmail(email);
+ *   if (!methods.exists) return signIn();            // check not available: hosted login page
+ *   if (methods.magicLinkEnabled) return showMagicLinkOption();
+ *   if (methods.passwordEnabled) return showPasswordStep();
+ *   signIn();
  * }
  * ```
  */

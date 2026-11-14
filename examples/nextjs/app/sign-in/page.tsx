@@ -54,9 +54,9 @@ function MethodDiscovery() {
                 </div>
                 {result && <pre data-testid="discover-result">{result}</pre>}
                 <p className="note">
-                    <code>checkEmail()</code> reports which methods this identifier can actually use —
-                    passkey, push, magic link, password — so you can render only those. Before Phase 0 the
-                    SDK discarded everything here except <code>exists</code>.
+                    <code>checkEmail()</code> reports the sign-in methods that the organization offers
+                    (passkey, magic link, password), so you can render only those. The answer is the same
+                    for every address and does not say whether the address has an account.
                 </p>
             </div>
         </>

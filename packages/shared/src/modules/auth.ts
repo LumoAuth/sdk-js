@@ -105,23 +105,36 @@ export interface MagicLinkResult {
 }
 
 /**
- * The result of identifier-first discovery.
+ * The result of the email-first check.
  *
- * `POST /orgs/{orgId}/check-email` tells you which authentication methods are
- * actually available for this identifier — both what the organization has
- * enabled and what this particular user has enrolled. Use it to render only
- * the methods that will work, instead of guessing.
+ * `POST /orgs/{orgId}/api/v1/oauth/check-email` reports the sign-in methods
+ * that the organization offers, so that your form can show the next step
+ * after an address was typed.
  *
- * Every field except `exists` is best-effort: an older server, or a rate-limit
- * / unknown-email response, returns a bare `{exists: false}`. Treat the
- * capability flags as "false unless told otherwise".
+ * The answer does not depend on the address. A known address and a new one
+ * get the same answer, so the check cannot be used to find out who has an
+ * account, a passkey or a push device. Do not branch on "known user" versus
+ * "new user": offer the organization's methods to everyone. An unknown
+ * address fails at the next step in the same way as a wrong password, and a
+ * sign-in link request answers the same way for every address.
  */
 export interface EmailCheckResult {
-    /** Whether an account with this email exists in the organization */
+    /**
+     * `true` when the server answered the check. It does NOT say whether the
+     * address has an account: the server answers `true` for every address.
+     * `false` means that the check was not available (network failure,
+     * rate limit, a refused request), and every other flag is then `false`.
+     */
     exists: boolean;
-    /** The user has at least one registered passkey */
+    /**
+     * @deprecated Always `false`. The server does not reveal whether an
+     * address has a passkey. Offer a passkey when `passkeyEnabled` is true.
+     */
     hasPasskey: boolean;
-    /** The user has at least one enrolled push-approval device */
+    /**
+     * @deprecated Always `false`. The server does not tell another site
+     * whether an address has a push device.
+     */
     hasPushDevice: boolean;
     /** The organization has magic-link sign-in enabled */
     magicLinkEnabled: boolean;
@@ -129,18 +142,20 @@ export interface EmailCheckResult {
     passkeyEnabled: boolean;
     /** The organization has password sign-in enabled */
     passwordEnabled: boolean;
-    /** Partially masked address for display, e.g. `j••@acme.com` */
+    /** @deprecated Never set. The server returns no masked address. */
     maskedEmail?: string;
-    /** Push-approval endpoints, present only when `hasPushDevice` is true */
+    /** @deprecated Never set. The server returns no push endpoints to another site. */
     pushInitiateUrl?: string;
+    /** @deprecated Never set. */
     pushStatusUrl?: string;
+    /** @deprecated Never set. */
     pushLoginUrl?: string;
 }
 
 /**
- * Returned when discovery is unavailable (network error, rate limit, or an
- * unknown identifier). Every capability is false, so callers fall back to the
- * hosted page rather than offering a method that will not work.
+ * Returned when the check is not available (network failure, rate limit, a
+ * refused request). Every flag is false, so callers fall back to the hosted
+ * page rather than offering a method that will not work.
  */
 /** Outcome of a JSON credential login. */
 export type PasswordLoginStatus =
@@ -468,24 +483,35 @@ export class AuthModule {
         return { sent: data.status === 'sent' };
     }
 
-    // ── Email-First: check if account exists ─────────────────────────
+    // ── Email-first: the organization's sign-in methods ──────────────
 
     /**
-     * Check whether an account with the given email exists in the organization.
-     * Used to implement email-first login flows (show password/magic-link
-     * step only after confirming the email is registered).
+     * The email-first step of your own sign-in form: ask which sign-in
+     * methods the organization offers, then show the next step.
      *
-     * The server always responds with a boolean to avoid leaking whether
-     * the check itself errored — treat a network failure as `exists: false`
-     * and handle gracefully.
+     * The request names your application (`clientId`) and sends no cookie.
+     * From a browser it must come from one of the application's allowed
+     * origins.
+     *
+     * The answer is the same for every address. `exists` is `true` whenever
+     * the server answered: it does not say whether the address has an
+     * account, and nothing in the result does. Show the same next step to
+     * everyone. An unknown address fails there in the same way as a wrong
+     * password.
+     *
+     * Never throws: when the check is not available (network failure, rate
+     * limit, a refused request such as an origin that is not allowed), every
+     * flag is `false`, `exists` included. Fall back to the hosted login page.
      *
      * @example
      * ```ts
-     * const { exists } = await auth.checkEmailExists('user@example.com');
-     * if (exists) {
-     *   // Show password / magic-link step
-     * } else {
-     *   // Show "no account found" message or sign-up prompt
+     * const methods = await auth.checkEmailExists('user@example.com');
+     * if (!methods.exists) {
+     *   // The check was not available: use the hosted login page.
+     * } else if (methods.magicLinkEnabled) {
+     *   // Offer "Email me a sign-in link".
+     * } else if (methods.passwordEnabled) {
+     *   // Show the password step.
      * }
      * ```
      */
@@ -493,10 +519,11 @@ export class AuthModule {
         const url = this.routeUrl('web.checkEmail');
 
         try {
+            // No `credentials`: the endpoint reads no cookie.
             const res = await this.fetchFn(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({ email }),
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify({ email, client_id: this.clientId }),
             });
 
             if (!res.ok) {
@@ -504,17 +531,15 @@ export class AuthModule {
             }
 
             const data = await res.json() as Record<string, unknown>;
+            // Organization-level methods only. The per-address fields stay
+            // in the type for older code and are always false.
             return {
                 exists: data.exists === true,
-                hasPasskey: data.has_passkey === true,
-                hasPushDevice: data.has_push_device === true,
+                hasPasskey: false,
+                hasPushDevice: false,
                 magicLinkEnabled: data.magic_link_enabled === true,
                 passkeyEnabled: data.passkey_enabled === true,
                 passwordEnabled: data.password_enabled === true,
-                maskedEmail: typeof data.masked_email === 'string' ? data.masked_email : undefined,
-                pushInitiateUrl: typeof data.push_initiate_url === 'string' ? data.push_initiate_url : undefined,
-                pushStatusUrl: typeof data.push_status_url === 'string' ? data.push_status_url : undefined,
-                pushLoginUrl: typeof data.push_login_url === 'string' ? data.push_login_url : undefined,
             };
         } catch {
             return EMPTY_EMAIL_CHECK;

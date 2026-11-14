@@ -113,8 +113,7 @@ function envVar(name: string): string | undefined {
  * });
  *
  * const result = await client.requestAuthToken({
- *   resourceToken,
- *   scope: 'read write',
+ *   resourceToken, // its `scope` claim names the scope of the auth token
  *   agentToken,
  * });
  * if ('authorizationRequired' in result) {
@@ -165,7 +164,10 @@ export class AAuthClient {
         return publicJwkFromPrivateKey(this.privateKeyPem, this.kid);
     }
 
-    /** RFC 7638 thumbprint of the agent's public key (the `jkt` binding value). */
+    /**
+     * RFC 7638 thumbprint of the agent's public key. A resource names this
+     * value as `agent_jkt` when it asks for a resource token for the agent.
+     */
     get publicJwkThumbprint(): string {
         return jwkThumbprint(this.publicJwk);
     }
@@ -186,19 +188,29 @@ export class AAuthClient {
      * Request an auth token (`request_type=auth` — direct authorization).
      *
      * Presents the resource token in the body and the agent token in the
-     * `Agent-Auth` header, signed with the agent's key. If the server
-     * requires user consent it returns `{ authorizationRequired: true,
-     * requestToken, authorizationUri }` — redirect the user, then call
-     * `exchangeCode()` with the code delivered to your `redirectUri`.
+     * `Agent-Auth` header (never in the body), signed with the key in the
+     * agent token's `cnf`. If the server requires user consent it answers
+     * 200 with `request_token` and `authorization_uri`, returned here as
+     * `{ authorizationRequired: true, requestToken, authorizationUri }` —
+     * redirect the user, then call `exchangeCode()` with the code delivered
+     * to your `redirectUri`.
      */
     async requestAuthToken(params: {
         /** Resource token (`resource+jwt`) obtained from the target resource. */
         resourceToken: string;
-        /** Space-separated scopes (informational; scopes bind via the resource token). */
+        /**
+         * Sent as the body field `scope`, which the server ignores for
+         * `request_type=auth`: the scope of the auth token comes from the
+         * resource token's `scope` claim.
+         */
         scope?: string;
         /** The `agent+jwt` presented in `Agent-Auth`. */
         agentToken: string;
-        /** Redirect URI for user-consent flows (must be registered). */
+        /**
+         * Redirect URI, required when the user has to consent (the server
+         * answers 400 `invalid_request` without it). It must be registered
+         * for the agent.
+         */
         redirectUri?: string;
     }): Promise<AAuthTokenResponse | AAuthAuthorizationRequired> {
         this.requireAgentToken(params.agentToken);
@@ -252,8 +264,9 @@ export class AAuthClient {
     /**
      * Multi-hop token exchange (`request_type=exchange`): trade an upstream
      * auth token plus a downstream resource token for a new auth token with
-     * an `act` actor chain. Requires token exchange to be enabled for the
-     * agent.
+     * an `act` actor chain (`act.agent` names the upstream agent, `act.sub`
+     * the upstream user; at most 5 hops). Requires token exchange to be
+     * enabled for the agent.
      */
     async exchangeToken(params: {
         /** The upstream `auth+jwt` addressed to this agent. */
@@ -275,16 +288,23 @@ export class AAuthClient {
     }
 
     /**
-     * Refresh an auth token (`request_type=refresh`). A fresh resource token
-     * for the target resource is required; scopes requested via the resource
-     * token must be a subset of the original grant. Refresh tokens are not
-     * rotated.
+     * Refresh an auth token (`request_type=refresh`). A resource token from
+     * the same resource as the original grant is required. The scopes of
+     * that grant are the ceiling: the resource token's `scope` claim may
+     * narrow them, and `scope` narrows the result once more. A refresh never
+     * widens the scope. The response carries no new refresh token (refresh
+     * tokens are not rotated).
      */
     async refresh(params: {
         refreshToken: string;
-        /** Fresh resource token for the target resource. */
+        /** Resource token from the resource that the refresh token was granted for. */
         resourceToken: string;
-        /** Optional scope narrowing. */
+        /**
+         * Optional space-delimited scope. It narrows only: every scope must
+         * be in the grant (and in the resource token's scope, when it has
+         * one). A scope outside the grant is refused with 400
+         * `invalid_scope`.
+         */
         scope?: string;
         agentToken: string;
     }): Promise<AAuthTokenResponse> {

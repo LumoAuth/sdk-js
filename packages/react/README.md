@@ -364,7 +364,7 @@ return <button onClick={() => signOut()}>Sign out {user!.displayName}</button>;
 | `getToken()` | `() => Promise<string \| null>` | A valid access token. It refreshes first when needed. |
 | `handleCallback()` | function | Exchanges the code on the callback page. `<AuthCallback>` calls it for you. |
 | `sendMagicLink(email, returnTo?, { captchaToken? }?)` | function | Emails a sign-in link. Rejects with a `LumoAuthApiError` when the server refuses the request. |
-| `checkEmail(email)` | `(email) => Promise<EmailCheckResult>` | Reports the sign-in methods for an email address |
+| `checkEmail(email)` | `(email) => Promise<EmailCheckResult>` | Reports the sign-in methods that the organization offers. The answer is the same for every address. |
 | `authStrategy` | `'pkce' \| 'password'` | The strategy in use |
 | `config` | object | The provider's `domain`, `orgId`, `clientId` and redirect URLs |
 
@@ -470,19 +470,28 @@ When the server refuses the request, `error` holds the message and `errorCode` t
 
 **`useEmailFirst()`** returns `{ checkEmail, isLoading, result, exists, reset }`. Use it to build
 a sign-in screen that asks for the email address first. `checkEmail(email)` resolves to an
-`EmailCheckResult`. It reports whether the account exists and which methods it can use:
-`passwordEnabled`, `passkeyEnabled`, `magicLinkEnabled`, `hasPasskey`, `hasPushDevice` and
-`maskedEmail`. `exists` is `null` until the first check.
+`EmailCheckResult`. It reports the sign-in methods that the organization offers:
+`passwordEnabled`, `passkeyEnabled` and `magicLinkEnabled`.
+
+The answer is the same for every address. It does not say whether the address has an account, so
+a known address and a new one cannot be told apart. Show the same next step to everyone. An
+unknown address fails at that step in the same way as a wrong password. `exists` is `true` when
+the server answered and `false` when the check was not available. It is `null` until the first
+check. `hasPasskey` and `hasPushDevice` are always `false`.
+
+The request names your application and sends no cookie. The origin of your app must be one of
+the allowed origins of the application.
 
 ```tsx
 const { checkEmail, isLoading } = useEmailFirst();
 
 async function onSubmit(e: React.FormEvent) {
   e.preventDefault();
-  const found = await checkEmail(email);
-  if (!found.exists) return showSignUp();
-  if (found.magicLinkEnabled) return showMagicLinkOption();
-  signIn();   // fall back to the LumoAuth sign-in page
+  const methods = await checkEmail(email);
+  if (!methods.exists) return signIn();   // check not available: the LumoAuth sign-in page
+  if (methods.magicLinkEnabled) return showMagicLinkOption();
+  if (methods.passwordEnabled) return showPasswordStep();
+  signIn();
 }
 ```
 

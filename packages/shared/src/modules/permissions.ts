@@ -93,7 +93,10 @@ export class PermissionsModule {
      * Check if the authenticated user has a specific permission.
      *
      * @param permission  Permission slug, e.g. `"document.edit"`
-     * @param context     Optional context attributes for ABAC evaluation
+     * @param context     Optional context for ABAC evaluation. The server reads
+     *                    `resource_id` (the resource whose stored attributes the
+     *                    policies see) and the slugs of the environment attributes
+     *                    that your organization defined. Any other key is ignored.
      * @param options     Optional subject: check this user or agent instead of
      *                    the caller (needs `authz:check`, see {@link CheckSubjectOptions})
      * @returns `true` if the subject has the permission
@@ -106,8 +109,7 @@ export class PermissionsModule {
      *
      * // With context
      * const allowed = await client.permissions.check('document.edit', {
-     *   document_id: 456,
-     *   owner_id: 123,
+     *   resource_id: 'doc-456',
      * });
      *
      * // For another user (the caller needs `authz:check`)

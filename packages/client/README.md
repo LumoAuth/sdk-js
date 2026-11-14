@@ -179,8 +179,10 @@ such as `document.edit`.
 ```ts
 const canEdit = await client.permissions.check('document.edit');
 
-// Optional context for policies that read request data
-const canEditThis = await client.permissions.check('document.edit', { document_id: 456 });
+// Optional context for ABAC policies: `resource_id` selects the resource whose stored
+// attributes the policies read. Other keys count only when they are the slug of an
+// environment attribute that your organization defined; anything else is ignored.
+const canEditThis = await client.permissions.check('document.edit', { resource_id: 'doc-456' });
 
 // Many permissions in one request
 const { results } = await client.permissions.checkBulk(['document.edit', 'document.delete']);
@@ -341,10 +343,11 @@ user straight to that social provider.
 These calls let you build your own sign-in screen.
 
 ```ts
-// Which sign-in methods can this person use?
-const found = await client.auth.checkEmailExists('ada@example.com');
-// found.exists, found.passwordEnabled, found.passkeyEnabled, found.magicLinkEnabled,
-// found.hasPasskey, found.hasPushDevice, found.maskedEmail, …
+// Which sign-in methods does the organization offer?
+const methods = await client.auth.checkEmailExists('ada@example.com');
+// methods.passwordEnabled, methods.passkeyEnabled, methods.magicLinkEnabled
+// methods.exists is true whenever the server answered. It does not say
+// whether the address has an account.
 
 // Email a one-time sign-in link. The answer is { sent: true } whether or not
 // the account exists, so the response never reveals that.
@@ -360,8 +363,17 @@ if (result.status === 'complete') {
 }
 ```
 
-`checkEmailExists` never throws for a network failure or an unknown email. It returns an object
-in which every flag is `false`, so your screen can fall back to the hosted login page.
+`checkEmailExists` names your application (`clientId`) and sends no cookie. From a browser, the
+origin of your app must be one of the application's allowed origins. The answer holds the
+sign-in methods of the organization and is the same for every address. A known address and a new
+one cannot be told apart, so show the same next step to everyone. An unknown address fails at
+that step in the same way as a wrong password. `hasPasskey` and `hasPushDevice` are always
+`false`. Offer a passkey when `passkeyEnabled` is `true`.
+
+`checkEmailExists` never throws. When the check is not available (a network failure, a rate
+limit, or a refused request such as an origin that is not allowed), it returns an object in
+which every flag is `false`, `exists` included. Your screen can then fall back to the hosted
+login page.
 
 `requestMagicLink` names your application (`clientId`) and sends no cookie. From a browser, the
 origin of your app must be one of the application's allowed origins. The link opens a
@@ -711,7 +723,7 @@ Every request and response also has a Zod schema, exported with its type, such a
 | | `refreshToken(refreshToken)` | `TokenResponse` | `orgId`, `clientId` |
 | | `revokeToken(token, accessToken?)` | `void` | `orgId`, `clientId` |
 | | `getUserInfo(accessToken)` | `UserInfo` | `orgId` |
-| | `checkEmailExists(email)` | `EmailCheckResult` | `orgId` |
+| | `checkEmailExists(email)` | `EmailCheckResult` | `orgId`, `clientId` |
 | | `requestMagicLink({ email, returnTo?, captchaToken? })` | `{ sent: true }` | `orgId`, `clientId` |
 | | `loginWithPassword({ email, password })` | `{ status, challengeUrl? }` | `orgId` |
 | | `passwordGrant(username, password, …)` | `TokenResponse` | older grant; the organization must allow it |

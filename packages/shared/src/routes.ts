@@ -61,7 +61,7 @@ export const ROUTES = {
     // ── Web (HTML) routes used by identifier-first sign-in ────────────
     // KNOWN_DRIFT: served by the web firewall, not the JSON API, so they are
     // not in openapi.json.
-    'web.checkEmail': { method: 'POST', path: '/orgs/{orgId}/check-email' },
+    'web.checkEmail': { method: 'POST', path: '/orgs/{orgId}/api/v1/oauth/check-email' },
     'web.magicLink': { method: 'POST', path: '/orgs/{orgId}/api/v1/oauth/magic-link' },
 
     // ── Agents (identity) ─────────────────────────────────────────────

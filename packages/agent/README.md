@@ -399,7 +399,7 @@ const aauth = new AAuthClient({
   orgId: 'acme-corp',
 });
 
-const result = await aauth.requestAuthToken({ resourceToken, agentToken, scope: 'read write' });
+const result = await aauth.requestAuthToken({ resourceToken, agentToken });
 
 if ('authorizationRequired' in result) {
   // The user has to consent first. Send them to result.authorizationUri,
@@ -412,8 +412,10 @@ if ('authorizationRequired' in result) {
 ```
 
 `resourceToken` is the resource token that the target resource issued to the
-agent. `agentToken` is the agent's own `agent+jwt`, sent in the `Agent-Auth`
-header.
+agent. Its `scope` claim names the scope of the auth token: LumoAuth ignores a
+`scope` that is passed to `requestAuthToken`. `agentToken` is the agent's own
+`agent+jwt`, sent in the `Agent-Auth` header. The key that signs the request
+must be the key in the agent token's `cnf` claim.
 
 ### `AAuthClient` options
 
@@ -431,11 +433,11 @@ header.
 
 | Method | What it does |
 |---|---|
-| `requestAuthToken({ resourceToken, agentToken, scope?, redirectUri? })` | Requests an auth token. Returns the token, or `{ authorizationRequired: true, requestToken, authorizationUri }` when the user must consent |
+| `requestAuthToken({ resourceToken, agentToken, scope?, redirectUri? })` | Requests an auth token. Returns the token, or `{ authorizationRequired: true, requestToken, authorizationUri }` when the user must consent. Consent needs `redirectUri`. LumoAuth ignores `scope` here |
 | `buildConsentUrl(requestToken)` | Builds the consent URL for a pending request token |
 | `exchangeCode({ code, redirectUri, agentToken })` | Exchanges the consent code for an auth token |
 | `exchangeToken({ authToken, resourceToken, agentToken })` | Exchanges an upstream auth token for a downstream one, which adds to the `act` chain |
-| `refresh({ refreshToken, resourceToken, scope?, agentToken })` | Refreshes an auth token. It needs a fresh resource token |
+| `refresh({ refreshToken, resourceToken, scope?, agentToken })` | Refreshes an auth token. It needs a resource token from the same resource. `scope` only narrows: a scope outside the grant is refused with `invalid_scope` |
 | `revoke({ token, tokenType?, agentToken })` | Revokes an auth token by its `jti`, or a refresh token by value |
 | `signRequest(method, url, options?)` | Returns RFC 9421 signature headers for a request |
 | `signedRequest(method, url, { authToken, data?, headers? })` | Sends a signed request with the auth token, and returns the `fetch` `Response` |

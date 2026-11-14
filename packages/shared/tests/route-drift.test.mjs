@@ -26,12 +26,7 @@ const SPEC_CANDIDATES = [
  * Routes that intentionally do NOT appear in openapi.json. Each entry needs a
  * reason; anything else missing from the spec fails the suite.
  */
-const KNOWN_DRIFT = {
-    // Served by the web (HTML) firewall for identifier-first sign-in — a
-    // Symfony web route, not part of the JSON API, so Nelmio never documents
-    // it. The SDK calls it from AuthModule.checkEmailExists().
-    'web.checkEmail': 'web route (POST /orgs/{orgId}/check-email) — not in the API spec',
-};
+const KNOWN_DRIFT = {};
 
 function loadSpec() {
     for (const candidate of SPEC_CANDIDATES) {

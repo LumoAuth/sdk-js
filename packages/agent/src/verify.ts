@@ -25,11 +25,25 @@ export interface AAuthTokenClaims {
     exp: number;
     iat: number;
     jti: string;
+    /** The agent's full public JWK. Auth tokens carry no `cnf.jkt`. */
     cnf: { jwk: AAuthJwk };
+    /** The agent identifier. Present only when `aud` differs from it. */
     agent?: string;
+    /** The delegate (the `sub` of the agent token) that made the request, if any. */
     agent_delegate?: string;
+    /** Resource scopes only: openid, profile, email, phone and address are never listed. */
     scope?: string;
+    /**
+     * The user. A pseudonym for this resource, not the user ID, when the
+     * resource's default auth level is `pseudonymous`, or `authorized`
+     * without a consent record.
+     */
     sub?: string;
+    /**
+     * Actor chain of an exchanged token: `{ agent, agent_delegate?, sub?,
+     * act? }`. `act.agent` names the upstream agent and `act.sub` the
+     * upstream user; a nested `act` holds the earlier hops (at most 5).
+     */
     act?: Record<string, unknown>;
     [claim: string]: unknown;
 }

@@ -302,18 +302,22 @@ export interface UseMagicLinkReturn {
  */
 export interface UseEmailFirstReturn {
     /**
-     * Discover which sign-in methods this identifier can actually use.
+     * Ask which sign-in methods the organization offers (password, passkey,
+     * magic link), so that a sign-in card can show the next step.
      *
-     * Returns the organization's enabled methods AND what this user has
-     * enrolled (passkey, push device, magic link, password), so a sign-in card
-     * can render only the options that will work.
+     * The answer is the same for every address and says nothing about the
+     * account behind it.
      */
     checkEmail: (email: string) => Promise<EmailCheckResult>;
     /** True while the check is in-flight */
     isLoading: boolean;
     /** Full result of the last check, or null if not yet checked */
     result: EmailCheckResult | null;
-    /** Shorthand for `result?.exists`, or null if not yet checked */
+    /**
+     * Shorthand for `result?.exists`, or null if not yet checked. `true`
+     * means that the server answered, not that the address has an account;
+     * `false` means that the check was not available.
+     */
     exists: boolean | null;
     /** Reset state back to idle */
     reset: () => void;

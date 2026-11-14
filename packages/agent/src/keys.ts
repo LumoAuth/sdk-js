@@ -74,7 +74,9 @@ export function generateKeypair(kid = 'key-1'): AAuthKeypair {
 
 /**
  * Compute the RFC 7638 JWK thumbprint (base64url-encoded SHA-256) of a
- * public JWK. This is the `jkt` value AAuth uses to bind tokens to keys.
+ * public JWK. LumoAuth uses it as `agent_jkt` in resource tokens and as
+ * `cnf_jkt` in the answer of the token verify endpoint. Auth tokens carry
+ * the full key in `cnf.jwk`, not the thumbprint.
  */
 export function jwkThumbprint(jwk: AAuthJwk): string {
     let canonical: string;
