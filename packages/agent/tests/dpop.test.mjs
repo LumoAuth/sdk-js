@@ -175,14 +175,14 @@ test('LumoAgent with a signer: use_dpop_nonce retry, token_type DPoP, DPoP schem
             return json({ access_token: 'bound-tok', token_type: 'DPoP', expires_in: 3600, scope: 'read' }, 200, { 'DPoP-Nonce': 'server-nonce-2' });
         }
         if (String(url).endsWith('/agents/ask')) {
-            return json({ allowed: true, action: 'document.read' });
+            return json({ allowed: true, action: 'document:read' });
         }
         throw new Error(`unexpected url ${url}`);
     };
 
     const agent = new LumoAgent({ baseUrl: BASE, orgId: ORG, clientId: 'c', clientSecret: 's', fetch: fetchFn, dpop: signer });
     assert.equal(agent.tokenType, null);
-    assert.equal(await agent.isAllowed('document.read'), true);
+    assert.equal(await agent.isAllowed('document:read'), true);
     assert.equal(agent.tokenType, 'DPoP');
     assert.equal(agent.dpopSigner, signer);
 

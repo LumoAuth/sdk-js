@@ -104,7 +104,7 @@ const TOKEN_REFRESH_BUFFER_MS = 60_000;
  * import { LumoAgent } from '@lumoauth/agent';
  *
  * const agent = new LumoAgent(); // reads env vars by default
- * if (await agent.isAllowed('document.read', { id: 'doc_99' })) {
+ * if (await agent.isAllowed('document:read', { id: 'doc_99' })) {
  *   // ... do the thing
  * }
  *

@@ -39,10 +39,10 @@ test('authenticates via client credentials and reuses the token', async () => {
     const fetchFn = async (url, init) => {
         calls.push({ url: String(url), body: init?.body?.toString() ?? '' });
         if (String(url).endsWith('/oauth/token')) {
-            return jsonResponse({ access_token: 'tok-1', expires_in: 3600, scope: 'read:documents' });
+            return jsonResponse({ access_token: 'tok-1', expires_in: 3600, scope: 'documents:read' });
         }
         if (String(url).endsWith('/agents/ask')) {
-            return jsonResponse({ allowed: true, action: 'document.read' });
+            return jsonResponse({ allowed: true, action: 'document:read' });
         }
         throw new Error(`unexpected url ${url}`);
     };
@@ -55,13 +55,13 @@ test('authenticates via client credentials and reuses the token', async () => {
         fetch: fetchFn,
     });
 
-    assert.equal(await agent.isAllowed('document.read'), true);
-    assert.equal(await agent.isAllowed('document.read'), true);
+    assert.equal(await agent.isAllowed('document:read'), true);
+    assert.equal(await agent.isAllowed('document:read'), true);
 
     const tokenCalls = calls.filter((c) => c.url.endsWith('/oauth/token'));
     assert.equal(tokenCalls.length, 1, 'token endpoint hit once — cached thereafter');
     assert.match(tokenCalls[0].body, /grant_type=client_credentials/);
-    assert.deepEqual(agent.tokenScopes, ['read:documents']);
+    assert.deepEqual(agent.tokenScopes, ['documents:read']);
 });
 
 test('re-authenticates when the token is inside the 60s refresh buffer', async () => {

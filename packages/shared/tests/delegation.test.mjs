@@ -50,3 +50,19 @@ test('delegateToSubAgent sends the resource indicator on the nested exchange', a
     assert.equal(forms[1].get('actor_token'), 'sub-agent-tok');
     assert.equal(forms[1].get('resource'), 'https://sub.example.com');
 });
+
+test('getConsentUrl asks for documents:read by default', () => {
+    const delegation = new DelegationModule({
+        baseUrl: 'https://app.lumoauth.dev',
+        orgId: 'acme',
+        clientId: 'agent-client',
+        redirectUri: 'https://agent.example.com/callback',
+        agentToken: () => 'agent-tok',
+        fetch: async () => {
+            throw new Error('no request expected');
+        },
+    });
+    const query = new URL(delegation.getConsentUrl('s1')).searchParams;
+    assert.equal(query.get('scope'), 'documents:read');
+    assert.equal(query.get('prompt'), 'consent');
+});

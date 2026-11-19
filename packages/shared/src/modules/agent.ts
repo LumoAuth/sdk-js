@@ -59,7 +59,7 @@ export interface RegisterAgentRequest {
     clientId?: string;
     /** Optional description of the agent's purpose. */
     description?: string;
-    /** Capability slugs the agent declares (e.g. `["read:documents"]`). */
+    /** Capability slugs the agent declares, as `<resource>:<action>` (e.g. `["documents:read"]`). */
     capabilities?: string[];
     /** HTTPS URL to the agent's public JWKS (required for AAuth flows). */
     jwksUri?: string;

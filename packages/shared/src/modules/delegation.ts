@@ -147,7 +147,8 @@ export class DelegationModule {
     /**
      * Generate a URL where the user can grant the agent permission to act
      * on their behalf. Redirect the user there; after consent they come
-     * back to `redirectUri` with an authorization code.
+     * back to `redirectUri` with an authorization code. Without `scopes`
+     * it asks for `documents:read`.
      */
     getConsentUrl(
         sessionId: string,
@@ -163,7 +164,7 @@ export class DelegationModule {
             response_type: 'code',
             client_id: this.clientId,
             redirect_uri: this.redirectUri,
-            scope: (scopes ?? ['read:documents']).join(' '),
+            scope: (scopes ?? ['documents:read']).join(' '),
             state: state ?? `session:${sessionId}`,
             prompt: 'consent',
             access_type: 'offline',
@@ -425,7 +426,7 @@ export class DelegationModule {
                 );
             }
             throw new LumoAuthPermissionDeniedError(
-                `${label} forbidden — agent may lack 'delegate:on_behalf' capability: ${errorBody.error_description ?? errorBody.error ?? res.statusText}`,
+                `${label} forbidden — the agent may not be allowed to act on behalf of users: ${errorBody.error_description ?? errorBody.error ?? res.statusText}`,
                 errorBody,
             );
         }

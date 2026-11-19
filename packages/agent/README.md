@@ -69,7 +69,7 @@ import { LumoAgent } from '@lumoauth/agent';
 const agent = new LumoAgent();   // reads the variables above
 
 // 1. Check first: may this agent do this, in this context?
-if (!(await agent.isAllowed('document.read', { id: 'doc_99' }))) {
+if (!(await agent.isAllowed('document:read', { id: 'doc_99' }))) {
   throw new Error('not allowed');
 }
 
@@ -122,7 +122,7 @@ call the server.
 boolean.
 
 ```ts
-const decision = await agent.ask('tickets.write', { ticket: 'T-42' });
+const decision = await agent.ask('tickets:write', { ticket: 'T-42' });
 // decision.allowed, decision.action, decision.reason, decision.audit_id
 ```
 
@@ -201,11 +201,11 @@ return at once. A JIT token lasts at most 900 seconds.
 ```ts
 const agent = new LumoAgent({ redirectUri: 'https://agent.example.com/callback' });
 
-const url = agent.delegation.getConsentUrl('session-1', ['read:documents']);
+const url = agent.delegation.getConsentUrl('session-1', ['documents:read']);
 // …the user consents and returns with ?code=…
 await agent.delegation.handleConsentCallback('session-1', code);
 
-const delegated = await agent.delegation.exchange('session-1', ['read:documents'], {
+const delegated = await agent.delegation.exchange('session-1', ['documents:read'], {
   resource: 'https://api.example.com',   // becomes the token's aud
 });
 ```

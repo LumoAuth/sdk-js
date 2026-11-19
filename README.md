@@ -172,7 +172,7 @@ import { LumoAgent } from '@lumoauth/agent';
 // Reads LUMOAUTH_URL, LUMOAUTH_ORG_ID, AGENT_CLIENT_ID and AGENT_CLIENT_SECRET.
 const agent = new LumoAgent();
 
-if (await agent.isAllowed('document.read', { id: 'doc_99' })) {
+if (await agent.isAllowed('document:read', { id: 'doc_99' })) {
   // Read the document.
 }
 ```
@@ -541,7 +541,7 @@ import { LumoAgent } from '@lumoauth/agent';
 
 const agent = new LumoAgent({ orgId: 'acme-corp' });
 
-const decision = await agent.ask('tickets.read', { ticket: 'T-42' });
+const decision = await agent.ask('tickets:read', { ticket: 'T-42' });
 // decision.allowed, decision.action, decision.reason, decision.audit_id
 
 const me = await agent.getCurrentAgent();       // identity, capabilities, workspace
@@ -661,14 +661,14 @@ sub-agent. It uses RFC 8693 token exchange. Every delegated token carries an
 const agent = new LumoAgent({ orgId: 'acme-corp', redirectUri: 'https://agent.example.com/callback' });
 
 // 1. Send the user to consent, then handle the callback.
-const consentUrl = agent.delegation.getConsentUrl('session-1', ['read:documents']);
+const consentUrl = agent.delegation.getConsentUrl('session-1', ['documents:read']);
 await agent.delegation.handleConsentCallback('session-1', authorizationCode);
 
 // Or, when you already hold a user access token:
 agent.delegation.setUserToken('session-1', userAccessToken);
 
 // 2. Exchange for a delegated token.
-const delegated = await agent.delegation.exchange('session-1', ['read:documents'], {
+const delegated = await agent.delegation.exchange('session-1', ['documents:read'], {
   resource: 'https://api.example.com',
 });
 
