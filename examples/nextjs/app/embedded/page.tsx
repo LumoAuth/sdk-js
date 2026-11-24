@@ -10,6 +10,13 @@ import { SignedIn, SignedOut, useAuth, useLumoAuth } from '@lumoauth/react';
  * authenticates and establishes the session, then the normal PKCE redirect
  * runs — but because the session already exists, /authorize issues a code
  * without showing a login screen, so the user only ever sees this form.
+ *
+ * The call sets the LumoAuth session cookie, so it works only when this app
+ * is served from the same origin as LumoAuth's own pages (the hosted domain
+ * or your organization's custom domain). An allowed origin of the
+ * application does not open it. From another origin, such as
+ * http://localhost:3100, the browser blocks the request and the result is
+ * `{ status: 'error' }`.
  */
 export default function EmbeddedSignIn() {
     const { signIn } = useAuth();

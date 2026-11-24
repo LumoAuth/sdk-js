@@ -554,9 +554,14 @@ export class AuthModule {
      * continue the normal PKCE flow — `/authorize` now issues a code without
      * showing the hosted login page, so the redirect is invisible to the user.
      *
-     * Credentials are sent to the LumoAuth origin, so the request needs
-     * `credentials: 'include'` and the origin must be in the client's allowed
-     * origins, exactly as the token exchange does.
+     * From a browser, this call works only when your form is served from the
+     * same origin as LumoAuth's own pages: the hosted domain, or your
+     * organization's custom domain. The endpoint sets the session cookie, so
+     * LumoAuth answers no cross-origin request for it. An allowed origin of
+     * your application does not open it (allowed origins are for calls that
+     * carry no cookie, such as the token exchange). From another origin the
+     * browser blocks the request and this method returns `{ status: 'error' }`.
+     * Use the hosted sign-in page, or `requestMagicLink()`, in that case.
      */
     async loginWithPassword(params: {
         email: string;

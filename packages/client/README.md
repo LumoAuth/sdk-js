@@ -386,9 +386,12 @@ request. `code` holds the reason: `magic_link_disabled`, `invalid_client`, `orig
 protects sign-in link requests with a CAPTCHA, pass the token of the widget as `captchaToken`.
 
 `loginWithPassword` returns one of these statuses: `complete`, `mfa_required`,
-`invalid_credentials`, `blocked`, `inactive`, `rate_limited`, `invalid_request` or `error`. The
-request is sent with `credentials: 'include'`, so your origin must be in the client's allowed
-origins.
+`invalid_credentials`, `blocked`, `inactive`, `rate_limited`, `invalid_request` or `error`. From
+a browser, the call works only when your form is served from the same origin as LumoAuth's own
+pages: the hosted domain, or your organization's custom domain. The endpoint sets the session
+cookie, so LumoAuth answers no cross-origin request for it, and an allowed origin of your
+application does not open it. From another origin the browser blocks the request and the status
+is `error`. Use the hosted sign-in page or `requestMagicLink` there.
 
 ### Keep the session alive
 

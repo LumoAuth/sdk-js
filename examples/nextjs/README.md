@@ -80,7 +80,7 @@ Use a **public** OAuth client that requires PKCE, and set it up like this:
 | `/` | `<SignedIn>`, `<SignedOut>`, `<UserButton>`, the sign-in, sign-up and sign-out buttons, single-request refresh, and a direct ABAC call |
 | `/sign-in` | `<SignIn>`, a sign-in screen that asks for the email first, and magic links |
 | `/sign-up` | `signUp()`, which sends the user to the LumoAuth registration page |
-| `/embedded` | Your own email and password form. `auth.loginWithPassword()` signs the user in, and the PKCE redirect then completes without a LumoAuth login page. |
+| `/embedded` | Your own email and password form. `auth.loginWithPassword()` signs the user in, and the PKCE redirect then completes without a LumoAuth login page. The call works only when this app is served from the same origin as LumoAuth's pages, for example behind your organization's custom domain. From `http://localhost:3100` the browser blocks it and the form shows its error message. |
 | `/dashboard` | `<RedirectToSignIn>`, `useUser`, `useSession`, `<UserProfile>` and `<UserAvatar>` |
 | `/authorization` | `usePermission`, `useZanzibar`, `useAbac` and `<Protect>` |
 | `/storage` | The four token storage adapters and how they differ |
