@@ -1,6 +1,5 @@
 import type { HttpClient } from '../utils/http';
 import { LumoAuthConfigError } from '../errors';
-import { ROUTES, buildPath } from '../routes';
 
 /**
  * JIT module — Just-in-Time permissions.
@@ -93,7 +92,7 @@ export class JitModule {
         if (options.onBehalfOf) body.on_behalf_of = options.onBehalfOf;
 
         const data = await this.http.post<Record<string, unknown>>(
-            buildPath(ROUTES['jit.createTask'].path, { orgId: this.requireOrgId() }),
+            this.http.path('jit.createTask', { orgId: this.requireOrgId() }),
             body,
         );
         this.taskId = String(data.task_id);
@@ -116,7 +115,7 @@ export class JitModule {
         if (!tid) return true;
         try {
             await this.http.post(
-                buildPath(ROUTES['jit.completeTask'].path, {
+                this.http.path('jit.completeTask', {
                     orgId: this.requireOrgId(),
                     taskId: tid,
                 }),
@@ -145,7 +144,7 @@ export class JitModule {
         const body: Record<string, unknown> = { result: options.result ?? 'completed' };
         if (options.notes) body.notes = options.notes;
         return this.http.post<Record<string, unknown>>(
-            buildPath(ROUTES['jit.evaluateTask'].path, {
+            this.http.path('jit.evaluateTask', {
                 orgId: this.requireOrgId(),
                 taskId: tid,
             }),
@@ -180,7 +179,7 @@ export class JitModule {
         if (options.justification) body.justification = options.justification;
 
         let result = await this.http.post<JitPermissionResult>(
-            buildPath(ROUTES['jit.request'].path, { orgId: this.requireOrgId() }),
+            this.http.path('jit.request', { orgId: this.requireOrgId() }),
             body,
         );
 
@@ -197,7 +196,7 @@ export class JitModule {
     /** Fetch the current status of a permission request. */
     async getRequestStatus(requestId: string): Promise<JitPermissionResult> {
         return this.http.get<JitPermissionResult>(
-            buildPath(ROUTES['jit.requestStatus'].path, {
+            this.http.path('jit.requestStatus', {
                 orgId: this.requireOrgId(),
                 requestId,
             }),
@@ -209,7 +208,7 @@ export class JitModule {
      */
     async getToken(requestId: string): Promise<string> {
         const data = await this.http.post<{ access_token: string }>(
-            buildPath(ROUTES['jit.token'].path, {
+            this.http.path('jit.token', {
                 orgId: this.requireOrgId(),
                 requestId,
             }),
@@ -226,7 +225,7 @@ export class JitModule {
      */
     async listPendingRequests(): Promise<Array<Record<string, unknown>>> {
         const data = await this.http.get<unknown>(
-            buildPath(ROUTES['jit.pending'].path, { orgId: this.requireOrgId() }),
+            this.http.path('jit.pending', { orgId: this.requireOrgId() }),
         );
         // The server answers `{ pending_requests, count, data, pagination }`;
         // `data` and `pending_requests` hold the same list.
@@ -257,7 +256,7 @@ export class JitModule {
     }
 
     private requireOrgId(): string {
-        if (!this.orgId) {
+        if (!this.orgId && !this.http.isCustomDomain) {
             throw new LumoAuthConfigError(
                 'jit requires `orgId` — pass it to the constructor config.',
             );

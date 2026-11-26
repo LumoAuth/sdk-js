@@ -5,9 +5,9 @@
 
 `@lumoauth/express` adds LumoAuth sign-in to an Express app. One middleware adds three routes:
 sign-in, callback and sign-out. It also puts the signed-in user on `req.user`. `requireAuth()`
-then guards the routes that need a user. The package also re-exports the server client and the
-error classes from [`@lumoauth/backend`](../backend/README.md), so an Express app needs only this
-one install.
+then guards the routes that need a user. `poppySession()` guards the routes that personal agents
+call. The package also re-exports the server client and the error classes from
+[`@lumoauth/backend`](../backend/README.md), so an Express app needs only this one install.
 
 It is part of the [LumoAuth JavaScript SDK](../../README.md).
 
@@ -24,6 +24,8 @@ It is part of the [LumoAuth JavaScript SDK](../../README.md).
   - [Guard routes with requireAuth()](#guard-routes-with-requireauth)
   - [Check access inside a handler](#check-access-inside-a-handler)
   - [Run behind a proxy](#run-behind-a-proxy)
+  - [Use a custom domain](#use-a-custom-domain)
+  - [Verify requests from personal agents](#verify-requests-from-personal-agents)
 - [Errors](#errors)
 - [API reference](#api-reference)
 - [Troubleshooting](#troubleshooting)
@@ -108,8 +110,9 @@ Credentials and scopes are explained in the [client README](../client/README.md#
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `baseUrl` | `string` | required | Root URL of LumoAuth |
-| `organization` | `string` | required | Organization slug that owns the OAuth client |
+| `baseUrl` | `string` | required unless `customDomain` is set | Root URL of LumoAuth |
+| `organization` | `string` | required unless `customDomain` is set | Organization slug that owns the OAuth client |
+| `customDomain` | `string` | none | The organization's own domain, for example `auth.acme.com`. It wins over `baseUrl`. See [Use a custom domain](#use-a-custom-domain). |
 | `clientId` | `string` | required | OAuth client ID |
 | `clientSecret` | `string` | none | Needed for a confidential client. A public client leaves it out and relies on PKCE. |
 | `prefix` | `string` | `'/auth'` | Where the three routes are mounted |
@@ -222,6 +225,179 @@ The middleware builds the callback URL from the request's protocol and `Host` he
 load balancer or a reverse proxy, call `app.set('trust proxy', true)`. Express then reads the
 `X-Forwarded-*` headers, and the callback URL matches the one that you registered.
 
+### Use a custom domain
+
+An organization can serve LumoAuth on its own domain, for example `https://auth.acme.com`. Pass
+the domain as `customDomain`, and leave out `baseUrl` and `organization`:
+
+```ts
+import express from 'express';
+import session from 'express-session';
+import { lumoAuthMiddleware, requireAuth } from '@lumoauth/express';
+
+const app = express();
+app.use(session({ secret: process.env.SESSION_SECRET!, resave: false, saveUninitialized: false }));
+app.use(
+  lumoAuthMiddleware({
+    customDomain: 'auth.acme.com',
+    clientId: process.env.LUMOAUTH_CLIENT_ID!,
+    clientSecret: process.env.LUMOAUTH_CLIENT_SECRET,
+  }),
+);
+
+app.get('/me', requireAuth(), (req, res) => res.json(req.user));
+app.listen(3000);
+```
+
+- `/auth/login` redirects to `https://auth.acme.com/api/v1/oauth/authorize`. The token
+  exchange, the token refresh and sign-out use the domain too.
+- No address has the `/orgs/{organization}` segment, so `organization` is not needed. When you
+  pass it too, the middleware never puts it in an address.
+- The custom domain wins over `baseUrl`. The middleware sends no request to `baseUrl`.
+- The issuer is the bare domain, `https://auth.acme.com`.
+- The value is a host name or an `https://` origin. `http://` is accepted only for `localhost`,
+  `127.0.0.1` and `[::1]`. A malformed value throws `LumoAuthConfigError` when the middleware is
+  created.
+
+`poppySession()` and `LumoAuthBackend` take the same `customDomain` option.
+
+### Verify requests from personal agents
+
+A personal agent that follows the [Personal Agent Protocol](https://personalagentprotocol.org)
+sends the `Poppy-Session` header to your API. `poppySession()` asks LumoAuth who the request is
+from and puts the answer on `req.poppy`. It needs no `express-session` and no `lumoAuthMiddleware()`.
+
+The middleware authenticates as a confidential application of your organization. That
+application's allowed scopes must include **`poppy:verify`**. Add the scope under
+**Applications** in the portal.
+
+```ts
+import express from 'express';
+import { poppySession } from '@lumoauth/express';
+
+const app = express();
+
+// One middleware for each scope rule.
+const poppy = (requiredScope?: string) =>
+  poppySession({
+    baseUrl: 'https://app.lumoauth.dev',
+    organization: 'acme-corp',
+    clientId: process.env.SHOP_API_CLIENT_ID,
+    clientSecret: process.env.SHOP_API_CLIENT_SECRET,
+    publicOrigin: process.env.PUBLIC_ORIGIN!, // https://shop.example.com
+    requiredScope,
+  });
+
+// A signed-out personal agent may read the catalog.
+app.get('/api/catalog', poppy(), (req, res) => {
+  res.json({ items: ['stormline-shell-m'], session: req.poppy!.session.id });
+});
+
+// This route needs the user's account and the orders:read scope.
+app.get('/api/orders', poppy('orders:read'), (req, res) => {
+  res.json({ account: req.poppy!.account!.sub, orders: [] });
+});
+
+app.listen(8787);
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `publicOrigin` | `string` | required | The address that personal agents call, for example `https://shop.example.com`. It may carry a base path. |
+| `requiredScope` | `string \| string[]` | none | The scopes that the route needs |
+| `resource` | `string` | none | The resource identifier of your service, when it takes only tokens issued for it |
+| `allowReplay` | `boolean` | `false` | `true` accepts a Session JWT that was verified before |
+| `baseUrl`, `organization`, `clientId`, `clientSecret` | `string` | required without `lumo` | The LumoAuth host, the organization slug, and the credentials of the application that holds `poppy:verify` |
+| `customDomain` | `string` | none | The organization's own domain. It replaces `baseUrl` and `organization`. |
+| `lumo` | `LumoAuthBackend` | none | A server client that is configured with `clientId` and `clientSecret`. It replaces the four options above. |
+| `fetch` | `typeof fetch` | global `fetch` | A custom `fetch`, for tests or a proxy |
+
+`poppySession()` throws `LumoAuthConfigError` when `publicOrigin` or the credentials are missing.
+It throws when the middleware is created, not at the first request.
+
+**`publicOrigin` comes from configuration.** A Session JWT names the address that the personal
+agent called. Behind a proxy, a request reaches your server with another host, and a `Host`
+header is whatever the caller sent. So the middleware never reads the `Host` header or the
+`X-Forwarded-*` headers. It
+builds the URL from `publicOrigin` and `req.originalUrl`, without the query. A route inside a
+router mounted at `/api` therefore sends `/api/...`, as the personal agent called it.
+
+**What leaves your server.** The middleware sends the method, the URL and five headers to
+LumoAuth: `Poppy-Session`, `Poppy-Version`, `Poppy-Extensions`, `Authorization` and `DPoP`. It
+sends no cookie and no other header, and it does not read the request body.
+
+**The three outcomes.**
+
+- **Verified.** `req.poppy` holds the result, and the next handler runs. `req.poppy.clientId` is
+  the personal agent, `req.poppy.session.id` is the Session, and `req.poppy.account` is `null`
+  for a signed-out request. Find account data with `req.poppy.account.sub`, never with `userId`.
+- **Refused.** LumoAuth returns the exact response for the personal agent. The middleware relays
+  its status, its headers and its body unchanged, and the next handler does not run.
+- **An SDK error.** LumoAuth could not be reached, or it rejected your own application (401,
+  403, 404 or 429). Such an error is about your service, so the middleware never relays it. It
+  calls `next(err)` with a `LumoAuthError` that has a fixed message and no status. Express then
+  answers `500`. The original error is `err.cause`, for your logs.
+
+The wrapped error matters with Express's default error handler. That handler answers with the
+`statusCode` of an error, and outside production it prints the stack. An SDK error carries
+LumoAuth's status and message, and neither may reach the personal agent.
+
+To verify a request yourself, call `lumo.poppy.verifyRequest()` and relay a refusal with
+`relayPoppyRefusal()`:
+
+```ts
+import { LumoAuthBackend, relayPoppyRefusal } from '@lumoauth/express';
+
+const lumo = new LumoAuthBackend({
+  baseUrl: 'https://app.lumoauth.dev',
+  secretKey: process.env.LUMOAUTH_SECRET_KEY!,
+  orgId: 'acme-corp',
+  clientId: process.env.SHOP_API_CLIENT_ID,
+  clientSecret: process.env.SHOP_API_CLIENT_SECRET,
+});
+
+app.post('/api/orders/:id/return', async (req, res, next) => {
+  let result;
+  try {
+    result = await lumo.poppy.verifyRequest(
+      {
+        method: req.method,
+        url: process.env.PUBLIC_ORIGIN + req.originalUrl, // the query is dropped
+        headers: req.headers, // only the protocol's headers are sent on
+      },
+      { requiredScope: 'orders:write' },
+    );
+  } catch (err) {
+    // About this service, not about the personal agent: answer 500.
+    next(new Error('Session verification failed', { cause: err }));
+    return;
+  }
+  if (!result.active) {
+    relayPoppyRefusal(res, result);
+    return;
+  }
+  res.json({ returned: req.params.id, account: result.account!.sub });
+});
+```
+
+Do not pass the SDK error to `next()` as it is. Its `statusCode` is LumoAuth's answer to your
+application, and Express's default error handler would send that status to the personal agent.
+
+The same client looks up and ends Sessions:
+
+```ts
+// `verified` is the result of a verified request, for example `req.poppy`.
+const status = await lumo.poppy.getSessionStatus(verified.clientId, verified.session.sid);
+// { status: 'active' | 'ended' | 'unknown', userId, agentId, account, signedIn, lastSeenAt }
+
+const { ended } = await lumo.poppy.endSession(verified.clientId, verified.session.sid);
+```
+
+The [workspace guide](../../README.md#verify-requests-from-personal-agents) describes the
+namespace, and the guide to
+[Session verification](https://docs.lumoauth.dev/agents/personal-agent-protocol-verify)
+lists every check and every refusal.
+
 ## Errors
 
 The sign-in routes answer with JSON errors:
@@ -258,9 +434,12 @@ app.use((err, req, res, next) => {
 |---|---|
 | `lumoAuthMiddleware(options)` | Adds the sign-in routes and restores `req.user` |
 | `requireAuth(options?)` | Guard that needs a signed-in user, with optional scope and custom checks |
+| `poppySession(options)` | Guard for routes that personal agents call. Sets `req.poppy` on a verified request and relays a refusal |
+| `relayPoppyRefusal(res, refusal)` | Writes the status, headers and body of a refusal to an Express or `node:http` response |
 | `LumoAuthBackend` | The server client from `@lumoauth/backend` |
+| `PoppyModule`, `buildPoppyVerifyBody()`, `buildPoppyRelay()` | The `poppy` namespace and its two pure functions, from `@lumoauth/backend` |
 | Error classes | The SDK error classes, listed in [Errors](#errors) |
-| Types | `LumoAuthMiddlewareOptions`, `RequireAuthOptions`, `SessionUser`, `LumoAuthRequestHandler`, `LumoAuthBackendConfig` |
+| Types | `LumoAuthMiddlewareOptions`, `RequireAuthOptions`, `SessionUser`, `LumoAuthRequestHandler`, `LumoAuthBackendConfig`, `PoppySessionOptions`, `PoppyVerifier`, `PoppyVerification`, `PoppyVerified`, `PoppyRefused`, `PoppySession`, `PoppyAccount`, `PoppySessionStatus`, `PoppyEndSessionResult`, `PoppyVerifyOptions`, `PoppyModuleConfig` |
 
 ## Troubleshooting
 
@@ -273,6 +452,8 @@ app.use((err, req, res, next) => {
 | `LumoAuthBackend` calls fail with `401` while using an `lmk_…` key | Organization API keys only work on the admin API, client registration and the authorization checks. ABAC, agent and JIT routes reject them. | Use the key for permission and Zanzibar checks only. |
 | A permission check in a handler answers for the wrong user | No subject was named, so the check answered for the credential's owner. | Pass `{ userId: req.user.sub }` as the third argument. |
 | A check with `userId` gets `403` `INSUFFICIENT_PERMISSIONS` | The key lacks the `authz:check` scope. | Add the scope to the key. |
+| A route behind `poppySession()` answers `500` for every request | The middleware could not verify. `err.cause` in your error handler names the reason: a wrong client secret, a missing `poppy:verify` scope, or the protocol switched off for the organization. | Fix the application's credentials or scopes. |
+| Every personal agent gets `invalid_session` with "signed for another URL (htu)" | `publicOrigin` is not the address that personal agents call. | Set `publicOrigin` to the public address, with the base path if a proxy adds one. |
 
 ### Token refresh
 
@@ -308,8 +489,10 @@ Set `endSessionOnLogout: false` to only clear the local session.
 
 ## Versioning and compatibility
 
-This package is version 1.0.0. It needs LumoAuth server API 1.0.0 or newer, Express 4.18 or
-newer, and `express-session` 1.17 or newer.
+This package follows semantic versioning. Its [npm page](https://www.npmjs.com/package/@lumoauth/express)
+shows the latest version, and the [release notes](../../release-notes) describe each release.
+It needs LumoAuth server API 1.0.0 or newer, Express 4.18 or newer, and `express-session` 1.17
+or newer.
 
 ## Related packages
 

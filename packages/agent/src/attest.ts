@@ -2,6 +2,7 @@ import {
     LumoAuthApiError,
     LumoAuthConfigError,
     LumoAuthNetworkError,
+    LumoAuthAddress,
     fetchWithDpop,
     type DpopProofProvider,
 } from '@lumoauth/shared';
@@ -16,13 +17,21 @@ import {
  * comes back sender-constrained (`tokenType: "DPoP"`).
  *
  * NOTE: this endpoint is not yet in sdk-contract/routes.json, so the path
- * is built here rather than taken from the shared route registry.
+ * template is written here rather than taken from the shared route registry.
+ * `LumoAuthAddress` still decides its form: a custom domain serves it without
+ * the `/orgs/{orgId}` segment.
  */
 
 export interface AttestWorkloadOptions {
     /** LumoAuth instance URL. Defaults to `LUMOAUTH_URL` or `https://app.lumoauth.dev`. */
     baseUrl?: string;
-    /** Organization slug. Defaults to `LUMOAUTH_ORG_ID`. */
+    /**
+     * The organization's custom domain, for example `auth.acme.com`. Defaults
+     * to `LUMOAUTH_CUSTOM_DOMAIN`. When set, `baseUrl` is not used and
+     * `orgId` is not needed.
+     */
+    customDomain?: string;
+    /** Organization slug. Defaults to `LUMOAUTH_ORG_ID`. Not needed with `customDomain`. */
     orgId?: string;
     /** The agent id (`agt_…`). */
     agentId: string;
@@ -50,15 +59,18 @@ function envVar(name: string): string | undefined {
 }
 
 export async function attestWorkload(options: AttestWorkloadOptions): Promise<AttestWorkloadResult> {
-    const baseUrl = (options.baseUrl ?? envVar('LUMOAUTH_URL') ?? 'https://app.lumoauth.dev').replace(/\/+$/, '');
-    const orgId = options.orgId ?? envVar('LUMOAUTH_ORG_ID') ?? '';
-    if (!orgId) {
+    const address = new LumoAuthAddress({
+        baseUrl: options.baseUrl ?? envVar('LUMOAUTH_URL') ?? 'https://app.lumoauth.dev',
+        orgId: options.orgId ?? envVar('LUMOAUTH_ORG_ID') ?? '',
+        customDomain: options.customDomain ?? envVar('LUMOAUTH_CUSTOM_DOMAIN'),
+    });
+    if (!address.hasOrganization) {
         throw new LumoAuthConfigError('attestWorkload requires orgId (or LUMOAUTH_ORG_ID).');
     }
     if (!options.agentId || !options.attestationToken) {
         throw new LumoAuthConfigError('attestWorkload requires agentId and attestationToken.');
     }
-    const url = `${baseUrl}/orgs/${encodeURIComponent(orgId)}/api/v1/agents/${encodeURIComponent(options.agentId)}/attest`;
+    const url = address.urlOf('/orgs/{orgId}/api/v1/agents/{agentId}/attest', { agentId: options.agentId });
     const fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
     const init: RequestInit = {
         method: 'POST',

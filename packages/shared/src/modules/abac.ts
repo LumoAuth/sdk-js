@@ -1,6 +1,6 @@
 import { HttpClient } from '../utils/http';
 import { LumoAuthValidationError } from '../errors';
-import { ROUTES, buildPath } from '../routes';
+import type { RouteName } from '../routes';
 import {
     AbacCheckRequestSchema,
     AbacCheckResponseSchema,
@@ -77,18 +77,19 @@ export class AbacModule {
     /**
      * ABAC is mounted org-scoped on the server
      * (`/orgs/{orgId}/api/v1/abac/...`). There is no unprefixed route, so
-     * every call must carry the org.
+     * every call must carry the org. On a custom domain the transport
+     * leaves the segment out, and the org is not needed.
      */
     private path(
-        route: keyof typeof ROUTES,
+        route: RouteName,
         params: Record<string, string> = {},
     ): string {
-        if (!this.orgId) {
+        if (!this.orgId && !this.http.isCustomDomain) {
             throw new Error(
                 'client.abac requires `orgId` — pass it to the LumoAuth constructor: new LumoAuth({ baseUrl, orgId, token })',
             );
         }
-        return buildPath(ROUTES[route].path, { orgId: this.orgId, ...params });
+        return this.http.path(route, { orgId: this.orgId, ...params });
     }
 
     // ── Authorization checks ──────────────────────────────────────────

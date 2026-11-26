@@ -1,8 +1,8 @@
 import { generateKeypair, jwkThumbprint, publicJwkFromPrivateKey, type AAuthJwk, type AAuthKeypair } from './keys';
 import { signRequest, type SignRequestOptions } from './signing';
-import { verifyAuthToken, type AAuthTokenClaims, type VerifyAuthTokenOptions } from './verify';
+import { discoverAAuthIssuer, verifyAuthToken, type AAuthTokenClaims, type VerifyAuthTokenOptions } from './verify';
 import { AAuthError } from './errors';
-import { LumoAuthConfigError, LumoAuthNetworkError, ROUTES, buildPath } from '@lumoauth/shared';
+import { LumoAuthAddress, LumoAuthConfigError, LumoAuthNetworkError, type RouteName } from '@lumoauth/shared';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -16,7 +16,28 @@ export interface AAuthClientOptions {
      * `https://app.lumoauth.dev`.
      */
     baseUrl?: string;
-    /** Organization ID (slug). Defaults to `process.env.LUMOAUTH_ORG_ID`. */
+    /**
+     * The organization's custom domain: a host name or an `https://` origin,
+     * for example `auth.acme.com`. Defaults to
+     * `process.env.LUMOAUTH_CUSTOM_DOMAIN`. When set, every request goes to
+     * it, `baseUrl` is not used, no path carries the `/orgs/{orgId}`
+     * segment, and `orgId` is not needed.
+     *
+     * AAuth is the exception to "the issuer is the bare domain": LumoAuth
+     * names the AAuth issuer with the platform address on every host. With a
+     * custom domain, pass `issuer`, or let the client read it from the
+     * domain's issuer metadata (`await client.resolveIssuer()`).
+     */
+    customDomain?: string;
+    /**
+     * The organization's AAuth issuer, when you want to state it yourself:
+     * `https://app.lumoauth.dev/orgs/{orgId}/api/v1`. It is the `iss` of an
+     * AAuth token and the audience that an agent addresses. Without it, the
+     * client uses `{baseUrl}/orgs/{orgId}/api/v1` on the LumoAuth host, and
+     * the issuer metadata document on a custom domain.
+     */
+    issuer?: string;
+    /** Organization ID (slug). Defaults to `process.env.LUMOAUTH_ORG_ID`. Not needed with `customDomain`. */
     orgId?: string;
     /** Key ID matching the JWKS entry registered with LumoAuth. Default `key-1`. */
     kid?: string;
@@ -130,11 +151,16 @@ export class AAuthClient {
     static generateKeypair = generateKeypair;
 
     readonly agentIdentifier: string;
+    /** The origin of every request: the custom domain when one is set, otherwise the LumoAuth host. */
     readonly baseUrl: string;
     readonly orgId: string;
+    /** Where the organization is served: the platform host, or its custom domain. */
+    readonly address: LumoAuthAddress;
     readonly kid: string;
 
     private readonly privateKeyPem: string;
+    private readonly configuredIssuer: string | undefined;
+    private discoveredIssuer: string | undefined;
     private readonly fetchFn: typeof globalThis.fetch;
     private readonly timeout: number;
 
@@ -147,16 +173,53 @@ export class AAuthClient {
         }
         this.agentIdentifier = options.agentIdentifier;
         this.privateKeyPem = options.privateKeyPem;
-        this.baseUrl = (options.baseUrl ?? envVar('LUMOAUTH_URL') ?? 'https://app.lumoauth.dev').replace(/\/+$/, '');
-        this.orgId = options.orgId ?? envVar('LUMOAUTH_ORG_ID') ?? '';
+        // Checks the custom domain now. A custom domain wins over the base URL.
+        this.address = new LumoAuthAddress({
+            baseUrl: options.baseUrl ?? envVar('LUMOAUTH_URL') ?? 'https://app.lumoauth.dev',
+            orgId: options.orgId ?? envVar('LUMOAUTH_ORG_ID') ?? '',
+            customDomain: options.customDomain ?? envVar('LUMOAUTH_CUSTOM_DOMAIN'),
+        });
+        this.baseUrl = this.address.baseUrl;
+        this.orgId = this.address.orgId;
+        this.configuredIssuer = options.issuer || undefined;
         this.kid = options.kid ?? 'key-1';
         this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
         this.timeout = options.timeout ?? 30_000;
     }
 
-    /** The organization's AAuth issuer URL: `{baseUrl}/orgs/{orgId}/api/v1`. */
+    /**
+     * The organization's AAuth issuer URL: `{baseUrl}/orgs/{orgId}/api/v1`,
+     * or the `issuer` option.
+     *
+     * LumoAuth names the AAuth issuer with the platform address on every
+     * host, so on a custom domain it is NOT the bare domain and cannot be
+     * derived. There this getter returns the `issuer` option, or the value
+     * that {@link resolveIssuer} has read from the issuer metadata.
+     *
+     * @throws LumoAuthConfigError on a custom domain, before the issuer is known.
+     */
     get issuer(): string {
-        return `${this.baseUrl}/orgs/${this.orgId}/api/v1`;
+        if (this.configuredIssuer) return this.configuredIssuer;
+        if (!this.address.isCustomDomain) return `${this.baseUrl}/orgs/${this.orgId}/api/v1`;
+        if (this.discoveredIssuer) return this.discoveredIssuer;
+        throw new LumoAuthConfigError(
+            'On a custom domain the AAuth issuer is read from the issuer metadata document. ' +
+                'Call `await client.resolveIssuer()` first, or pass `issuer` to the constructor.',
+        );
+    }
+
+    /**
+     * The organization's AAuth issuer: the `iss` that an AAuth token names,
+     * and the audience that an agent addresses.
+     *
+     * On the LumoAuth host this is {@link issuer}, without a request. On a
+     * custom domain it is the `issuer` option, or the `issuer` member of the
+     * domain's AAuth issuer metadata, which is fetched once and cached.
+     */
+    async resolveIssuer(): Promise<string> {
+        if (this.configuredIssuer || !this.address.isCustomDomain) return this.issuer;
+        this.discoveredIssuer = await discoverAAuthIssuer(this.address, this.fetchFn);
+        return this.discoveredIssuer;
     }
 
     /** The agent's public JWK derived from its private key. */
@@ -385,9 +448,11 @@ export class AAuthClient {
         options: Omit<VerifyAuthTokenOptions, 'issuer' | 'fetch'> & { issuer?: string }
     ): Promise<AAuthTokenClaims> {
         return verifyAuthToken(token, {
-            issuer: options.issuer ?? this.issuer,
             fetch: this.fetchFn,
             ...options,
+            // The key set is fetched from the custom domain, when there is one.
+            customDomain: options.customDomain ?? this.address.customDomain,
+            issuer: options.issuer ?? (await this.resolveIssuer()),
         });
     }
 
@@ -425,8 +490,8 @@ export class AAuthClient {
     }
 
     /** Absolute URL for an org-scoped route from the shared registry. */
-    private routeUrl(name: keyof typeof ROUTES): string {
-        return `${this.baseUrl}${buildPath(ROUTES[name].path, { orgId: this.orgId })}`;
+    private routeUrl(name: RouteName): string {
+        return this.address.url(name);
     }
 
     private async tokenRequest(body: Record<string, unknown>, agentToken: string): Promise<RawTokenResponse> {
@@ -434,7 +499,7 @@ export class AAuthClient {
     }
 
     private async signedPost(url: string, body: Record<string, unknown>, agentToken: string): Promise<unknown> {
-        if (!this.orgId) {
+        if (!this.address.hasOrganization) {
             throw new LumoAuthConfigError('orgId is required for AAuth token operations');
         }
         const bodyStr = JSON.stringify(body);

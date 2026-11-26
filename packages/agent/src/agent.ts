@@ -8,8 +8,7 @@ import {
     LumoAuthApiError,
     LumoAuthConfigError,
     LumoAuthNetworkError,
-    ROUTES,
-    buildPath,
+    LumoAuthAddress,
     fetchWithDpop,
     type DpopProofProvider,
     type AgentAskResult,
@@ -19,7 +18,7 @@ import {
     type UsageReport,
     type UsageReportResult,
 } from '@lumoauth/shared';
-import { CLIENT_ASSERTION_TYPE, ClientAssertionSigner, issuerFor } from './client-assertion';
+import { CLIENT_ASSERTION_TYPE, ClientAssertionSigner } from './client-assertion';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -29,7 +28,15 @@ export interface LumoAgentOptions {
      * `https://app.lumoauth.dev`.
      */
     baseUrl?: string;
-    /** Organization slug. Defaults to `process.env.LUMOAUTH_ORG_ID`. */
+    /**
+     * The organization's custom domain: a host name or an `https://` origin,
+     * for example `auth.acme.com`. Defaults to
+     * `process.env.LUMOAUTH_CUSTOM_DOMAIN`. When set, every request goes to
+     * it, `baseUrl` is not used, no path carries the `/orgs/{orgId}`
+     * segment, and `orgId` is not needed.
+     */
+    customDomain?: string;
+    /** Organization slug. Defaults to `process.env.LUMOAUTH_ORG_ID`. Not needed with `customDomain`. */
     orgId?: string;
     /** OAuth client ID. Defaults to `process.env.AGENT_CLIENT_ID`. */
     clientId?: string;
@@ -46,7 +53,8 @@ export interface LumoAgentOptions {
     keyId?: string;
     /**
      * The organization's issuer identifier, the assertion's `aud`. Defaults to
-     * `{baseUrl}/orgs/{orgId}/api/v1`; set it on a custom domain.
+     * `{baseUrl}/orgs/{orgId}/api/v1`, or to the bare domain with
+     * `customDomain`.
      */
     issuer?: string;
     /** Scopes to request. When omitted the server grants the agent's defaults. */
@@ -117,8 +125,11 @@ const TOKEN_REFRESH_BUFFER_MS = 60_000;
  * ```
  */
 export class LumoAgent {
+    /** The origin of every request: the custom domain when one is set, otherwise the LumoAuth host. */
     readonly baseUrl: string;
     readonly orgId: string;
+    /** Where the organization is served: the platform host, or its custom domain. */
+    readonly address: LumoAuthAddress;
     readonly clientId: string;
 
     /** Agent identity — ask/isAllowed, self-inspection, registration. */
@@ -142,8 +153,15 @@ export class LumoAgent {
     private refreshPromise: Promise<string> | null = null;
 
     constructor(options: LumoAgentOptions = {}) {
-        this.baseUrl = (options.baseUrl ?? envVar('LUMOAUTH_URL') ?? 'https://app.lumoauth.dev').replace(/\/+$/, '');
-        this.orgId = options.orgId ?? envVar('LUMOAUTH_ORG_ID') ?? '';
+        // Checks the custom domain now. A custom domain wins over the base URL.
+        this.address = new LumoAuthAddress({
+            baseUrl: options.baseUrl ?? envVar('LUMOAUTH_URL') ?? 'https://app.lumoauth.dev',
+            orgId: options.orgId ?? envVar('LUMOAUTH_ORG_ID') ?? '',
+            customDomain: options.customDomain ?? envVar('LUMOAUTH_CUSTOM_DOMAIN'),
+        });
+        this.baseUrl = this.address.baseUrl;
+        this.orgId = this.address.orgId;
+        const customDomain = this.address.customDomain;
         this.clientId = options.clientId ?? envVar('AGENT_CLIENT_ID') ?? '';
         const privateKey = options.privateKey ?? envVar('AGENT_PRIVATE_KEY');
         const keyId = options.keyId ?? envVar('AGENT_KEY_ID');
@@ -177,6 +195,8 @@ export class LumoAgent {
         const tokenProvider = () => this.getAccessToken();
         const http = new HttpClient({
             baseUrl: this.baseUrl,
+            customDomain,
+            orgId: this.orgId,
             token: tokenProvider,
             timeout: options.timeout,
             fetch: options.fetch,
@@ -188,6 +208,7 @@ export class LumoAgent {
         this.approvals = new ApprovalsModule(http, this.orgId);
         this.mcp = new McpModule({
             baseUrl: this.baseUrl,
+            customDomain,
             orgId: this.orgId,
             token: tokenProvider,
             fetch: options.fetch,
@@ -196,6 +217,7 @@ export class LumoAgent {
         });
         this.delegation = new DelegationModule({
             baseUrl: this.baseUrl,
+            customDomain,
             orgId: this.orgId,
             clientId: this.clientId,
             clientSecret: this.clientSecret,
@@ -227,7 +249,8 @@ export class LumoAgent {
         const requested = scopes ?? this.scopes;
         if (requested?.length) form.scope = requested.join(' ');
 
-        const url = `${this.baseUrl}${buildPath(ROUTES['oauth.token'].path, { orgId: this.requireOrgId() })}`;
+        this.requireOrgId();
+        const url = this.address.url('oauth.token');
         const init: RequestInit = {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -280,13 +303,15 @@ export class LumoAgent {
 
     /**
      * A new `private_key_jwt` client assertion for this agent (single-use),
-     * addressed to `issuer` or `{baseUrl}/orgs/{orgId}/api/v1`.
+     * addressed to `issuer`, or to the organization's issuer:
+     * `{baseUrl}/orgs/{orgId}/api/v1`, or the bare custom domain.
      */
     createClientAssertion(): string {
         if (!this.assertionSigner) {
             throw new LumoAuthConfigError('This agent signs no client assertions: create it with privateKey.');
         }
-        const audience = this.issuer ?? issuerFor(this.baseUrl, this.requireOrgId());
+        if (!this.issuer) this.requireOrgId();
+        const audience = this.issuer ?? this.address.issuer;
         return this.assertionSigner.create(this.clientId, audience);
     }
 
@@ -376,12 +401,12 @@ export class LumoAgent {
 
     // ── Internal ──────────────────────────────────────────────────────
 
-    private requireOrgId(): string {
-        if (!this.orgId) {
+    /** Org-scoped routes need the slug, or a custom domain. */
+    private requireOrgId(): void {
+        if (!this.address.hasOrganization) {
             throw new LumoAuthConfigError(
                 'orgId is required — pass it to the LumoAgent constructor or set LUMOAUTH_ORG_ID.',
             );
         }
-        return this.orgId;
     }
 }

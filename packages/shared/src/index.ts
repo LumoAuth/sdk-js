@@ -3,6 +3,8 @@
 // Everything exported here runs unchanged in a browser, in Node, and in edge
 // runtimes: no `window`, no `node:*`, no credentials. Browser-only and
 // server-only surfaces live in @lumoauth/client and @lumoauth/backend.
+// The one exception is PoppyModule, which holds a client secret: it is for
+// servers and edge runtimes, and its constructor throws in a browser.
 
 // ─── Modules ──────────────────────────────────────────────────────────
 export { PermissionsModule, type PermissionsModuleOptions, type CheckSubjectOptions } from './modules/permissions';
@@ -56,6 +58,31 @@ export {
     type McpToolDecision,
     type AgentMcpToolDecision,
 } from './modules/mcp';
+// Personal Agent Protocol Session verification. Server code only: the module
+// authenticates with a client secret and refuses to construct in a browser.
+export {
+    PoppyModule,
+    buildPoppyVerifyBody,
+    buildPoppyRelay,
+    normalizePoppyPublicOrigin,
+    POPPY_FORWARDED_HEADERS,
+    type PoppyModuleConfig,
+    type PoppyHeaders,
+    type PoppyIncomingRequest,
+    type PoppyVerifyOptions,
+    type PoppyVerifyBody,
+    type PoppyVerifyBodyInput,
+    type PoppyVerification,
+    type PoppyVerified,
+    type PoppyRefused,
+    type PoppyRefusalResponse,
+    type PoppyRelay,
+    type PoppySession,
+    type PoppyAccount,
+    type PoppySessionState,
+    type PoppySessionStatus,
+    type PoppyEndSessionResult,
+} from './modules/poppy';
 export {
     AuthModule,
     type AuthModuleConfig,
@@ -157,6 +184,13 @@ export {
     type RouteDef,
     type RouteMethod,
     type RouteName,
+    // Custom domains: the one rule for the form of a path, and the object
+    // that turns a route or another address of an organization into a URL.
+    LumoAuthAddress,
+    normalizeCustomDomain,
+    resolveRoutePath,
+    apiBaseOfIssuer,
+    type LumoAuthAddressConfig,
 } from './routes';
 
 // ─── Errors ───────────────────────────────────────────────────────────
@@ -202,4 +236,10 @@ export {
 // ─── HTTP ─────────────────────────────────────────────────────────────
 // Exported so @lumoauth/client and @lumoauth/backend can construct the
 // modules above against their own credential model.
-export { HttpClient, ORGANIZATION_API_KEY_PREFIX, type HttpClientConfig, type CredentialSource } from './utils/http';
+export {
+    HttpClient,
+    ORGANIZATION_API_KEY_PREFIX,
+    type HttpClientConfig,
+    type HttpRequestOptions,
+    type CredentialSource,
+} from './utils/http';

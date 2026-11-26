@@ -9,6 +9,10 @@ export type LumoAuthNextProviderProps = Omit<LumoAuthProviderProps, 'storage' | 
     /**
      * Base URL of the LumoAuth region of the organization.
      * @default 'https://app.lumoauth.dev' (US). EU: 'https://eu.app.lumoauth.dev'.
+     *
+     * Not used with `customDomain`. Pass
+     * `customDomain={process.env.NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN}` when
+     * the organization has its own domain; `orgId` is then not needed.
      */
     domain?: string;
     /** Base path where createRouteHandler is mounted. @default '/api/auth' */

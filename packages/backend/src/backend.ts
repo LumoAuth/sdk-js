@@ -12,6 +12,8 @@ import {
     DelegationModule,
     JitModule,
     McpModule,
+    PoppyModule,
+    LumoAuthAddress,
     LumoAuthConfigError,
 } from '@lumoauth/shared';
 import { createRequire } from 'node:module';
@@ -19,10 +21,20 @@ import { assertServerOnly } from './guard';
 
 export interface LumoAuthBackendConfig {
     /**
-     * Base URL of your LumoAuth instance.
+     * Base URL of your LumoAuth instance. Required unless `customDomain`
+     * is set.
      * @example "https://app.lumoauth.dev"
      */
-    baseUrl: string;
+    baseUrl?: string;
+
+    /**
+     * Your organization's custom domain: a host name or an `https://`
+     * origin. When set, every request goes to it and `baseUrl` is not used.
+     * No path carries the `/orgs/{orgId}` segment, so `orgId` is not needed,
+     * and the issuer is the bare domain.
+     * @example "auth.acme.com"
+     */
+    customDomain?: string;
 
     /**
      * Server credential — a tenant API key (`lmk_…`) or a machine access
@@ -33,15 +45,23 @@ export interface LumoAuthBackendConfig {
      */
     secretKey: string | (() => string | Promise<string>);
 
-    /** Organization slug. Required for org-scoped surfaces (ABAC, agents). */
+    /**
+     * Organization slug. Required for org-scoped surfaces (ABAC, agents)
+     * on the platform host. Not needed with `customDomain`.
+     */
     orgId?: string;
 
-    /** OAuth client ID, when using the auth or delegation modules server-side. */
+    /**
+     * OAuth client ID, when using the auth, delegation or poppy modules
+     * server-side.
+     */
     clientId?: string;
 
     /**
      * OAuth client secret for confidential flows — required by
-     * `delegation` for the consent-code exchange and revocation.
+     * `delegation` for the consent-code exchange and revocation, and by
+     * `poppy`, whose calls authenticate with the client id and this secret
+     * (the application needs the `poppy:verify` scope).
      */
     clientSecret?: string;
 
@@ -124,8 +144,16 @@ export class LumoAuthBackend {
     public readonly jit: JitModule;
     /** MCP servers: token exchange and per-tool checks (`authorizeTool`). */
     public readonly mcp: McpModule;
+    /**
+     * Personal Agent Protocol: verify the `Poppy-Session` header of a request
+     * that a personal agent sent to your API, and look up or end Sessions.
+     * Authenticates with `clientId` and `clientSecret`, never with `secretKey`.
+     */
+    public readonly poppy: PoppyModule;
 
     private readonly http: HttpClient;
+    /** Where the organization is served: the platform host, or its custom domain. */
+    private readonly address: LumoAuthAddress;
     private readonly baseUrl: string;
     private readonly secretProvider: () => string | Promise<string>;
     private apiInstance: LumoAuthApiEscapeHatch | null = null;
@@ -133,7 +161,9 @@ export class LumoAuthBackend {
     constructor(config: LumoAuthBackendConfig) {
         assertServerOnly('LumoAuthBackend');
 
-        if (!config.baseUrl) {
+        // Checks `customDomain` now. A custom domain wins over `baseUrl`.
+        this.address = new LumoAuthAddress(config);
+        if (!this.address.baseUrl) {
             throw new LumoAuthConfigError('baseUrl is required');
         }
         if (!config.secretKey) {
@@ -142,7 +172,8 @@ export class LumoAuthBackend {
             );
         }
 
-        this.baseUrl = config.baseUrl.replace(/\/+$/, '');
+        this.baseUrl = this.address.baseUrl;
+        const customDomain = this.address.customDomain;
         this.secretProvider =
             typeof config.secretKey === 'function'
                 ? config.secretKey
@@ -150,6 +181,8 @@ export class LumoAuthBackend {
 
         const httpConfig: HttpClientConfig = {
             baseUrl: config.baseUrl,
+            customDomain,
+            orgId: config.orgId,
             token: config.secretKey,
             timeout: config.timeout,
             fetch: config.fetch,
@@ -167,13 +200,25 @@ export class LumoAuthBackend {
         this.jit = new JitModule(this.http, orgId);
         this.mcp = new McpModule({
             baseUrl: this.baseUrl,
+            customDomain,
             orgId,
             token: this.secretProvider,
             fetch: config.fetch,
             http: this.http,
         });
+        this.poppy = new PoppyModule({
+            baseUrl: this.baseUrl,
+            customDomain,
+            orgId,
+            clientId: config.clientId,
+            clientSecret: config.clientSecret,
+            timeout: config.timeout,
+            fetch: config.fetch,
+            headers: config.headers,
+        });
         this.delegation = new DelegationModule({
             baseUrl: this.baseUrl,
+            customDomain,
             orgId,
             clientId: config.clientId ?? '',
             clientSecret: config.clientSecret,
@@ -183,7 +228,8 @@ export class LumoAuthBackend {
         });
 
         const authConfig: AuthModuleConfig = {
-            baseUrl: config.baseUrl,
+            baseUrl: this.baseUrl,
+            customDomain,
             orgId,
             clientId: config.clientId ?? '',
             fetch: config.fetch,
@@ -227,6 +273,7 @@ export class LumoAuthBackend {
 
     private loadApiClient(): LumoAuthApiEscapeHatch {
         let mod: Record<string, unknown>;
+        let requireFromClient: NodeRequire | null = null;
         try {
             // Works from both the CJS build (__dirname) and the ESM build
             // (import.meta.url). `@lumoauth/backend` is Node-only, so
@@ -236,6 +283,7 @@ export class LumoAuthBackend {
                 typeof __dirname === 'string' ? `${__dirname}/` : import.meta.url,
             );
             mod = requireFn('@lumoauth/api-client') as Record<string, unknown>;
+            requireFromClient = createRequire(requireFn.resolve('@lumoauth/api-client'));
         } catch (error) {
             throw new LumoAuthConfigError(
                 'lumo.api requires the generated client `@lumoauth/api-client`, which is not installed. ' +
@@ -292,13 +340,61 @@ export class LumoAuthBackend {
         }
 
         const configuration = new ConfigurationCtor(params);
+        const transport = this.customDomainTransport(requireFromClient);
 
         return {
             module: mod,
             configuration,
             create<T>(apiClass: new (configuration?: unknown) => T): T {
-                return new apiClass(configuration);
+                if (transport === undefined) return new apiClass(configuration);
+                // The generated classes take (configuration, basePath, axios).
+                const Api = apiClass as unknown as new (c: unknown, basePath: undefined, axios: unknown) => T;
+                return new Api(configuration, undefined, transport);
             },
         };
+    }
+
+    /**
+     * The generated client writes `/orgs/{orgId}` into every organization
+     * path, and a custom domain answers such a path with 404. On a custom
+     * domain the generated classes therefore get their own axios instance,
+     * which removes the segment of THIS organization from each request.
+     *
+     * The slug must be known for that: `lumo.api` on a custom domain needs
+     * `orgId` in the config, and the same value in each generated call.
+     * Returns `undefined` on the platform host, where nothing changes.
+     */
+    private customDomainTransport(requireFromClient: NodeRequire | null): unknown {
+        if (!this.address.isCustomDomain) return undefined;
+        if (!this.address.orgId) {
+            throw new LumoAuthConfigError(
+                'lumo.api on a custom domain needs `orgId` in the LumoAuthBackend config: the generated client ' +
+                    'writes `/orgs/{orgId}` into every path, and the backend removes that segment for its own ' +
+                    'organization only.',
+            );
+        }
+        type Request = { url?: string };
+        type Axios = { create(): { interceptors: { request: { use(fn: (request: Request) => Request): unknown } } } };
+        let axios: Axios;
+        try {
+            const loaded = requireFromClient?.('axios') as (Axios & { default?: Axios }) | undefined;
+            const resolved = loaded?.default ?? loaded;
+            if (!resolved || typeof resolved.create !== 'function') throw new Error('axios has no create()');
+            axios = resolved;
+        } catch (error) {
+            throw new LumoAuthConfigError(
+                'lumo.api on a custom domain needs the `axios` package that `@lumoauth/api-client` depends on. ' +
+                    `Original error: ${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
+        const instance = axios.create();
+        const base = this.address.baseUrl;
+        instance.interceptors.request.use((request) => {
+            if (typeof request.url === 'string' && request.url.startsWith(`${base}/`)) {
+                request.url = base + this.address.rawPath(request.url.slice(base.length));
+            }
+            return request;
+        });
+        return instance;
     }
 }

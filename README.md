@@ -25,8 +25,10 @@ typed, ships ESM and CommonJS builds, and runs on Node 18 or newer.
 - [Install](#install)
 - [Quick start](#quick-start)
 - [Core concepts](#core-concepts)
+  - [Use a custom domain](#use-a-custom-domain)
 - [Configuration](#configuration)
 - [Guides](#guides)
+  - [Verify requests from personal agents](#verify-requests-from-personal-agents)
 - [Errors](#errors)
 - [API reference](#api-reference)
 - [Troubleshooting](#troubleshooting)
@@ -65,11 +67,11 @@ framework package that is built on it. Code that runs on a server uses
 |---|---|---|---|
 | [`@lumoauth/shared`](./packages/shared/README.md) | [![npm](https://img.shields.io/npm/v/@lumoauth/shared.svg?label=)](https://www.npmjs.com/package/@lumoauth/shared) | Browser, Node, edge | **Internal core.** The namespace modules, Zod schemas, error classes, the `ROUTES` registry, PKCE helpers and the HTTP client. |
 | [`@lumoauth/client`](./packages/client/README.md) | [![npm](https://img.shields.io/npm/v/@lumoauth/client.svg?label=)](https://www.npmjs.com/package/@lumoauth/client) | Browser (any framework) | The `LumoAuth` browser client for permission, Zanzibar and ABAC checks, OAuth 2.0 with PKCE, and a session runtime with pluggable token storage. |
-| [`@lumoauth/backend`](./packages/backend/README.md) | [![npm](https://img.shields.io/npm/v/@lumoauth/backend.svg?label=)](https://www.npmjs.com/package/@lumoauth/backend) | Node (server only) | `LumoAuthBackend`, a server client with every namespace and the `api` escape hatch to the generated REST client. |
-| [`@lumoauth/express`](./packages/express/README.md) | [![npm](https://img.shields.io/npm/v/@lumoauth/express.svg?label=)](https://www.npmjs.com/package/@lumoauth/express) | Node + Express | Login, callback and logout routes, `req.user` from the session, and `requireAuth()` guards. Re-exports `@lumoauth/backend`. |
+| [`@lumoauth/backend`](./packages/backend/README.md) | [![npm](https://img.shields.io/npm/v/@lumoauth/backend.svg?label=)](https://www.npmjs.com/package/@lumoauth/backend) | Node (server only) | `LumoAuthBackend`, a server client with every namespace, including `poppy` for requests from personal agents, and the `api` escape hatch to the generated REST client. |
+| [`@lumoauth/express`](./packages/express/README.md) | [![npm](https://img.shields.io/npm/v/@lumoauth/express.svg?label=)](https://www.npmjs.com/package/@lumoauth/express) | Node + Express | Login, callback and logout routes, `req.user` from the session, `requireAuth()` guards, and `poppySession()` for routes that personal agents call. Re-exports `@lumoauth/backend`. |
 | [`@lumoauth/agent`](./packages/agent/README.md) | [![npm](https://img.shields.io/npm/v/@lumoauth/agent.svg?label=)](https://www.npmjs.com/package/@lumoauth/agent) | Node 18+ | `LumoAgent` for client-credentials sign-in, preflight checks, approvals, JIT and MCP tokens. `AAuthClient` for cryptographic agent identity with RFC 9421 signing. |
 | [`@lumoauth/react`](./packages/react/README.md) | [![npm](https://img.shields.io/npm/v/@lumoauth/react.svg?label=)](https://www.npmjs.com/package/@lumoauth/react) | React 18+ | `<LumoAuthProvider>`, `<SignIn>`, `<UserButton>`, `<Protect>`, `useAuth()` and related hooks. Re-exports `@lumoauth/client`. |
-| [`@lumoauth/nextjs`](./packages/nextjs/README.md) | [![npm](https://img.shields.io/npm/v/@lumoauth/nextjs.svg?label=)](https://www.npmjs.com/package/@lumoauth/nextjs) | Next.js 14+ App Router | Server-side `auth()`, middleware that protects routes, and a backend-for-frontend that keeps tokens in an httpOnly cookie. Re-exports `@lumoauth/react`. |
+| [`@lumoauth/nextjs`](./packages/nextjs/README.md) | [![npm](https://img.shields.io/npm/v/@lumoauth/nextjs.svg?label=)](https://www.npmjs.com/package/@lumoauth/nextjs) | Next.js 14+ App Router | Server-side `auth()`, middleware that protects routes, a backend-for-frontend that keeps tokens in an httpOnly cookie, and `withPoppySession()` for route handlers that personal agents call. Re-exports `@lumoauth/react`. |
 | [`create-lumo-agent`](./packages/create-lumo-agent/README.md) | [![npm](https://img.shields.io/npm/v/create-lumo-agent.svg?label=)](https://www.npmjs.com/package/create-lumo-agent) | CLI (`npx`) | Creates a working Next.js agent app with sign-in, an API route that the agent authenticates to, and a push-approval demo. |
 
 The seven `@lumoauth/*` packages share one version number and release
@@ -259,18 +261,80 @@ region. The permission and Zanzibar checks are under `/api/v1/authz/…` and
 need no `orgId`, because the server reads the organization from the
 credential.
 
+### Use a custom domain
+
+An organization can serve LumoAuth on its own domain, for example
+`https://auth.acme.com`. Pass that domain as `customDomain`. Every client and
+helper that takes a base URL has the option.
+
+```ts
+import { LumoAuthBackend } from '@lumoauth/backend';
+
+const lumo = new LumoAuthBackend({
+  customDomain: 'auth.acme.com',
+  secretKey: process.env.LUMOAUTH_SECRET_KEY!,
+});
+
+const allowed = await lumo.abac.isAllowed('document', 'read');
+// POST https://auth.acme.com/api/v1/abac/check
+```
+
+With a custom domain:
+
+- **No path has the `/orgs/{orgId}` segment.**
+  `/orgs/acme-corp/api/v1/oauth/token` is `/api/v1/oauth/token` on the
+  domain. A path without the segment, such as `/api/v1/authz/check`, stays
+  the same.
+- **The organization ID is not needed.** When you pass `orgId` too, the SDK
+  never puts it in a path.
+- **The custom domain wins over the base URL.** The SDK sends no request to
+  `baseUrl`.
+- **The issuer is the bare domain**, `https://auth.acme.com`. An access token
+  that the SDK verifies locally must name that issuer, and a client assertion
+  uses it as the audience. The sign-in address, the sign-out address and the
+  hosted pages are on the domain too.
+- **AAuth is the one exception.** LumoAuth names the AAuth issuer with the
+  platform address on every host. The SDK sends AAuth requests to the custom
+  domain and reads the AAuth issuer from the domain's issuer metadata. See
+  the [agent package README](./packages/agent/README.md#aauth-on-a-custom-domain).
+
+The value is a host name or an `https://` origin. `http://` is accepted only
+for `localhost`, `127.0.0.1` and `[::1]`. A value with a path, a query, a
+fragment or credentials throws `LumoAuthConfigError` when the client is
+created. An empty value means that no custom domain is set.
+
+| Package | Where the option goes | Environment variable |
+|---|---|---|
+| `@lumoauth/backend` | `new LumoAuthBackend({ customDomain })` | none |
+| `@lumoauth/client` | `new LumoAuth({ customDomain })` | none |
+| `@lumoauth/react` | `<LumoAuthProvider customDomain="…">` | none |
+| `@lumoauth/nextjs` | `customDomain` in the config of every server function | `NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN` |
+| `@lumoauth/express` | `lumoAuthMiddleware({ customDomain })`, `poppySession({ customDomain })` | none |
+| `@lumoauth/agent` | `LumoAgent`, `AAuthClient`, `attestWorkload()` and the token verifiers | `LUMOAUTH_CUSTOM_DOMAIN` |
+
+`@lumoauth/nextjs` names its variables `NEXT_PUBLIC_LUMOAUTH_…`, so its
+variable is `NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN`.
+
+Two calls take a path that you write yourself: `delegation.request()` and the
+generated client behind `lumo.api`. On a custom domain, give the path without
+the `/orgs/{orgId}` segment. When the client has an `orgId`, the SDK removes
+the segment of that organization from a path. It leaves the segment of another
+organization as it is. `lumo.api` needs `orgId` on a custom domain, because
+the generated client writes the segment into every path.
+
 ### Credentials
 
-LumoAuth accepts three kinds of credential. What you can call depends on the
-kind.
+LumoAuth accepts three kinds of credential on the namespace calls. What you
+can call depends on the kind. The `poppy` namespace uses a fourth one.
 
 | Credential | How it is sent | What it may call |
 |---|---|---|
 | **User access token**, from sign-in | `Authorization: Bearer …` | Calls about that user: permission checks, Zanzibar checks, ABAC, `agents.me`, `agents.ask`, userinfo. Some calls also need a scope (see the next table) |
 | **Agent credential**: a client-credentials token, or an agent API key (`agk_…`) | `Authorization: Bearer …` | Agent calls: `agents.ask`, `agents.me`, `agents.authorizeMcpTool`, approvals, JIT tasks and requests, delegation, MCP tokens. The agent's capabilities determine what it may do |
 | **Organization API key** (`lmk_…`) | `X-API-Key: …` | The admin API, dynamic client registration and the authorization check family (`/api/v1/authz/check…`, Zanzibar check and expand). The server rejects it on the ABAC, agent and JIT routes |
+| **Client id and client secret** of a confidential application | `Authorization: Basic …` | The `poppy` namespace only: `verifyRequest`, `getSessionStatus` and `endSession`. The application's allowed scopes must include `poppy:verify`. No token and no API key is sent on these calls |
 
-Keep `lmk_…` keys and agent secrets on the server. Never put them in a
+Keep `lmk_…` keys, client secrets and agent secrets on the server. Never put them in a
 browser bundle, and never expose them through `NEXT_PUBLIC_*` or `VITE_*`
 variables.
 
@@ -304,7 +368,8 @@ token without `authz:read` gets an empty `capabilities` list from
 
 Clients group their methods into the same **namespaces** in every LumoAuth
 SDK: `auth`, `permissions`, `zanzibar`, `abac`, `agents`, `approvals`, `jit`,
-`mcp` and `delegation`. A JavaScript call such as
+`mcp`, `delegation` and `poppy`. The `poppy` namespace exists on the server
+client only. A JavaScript call such as
 `lumo.permissions.check('document.edit')` is
 `client.permissions.check("document.edit")` in Python and
 `client.Permissions.Check(ctx, …)` in Go.
@@ -315,11 +380,12 @@ SDK: `auth`, `permissions`, `zanzibar`, `abac`, `agents`, `approvals`, `jit`,
 
 | Option | Type | Required | Description |
 |---|---|---|---|
-| `baseUrl` | `string` | yes | The LumoAuth host, for example `https://app.lumoauth.dev` |
-| `secretKey` | `string \| () => string \| Promise<string>` | yes | The credential for every namespace call. An organization API key (`lmk_…`) is sent in `X-API-Key`. Any other value, such as an access token or an agent key, is sent as `Authorization: Bearer` |
-| `orgId` | `string` | for org-scoped calls | The organization slug. `abac`, `agents`, `approvals`, `jit`, `mcp` and `delegation` need it |
-| `clientId` | `string` | for `auth` and `delegation` | The OAuth client ID |
-| `clientSecret` | `string` | for `delegation` | The OAuth client secret for the consent-code exchange and for revocation |
+| `baseUrl` | `string` | yes, unless `customDomain` is set | The LumoAuth host, for example `https://app.lumoauth.dev` |
+| `customDomain` | `string` | no | The organization's own domain, for example `auth.acme.com`. Every request then goes to it, without the `/orgs/{orgId}` segment. See [Use a custom domain](#use-a-custom-domain) |
+| `secretKey` | `string \| () => string \| Promise<string>` | yes | The credential for every namespace call except `poppy`. An organization API key (`lmk_…`) is sent in `X-API-Key`. Any other value, such as an access token or an agent key, is sent as `Authorization: Bearer` |
+| `orgId` | `string` | for org-scoped calls, unless `customDomain` is set | The organization slug. `abac`, `agents`, `approvals`, `jit`, `mcp`, `delegation` and `poppy` need it |
+| `clientId` | `string` | for `auth`, `delegation` and `poppy` | The OAuth client ID |
+| `clientSecret` | `string` | for `delegation` and `poppy` | The OAuth client secret. `delegation` uses it for the consent-code exchange and for revocation. `poppy` authenticates with the client ID and this secret, and the application needs the `poppy:verify` scope |
 | `redirectUri` | `string` | for `delegation` | The callback URL of the delegation consent flow |
 | `timeout` | `number` | no | Request timeout in milliseconds. Default 30 000 |
 | `fetch` | `typeof fetch` | no | A custom `fetch` |
@@ -336,7 +402,8 @@ Every option falls back to an environment variable.
 | Option | Environment variable | Default | Description |
 |---|---|---|---|
 | `baseUrl` | `LUMOAUTH_URL` | `https://app.lumoauth.dev` | The LumoAuth host |
-| `orgId` | `LUMOAUTH_ORG_ID` | none | The organization slug |
+| `customDomain` | `LUMOAUTH_CUSTOM_DOMAIN` | none | The organization's own domain. It wins over `baseUrl` |
+| `orgId` | `LUMOAUTH_ORG_ID` | none | The organization slug. Not needed with `customDomain` |
 | `clientId` | `AGENT_CLIENT_ID` | required | The agent's OAuth client ID |
 | `clientSecret` | `AGENT_CLIENT_SECRET` | required | The agent's OAuth client secret |
 | `scopes` | none | the agent's defaults | Scopes to request |
@@ -358,11 +425,13 @@ every value explicitly; the names below are the convention to load them from.
 |---|---|---|
 | `LUMOAUTH_URL` | `agent` (fallback), `backend` (by convention) | The LumoAuth host. Agents default to `https://app.lumoauth.dev` |
 | `LUMOAUTH_ORG_ID` | `agent` (fallback) | The organization slug |
+| `LUMOAUTH_CUSTOM_DOMAIN` | `agent` (fallback) | The organization's custom domain, for example `auth.acme.com`. It wins over `LUMOAUTH_URL`, and `LUMOAUTH_ORG_ID` is then not needed |
 | `LUMOAUTH_SECRET_KEY` | `backend` (by convention) | The server credential. Never make it public. The Python, Go, PHP, Java and .NET SDKs call this `LUMOAUTH_API_KEY` |
 | `AGENT_CLIENT_ID`, `AGENT_CLIENT_SECRET` | `agent` (fallback) | The agent's OAuth client credentials |
 | `AGENT_PRIVATE_KEY` | AAuth (by convention) | The PEM private key for RFC 9421 signing |
 | `NEXT_PUBLIC_LUMOAUTH_DOMAIN`, `NEXT_PUBLIC_LUMOAUTH_ORG_ID`, `NEXT_PUBLIC_LUMOAUTH_CLIENT_ID`, `NEXT_PUBLIC_REDIRECT_URI` | `nextjs` (fallback) | Public OAuth settings. They are safe in the browser bundle. The domain defaults to `https://app.lumoauth.dev`. The redirect URI is optional: by default each request uses `<origin>/api/auth/callback` |
-| `LUMOAUTH_SECRET`, `LUMOAUTH_CLIENT_SECRET` | `nextjs` (fallback) | The secret that seals the session cookie, and the secret of a confidential client. Server only |
+| `NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN` | `nextjs` (fallback) | The organization's custom domain. It wins over `NEXT_PUBLIC_LUMOAUTH_DOMAIN`, and `NEXT_PUBLIC_LUMOAUTH_ORG_ID` is then not needed |
+| `LUMOAUTH_SECRET`, `LUMOAUTH_CLIENT_SECRET` | `nextjs` (fallback) | The secret that seals the session cookie, and the secret of a confidential client. Server only. `withPoppySession()` reads the client ID and `LUMOAUTH_CLIENT_SECRET`, and does not need `LUMOAUTH_SECRET` |
 
 The browser packages take their options in code; see
 [packages/client](./packages/client/README.md) and
@@ -769,6 +838,181 @@ usual classes. For example, a token without `mcp:authorize` gets
 A tool name or server ID must not be empty or contain `/`, `:`, `#` or `*`.
 A tool name has at most 80 characters.
 
+### Verify requests from personal agents
+
+A personal agent that follows the
+[Personal Agent Protocol](https://personalagentprotocol.org) sends the
+`Poppy-Session` header to your own API, not to LumoAuth. The `poppy` namespace
+asks LumoAuth who such a request is from: the personal agent, its user, the
+Session, and the account when the request carries an access token.
+
+The three calls of the namespace authenticate as one of your organization's
+confidential applications, with its client ID and client secret. They never
+send `secretKey`. The application's allowed scopes must include
+**`poppy:verify`**. Add the scope under **Applications**, on the application
+that your API uses. The namespace is for server code: the browser `LumoAuth`
+client does not have it.
+
+#### Protect routes in Express
+
+`poppySession()` from `@lumoauth/express` is a middleware for the routes that
+personal agents call. This server is complete:
+
+```ts
+import express from 'express';
+import { poppySession } from '@lumoauth/express';
+
+const app = express();
+
+// One middleware for each scope rule.
+const poppy = (requiredScope?: string) =>
+  poppySession({
+    baseUrl: 'https://app.lumoauth.dev',
+    organization: 'acme-corp',
+    clientId: process.env.SHOP_API_CLIENT_ID,
+    clientSecret: process.env.SHOP_API_CLIENT_SECRET,
+    publicOrigin: process.env.PUBLIC_ORIGIN!, // https://shop.example.com
+    requiredScope,
+  });
+
+// A signed-out personal agent may read the catalog.
+app.get('/api/catalog', poppy(), (req, res) => {
+  res.json({ items: ['stormline-shell-m'], session: req.poppy!.session.id });
+});
+
+// This route needs the user's account and the orders:read scope.
+app.get('/api/orders', poppy('orders:read'), (req, res) => {
+  res.json({ account: req.poppy!.account!.sub, orders: [] });
+});
+
+app.listen(8787);
+```
+
+For each request the middleware sends the method, the public URL and the
+protocol's five headers to LumoAuth. No other header leaves your server, and
+the request body is not read. There are three outcomes:
+
+- **Verified.** `req.poppy` holds the result, and your handler runs. Store
+  signed-out state under `req.poppy.session.id`. Find account data with
+  `req.poppy.account.sub`. Never use `userId` to find an account, because the
+  personal agent chose that value.
+- **Refused.** LumoAuth returns the exact response for the personal agent:
+  a status, headers and a body. The middleware relays that response
+  unchanged, and your handler does not run.
+- **An SDK error.** LumoAuth could not be reached, or it rejected your own
+  application (401, 403, 404 or 429). Such an error is about your service,
+  so it is never relayed. The middleware calls `next(err)`, and the personal
+  agent gets a `500` that carries nothing of the error.
+
+`publicOrigin` is the address that personal agents call. A Session JWT names
+that address, so the value must come from your configuration. The helpers
+never read the `Host` header or the `X-Forwarded-*` headers. They add the
+full original path of the request to `publicOrigin`, so a router prefix is
+included. The [Express README](./packages/express/README.md#verify-requests-from-personal-agents)
+has the options and the error handling.
+
+#### Protect route handlers in Next.js
+
+```ts
+// app/api/orders/route.ts
+import { withPoppySession } from '@lumoauth/nextjs/server';
+
+export const GET = withPoppySession(
+  { publicOrigin: process.env.PUBLIC_ORIGIN!, requiredScope: 'orders:read' },
+  async (request, { poppy }) => Response.json({ account: poppy.account!.sub, orders: [] }),
+);
+```
+
+The wrapper reads the organization, the client ID and the client secret from
+the environment of `@lumoauth/nextjs`. The
+[Next.js README](./packages/nextjs/README.md#verify-requests-from-personal-agents)
+has the details.
+
+#### Call `verifyRequest` yourself
+
+In another framework, call `lumo.poppy.verifyRequest()` and relay a refusal
+with `buildPoppyRelay()`:
+
+```ts
+import { LumoAuthBackend, buildPoppyRelay } from '@lumoauth/backend';
+
+const lumo = new LumoAuthBackend({
+  baseUrl: 'https://app.lumoauth.dev',
+  secretKey: process.env.LUMOAUTH_SECRET_KEY!,
+  orgId: 'acme-corp',
+  clientId: process.env.SHOP_API_CLIENT_ID,
+  clientSecret: process.env.SHOP_API_CLIENT_SECRET,
+});
+
+// A handler that takes a Fetch request, for example in Hono or in a worker.
+export async function orders(request: Request): Promise<Response> {
+  const result = await lumo.poppy.verifyRequest(
+    {
+      method: request.method,
+      url: process.env.PUBLIC_ORIGIN + new URL(request.url).pathname,
+      headers: request.headers, // only the protocol's headers are sent on
+    },
+    { requiredScope: 'orders:read' },
+  );
+  if (!result.active) {
+    // The response that the personal agent must get, unchanged.
+    const relay = buildPoppyRelay(result);
+    return new Response(relay.body, { status: relay.status, headers: relay.headers });
+  }
+  return Response.json({ account: result.account!.sub, orders: [] });
+}
+```
+
+`verifyRequest()` returns a refusal as a result with `active: false`. It
+throws only for an SDK error. Do not catch that error to build a response for
+the personal agent from it: answer with a `5xx` status and fix your
+configuration.
+
+| Option | Meaning |
+|---|---|
+| `requiredScope` | The scopes that the operation needs: a space-separated string or a list |
+| `resource` | The resource identifier of your service, when it takes only tokens issued for it |
+| `allowReplay` | `true` accepts a Session JWT that was verified before. Default `false` |
+
+LumoAuth accepts each Session JWT once. Verify a request in one place and
+pass the result inward, and do not cache a result. A service that checks one
+request in several places passes `allowReplay: true`.
+
+A service that makes no other LumoAuth call needs no `secretKey`. It can
+construct the namespace directly, with the same three methods:
+
+```ts
+import { PoppyModule } from '@lumoauth/backend';
+
+const poppy = new PoppyModule({
+  baseUrl: 'https://app.lumoauth.dev',
+  orgId: 'acme-corp',
+  clientId: process.env.SHOP_API_CLIENT_ID,
+  clientSecret: process.env.SHOP_API_CLIENT_SECRET,
+});
+```
+
+#### Look up and end a Session
+
+`getSessionStatus()` answers when the personal agent sent no request. A
+website that joined a browser to a Session asks it on each page request.
+`endSession()` ends a Session when your own rules call for it, for example
+after a fraud signal. The user stays signed in.
+
+```ts
+// `verified` is the result of a verified request.
+const status = await lumo.poppy.getSessionStatus(verified.clientId, verified.session.sid);
+// { status: 'active' | 'ended' | 'unknown', userId, agentId, account, signedIn, lastSeenAt }
+
+const { ended } = await lumo.poppy.endSession(verified.clientId, verified.session.sid);
+// false when the Session had ended before
+```
+
+An unknown Session gives `status: 'unknown'` from `getSessionStatus()` and a
+`LumoAuthNotFoundError` from `endSession()`. The guide to
+[Session verification](https://docs.lumoauth.dev/agents/personal-agent-protocol-verify)
+lists every check, every refusal and the rules for a joined browser.
+
 ### Give an agent a cryptographic identity (AAuth)
 
 AAuth gives an agent an identity that a resource server can verify without a
@@ -994,6 +1238,26 @@ says which credential the server accepts; see [Credentials](#credentials).
 | `getTokenDetailed(serverId)` | `{ accessToken, expiresIn, tokenType, scope }`. `tokenType` is `DPoP` when the agent has a `dpop` signer |
 | `authorizeTool({ serverId, subject: { type, id }, tool })` | `McpToolDecision`: `{ allowed, subject, resource }`. `serverId` is the registered `mcp_…` ID. Call it with the MCP server's own token that holds `mcp:authorize`. A deny returns `allowed: false` |
 
+### `poppy` (needs `orgId`, `clientId` and `clientSecret`; server only)
+
+| Method | Returns |
+|---|---|
+| `verifyRequest({ method, url, headers }, { requiredScope?, resource?, allowReplay?, signal? }?)` | `PoppyVerification`. Verified: `{ active: true, clientId, clientName, userId, agentId, session: { id, sid, isNew, startedAt }, signedIn, account, version, extensions }`, where `account` is `null` or `{ sub, scope, scopes, aud, exp, tokenType }`. Refused: `{ active: false, error, errorDescription, scope, response: { status, headers, body } }` |
+| `getSessionStatus(personalAgent, sid)` | `PoppySessionStatus`: `{ status: 'active' \| 'ended' \| 'unknown', userId, agentId, account, signedIn, lastSeenAt }` |
+| `endSession(personalAgent, sid)` | `{ ended }`. `false` when the Session had ended before. Throws `LumoAuthNotFoundError` for an unknown Session |
+
+The calls send the client ID and the client secret with HTTP Basic. The
+application's allowed scopes must include `poppy:verify`. Every answer that is
+not a verified result or a well-formed refusal throws.
+
+| Function | Returns |
+|---|---|
+| `buildPoppyVerifyBody({ publicOrigin, method, target, headers }, options?)` | The JSON body of `verifyRequest`, built without I/O. `target` is the raw path of the request, with or without a query |
+| `buildPoppyRelay(refusal)` | `{ status, headers, body }`: the response for the personal agent. `body` is JSON text or `null`. `headers` has `Content-Type: application/json` only when there is a body |
+| `normalizePoppyPublicOrigin(publicOrigin)` | The public origin without trailing slashes. Throws `LumoAuthConfigError` when it is missing or not an absolute http(s) address |
+| `poppySession(options)`, `relayPoppyRefusal(res, refusal)` | The Express middleware and its relay step, from `@lumoauth/express` |
+| `withPoppySession(options, handler)`, `verifyPoppyRequest(request, options)`, `poppyRefusalResponse(refusal)` | The Next.js wrapper, the same check as a function, and the relay step, from `@lumoauth/nextjs/server` |
+
 The AAuth API is listed in the
 [agent package README](./packages/agent/README.md#exports).
 
@@ -1014,20 +1278,28 @@ The AAuth API is listed in the
 | `LumoAuthValidationError` from `mcp.getToken()` | The server ID is not an https URL, for example `urn:mcp:…` | Pass the MCP server's URL, such as `https://mcp.example.com/mcp` |
 | `LumoAuthPermissionDeniedError` from `mcp.authorizeTool()` | The token lacks `mcp:authorize`, or its client is not a tool authorizer of this MCP server | Request `mcp:authorize`, and add the client as a tool authorizer of the server |
 | `LumoAuthNotFoundError` from `agents.authorizeMcpTool()` | The server ID is not an active registered MCP server. The Resource URI does not work here | Pass the `mcp_…` server ID |
+| `LumoAuthConfigError` that names `poppy:verify` | The `poppy` namespace has no `clientId` or no `clientSecret` | Pass the credentials of a confidential application whose allowed scopes include `poppy:verify` |
+| `LumoAuthPermissionDeniedError` from a `poppy` call | The application lacks the `poppy:verify` scope | Add the scope to the application's allowed scopes under **Applications** |
+| Every personal agent gets `invalid_session` with "signed for another URL (htu)" | `publicOrigin` is not the address that personal agents call | Set `publicOrigin` to the public address, with the base path if your API has one |
 | `LumoAuthRateLimitError` | Too many requests | Wait `retryAfter` seconds, then retry |
-| `LumoAuthConfigError` mentioning `orgId` | An org-scoped namespace without `orgId` | Pass `orgId` to the constructor |
+| `LumoAuthConfigError` mentioning `orgId` | An org-scoped namespace without `orgId` | Pass `orgId` to the constructor, or `customDomain` for an organization on its own domain |
+| 404 on every call to an organization's own domain | The client was given the domain as `baseUrl`, so it sends `/orgs/{orgId}/…` paths, which a custom domain does not serve | Pass the domain as `customDomain` |
+| `LumoAuthConfigError` mentioning `customDomain` | The value has a path, a query, a fragment or credentials, or it uses `http://` for a host that is not local | Pass the host name, such as `auth.acme.com` |
 | 403 `INSUFFICIENT_PERMISSIONS` from a check with `userId` or `agentId` | The caller may not ask about other subjects | Give the API key the `authz:check` scope, or check with the subject's own token |
 | 404 `SUBJECT_NOT_FOUND` from a check with `userId` | The id is not a LumoAuth user id in this organization | Pass the user's LumoAuth id (the `sub` claim), not your app's own id or an email |
 
 ## Versioning and compatibility
 
-The `@lumoauth/*` packages are at version 1.0.0 and follow semantic
-versioning. They need LumoAuth server API 1.0.0 or newer. The routes, error
+The `@lumoauth/*` packages share one version number and follow semantic
+versioning. The npm page of each package shows the latest version (the
+badges under [The packages](#the-packages) link to them), and the
+[release notes](./release-notes) describe each release. The packages need
+LumoAuth server API 1.0.0 or newer. The routes, error
 classes and token types come from the shared
 [SDK contract](https://github.com/LumoAuth/sdk-contract), so they match the
 Python, Go, PHP, Java and .NET SDKs. Deprecated names (`LumoAuthAuthError`,
 `AgentModule`, `lumo.agent`, `agents.requireApproval()`) still work and will
-be removed before 2.0.
+be removed in the next major version.
 
 ## Beyond these packages
 
@@ -1080,9 +1352,9 @@ package, build its dependencies first, for example
 `npm run build -w @lumoauth/shared -w @lumoauth/client`. Then run
 `npm run dev -w @lumoauth/react` for a watch build.
 
-**Workspace links.** In this workspace, a dependency such as
-`"@lumoauth/client": "^1.0.0"` in `packages/react` resolves to
-`packages/client` on disk, not to the registry. A fresh clone builds without
+**Workspace links.** In this workspace, a dependency on `@lumoauth/client`
+in `packages/react` resolves to `packages/client` on disk, not to the
+registry. A fresh clone builds without
 any package being published.
 
 **Tests.** `shared`, `client`, `backend`, `express`, `agent`, `react` and
@@ -1097,6 +1369,14 @@ is missing:
 |---|---|---|
 | `route-drift.test.mjs` | the server's OpenAPI spec | `../server/openapi.json`, then `../api-clients/openapi.json`, next to this repo |
 | `contract.test.mjs` | the shared SDK contract | `../sdk-contract` next to this repo, or the path in `LUMO_SDK_CONTRACT` |
+
+A third suite, `poppy-verification.test.mjs`, runs every case of
+`vectors/poppy-verification.json` from the same contract against the `poppy`
+namespace. The `express` and `nextjs` suites run the refused cases and the
+error cases of that file against their helpers. A fourth suite,
+`custom-domain.test.mjs`, runs every route, derived address and option value
+of `vectors/custom-domain.json`. Each package that builds addresses has its
+own `custom-domain.test.mjs` too.
 
 ## Repository layout
 

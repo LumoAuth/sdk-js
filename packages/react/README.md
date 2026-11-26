@@ -19,6 +19,7 @@ It is part of the [LumoAuth JavaScript SDK](../../README.md), and it is built on
 - [Quick start](#quick-start)
 - [Core concepts](#core-concepts)
 - [Configuration](#configuration)
+- [Use a custom domain](#use-a-custom-domain)
 - [Components](#components)
   - [Sign-in and sign-up](#sign-in-and-sign-up)
   - [User](#user)
@@ -149,8 +150,9 @@ The full scope table is in the [client README](../client/README.md#scopes).
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
-| `domain` | `string` | required | Root URL of LumoAuth |
-| `orgId` | `string` | required | Organization slug |
+| `domain` | `string` | required unless `customDomain` is set | Root URL of LumoAuth |
+| `orgId` | `string` | required unless `customDomain` is set | Organization slug |
+| `customDomain` | `string` | none | The organization's own domain, for example `auth.acme.com`. It wins over `domain`. See [Use a custom domain](#use-a-custom-domain). |
 | `clientId` | `string` | required | OAuth client ID |
 | `redirectUri` | `string` | `<origin>/auth/callback` | Callback URL. It must be registered on the OAuth client. |
 | `scope` | `string` | `'openid profile email'` | Space-separated scopes for sign-in and sign-up. Add `abac:read` for `useAbac` and `<Protect abac>`, and `authz:read` for `listSlugs()`. The OAuth client must allow each scope. |
@@ -177,6 +179,37 @@ import { localStorageAdapter } from '@lumoauth/client';
 
 Create the adapter once, outside the component, or with `useMemo`. A new adapter on each render
 rebuilds the session.
+
+## Use a custom domain
+
+An organization can serve LumoAuth on its own domain, for example `https://auth.acme.com`. Pass
+the domain as `customDomain`, and leave out `domain` and `orgId`:
+
+```tsx
+import { LumoAuthProvider } from '@lumoauth/react';
+
+export function App({ children }: { children: React.ReactNode }) {
+  return (
+    <LumoAuthProvider customDomain="auth.acme.com" clientId="your-client-id">
+      {children}
+    </LumoAuthProvider>
+  );
+}
+```
+
+- Sign-in, the token exchange, sign-out and the hosted sign-up page use the domain. No address
+  has the `/orgs/{orgId}` segment, so `orgId` is not needed. When you pass it too, the provider
+  never puts it in an address.
+- The custom domain wins over `domain`. The provider sends no request to `domain`.
+- The issuer is the bare domain, `https://auth.acme.com`.
+- The hooks call LumoAuth on the domain too. `useLumoAuthContext().config.domain` holds the
+  domain, and `config.customDomain` is set.
+- The value is a host name or an `https://` origin. `http://` is accepted only for `localhost`,
+  `127.0.0.1` and `[::1]`. A value with a path, a query, a fragment or credentials throws
+  `LumoAuthConfigError` when the provider renders.
+
+Register the callback URL and the post-logout URL on the OAuth client as before. They are
+addresses of your app, so a custom domain does not change them.
 
 ## Components
 
@@ -683,8 +716,10 @@ The prop and return types are exported too, for example `LumoAuthProviderProps`,
 
 ## Versioning and compatibility
 
-This package is version 1.0.0. It needs LumoAuth server API 1.0.0 or newer, React 18 or newer,
-and `@lumoauth/client` 1.0.0.
+This package follows semantic versioning. Its [npm page](https://www.npmjs.com/package/@lumoauth/react)
+shows the latest version, and the [release notes](../../release-notes) describe each release.
+It needs LumoAuth server API 1.0.0 or newer, React 18 or newer, and the same version of
+`@lumoauth/client`.
 
 ## Related packages
 

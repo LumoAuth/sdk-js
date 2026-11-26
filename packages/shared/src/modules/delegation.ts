@@ -4,7 +4,7 @@ import {
     LumoAuthNetworkError,
     LumoAuthPermissionDeniedError,
 } from '../errors';
-import { ROUTES, buildPath } from '../routes';
+import { LumoAuthAddress } from '../routes';
 import { DPOP_SCHEME, fetchWithDpop, type DpopProofProvider } from '../utils/dpop';
 
 /**
@@ -77,10 +77,16 @@ const ACCESS_TOKEN_TYPE = TOKEN_TYPES.ACCESS_TOKEN;
 export const MAX_DELEGATION_DEPTH = 3;
 
 export interface DelegationModuleConfig {
-    /** Base URL of the LumoAuth instance. */
-    baseUrl: string;
-    /** Organization slug — delegation endpoints are org-scoped. */
-    orgId: string;
+    /** Base URL of the LumoAuth instance. Not used with `customDomain`. */
+    baseUrl?: string;
+    /** Organization slug — delegation endpoints are org-scoped. Not needed with `customDomain`. */
+    orgId?: string;
+    /**
+     * The organization's custom domain, for example `auth.acme.com`. When
+     * set, it wins over `baseUrl`, no path carries the `/orgs/{orgId}`
+     * segment, and `orgId` is not needed.
+     */
+    customDomain?: string;
     /** OAuth client ID of the agent performing the delegation. */
     clientId: string;
     /** Client secret — required for the consent-code exchange and revocation. */
@@ -117,8 +123,7 @@ interface TokenEndpointResponse {
 }
 
 export class DelegationModule {
-    private readonly baseUrl: string;
-    private readonly orgId: string;
+    private readonly address: LumoAuthAddress;
     private readonly clientId: string;
     private readonly clientSecret: string;
     private readonly redirectUri: string;
@@ -132,8 +137,7 @@ export class DelegationModule {
     private readonly delegatedTokens = new Map<string, string>();
 
     constructor(config: DelegationModuleConfig) {
-        this.baseUrl = config.baseUrl.replace(/\/+$/, '');
-        this.orgId = config.orgId;
+        this.address = new LumoAuthAddress(config).required();
         this.clientId = config.clientId;
         this.clientSecret = config.clientSecret ?? '';
         this.redirectUri = config.redirectUri ?? '';
@@ -254,7 +258,11 @@ export class DelegationModule {
         let token = this.delegatedTokens.get(sessionId);
         if (!token) token = await this.exchange(sessionId);
 
-        const url = endpoint.startsWith('http') ? endpoint : `${this.baseUrl}${endpoint}`;
+        // On a custom domain, give the path without the `/orgs/{orgId}`
+        // segment. A path with this organization's own segment loses it.
+        const url = endpoint.startsWith('http')
+            ? endpoint
+            : `${this.address.baseUrl}${this.address.rawPath(endpoint)}`;
         const init: RequestInit = {
             method: method.toUpperCase(),
             headers: {
@@ -341,7 +349,7 @@ export class DelegationModule {
         if (user?.refreshToken) {
             try {
                 await this.postForm(
-                    `${this.baseUrl}${buildPath(ROUTES['oauth.revoke'].path, { orgId: this.orgId })}`,
+                    this.address.url('oauth.revoke'),
                     {
                         token: user.refreshToken,
                         token_type_hint: 'refresh_token',
@@ -381,20 +389,22 @@ export class DelegationModule {
     // ── Internal ──────────────────────────────────────────────────────
 
     private tokenUrl(): string {
-        return `${this.baseUrl}${buildPath(ROUTES['oauth.token'].path, { orgId: this.requireOrgId() })}`;
+        this.requireOrgId();
+        return this.address.url('oauth.token');
     }
 
     private authorizeUrl(): string {
-        return `${this.baseUrl}${buildPath(ROUTES['oauth.authorize'].path, { orgId: this.requireOrgId() })}`;
+        this.requireOrgId();
+        return this.address.url('oauth.authorize');
     }
 
-    private requireOrgId(): string {
-        if (!this.orgId) {
+    /** Delegation endpoints are org-scoped: they need the slug, or a custom domain. */
+    private requireOrgId(): void {
+        if (!this.address.hasOrganization) {
             throw new LumoAuthConfigError(
                 'delegation requires `orgId` — pass it to the constructor config.',
             );
         }
-        return this.orgId;
     }
 
     private async performExchange(

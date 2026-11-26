@@ -24,6 +24,7 @@ It works with any framework, or with none. It is part of the
   - [Credentials](#credentials)
   - [Scopes](#scopes)
 - [Configuration](#configuration)
+- [Use a custom domain](#use-a-custom-domain)
 - [Guides](#guides)
   - [Check permissions (RBAC)](#check-permissions-rbac)
   - [Check relationships (Zanzibar)](#check-relationships-zanzibar)
@@ -96,12 +97,13 @@ This package is for users, not agents. For an agent, start with
 
 ## Core concepts
 
-**Organization.** Every LumoAuth tenant has a slug, such as `acme-corp`. Pass it as `orgId`.
+**Organization.** Every LumoAuth organization has a slug, such as `acme-corp`. Pass it as `orgId`.
 The ABAC, agent, approval and sign-in calls need it. Permission and Zanzibar checks do not,
 because LumoAuth reads the organization from the token.
 
 **Base URL.** Use `https://app.lumoauth.dev`, or `https://eu.app.lumoauth.dev` for the EU region.
-Pass the root URL, not an `/orgs/…` path.
+Pass the root URL, not an `/orgs/…` path. An organization on its own domain passes
+`customDomain` instead: see [Use a custom domain](#use-a-custom-domain).
 
 ### Credentials
 
@@ -151,9 +153,10 @@ await client.auth.buildAuthorizationUrl({
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `baseUrl` | `string` | required | Root URL of LumoAuth |
+| `baseUrl` | `string` | required unless `customDomain` is set | Root URL of LumoAuth |
+| `customDomain` | `string` | none | The organization's own domain, for example `auth.acme.com`. It wins over `baseUrl`. |
 | `token` | `string \| () => string \| Promise<string>` | none | The user's access token. A function is called before each request, so it can return a fresh token. You can leave it out before the user signs in. |
-| `orgId` | `string` | none | Organization slug. Needed for `auth`, `abac`, `agents` and `approvals`. |
+| `orgId` | `string` | none | Organization slug. Needed for `auth`, `abac`, `agents` and `approvals`, unless `customDomain` is set. |
 | `clientId` | `string` | none | OAuth client ID. Needed for `auth`. |
 | `authStrategy` | `'pkce' \| 'password'` | `'pkce'` | PKCE is the flow for browsers. `'password'` is the older resource-owner grant. |
 | `timeout` | `number` | `30000` | Request timeout in milliseconds |
@@ -168,6 +171,33 @@ token: 'eyJhbGciOi…'                                   // static: tests and sc
 token: async () => (await getSession()).accessToken    // from your own session store
 token: () => session.getToken().then((t) => t ?? '')   // from LumoAuthSession (see below)
 ```
+
+## Use a custom domain
+
+An organization can serve LumoAuth on its own domain, for example `https://auth.acme.com`. Pass
+the domain as `customDomain`:
+
+```ts
+import { LumoAuth } from '@lumoauth/client';
+
+const lumo = new LumoAuth({
+  customDomain: 'auth.acme.com',
+  clientId: 'your-client-id',
+  token: () => session.getToken().then((t) => t ?? ''),
+});
+
+const { url } = await lumo.auth.buildAuthorizationUrl({ redirectUri: `${location.origin}/callback` });
+// https://auth.acme.com/api/v1/oauth/authorize?…
+```
+
+- No address has the `/orgs/{orgId}` segment, so `orgId` is not needed. When you pass it too,
+  the client never puts it in a path.
+- The custom domain wins over `baseUrl`. The client sends no request to `baseUrl`.
+- The issuer is the bare domain, `https://auth.acme.com`. The sign-in address, the token
+  exchange and the sign-out address are on the domain.
+- The value is a host name or an `https://` origin. `http://` is accepted only for `localhost`,
+  `127.0.0.1` and `[::1]`. A value with a path, a query, a fragment or credentials throws
+  `LumoAuthConfigError` in the constructor.
 
 ## Guides
 
@@ -476,7 +506,7 @@ code exchange and the refresh, and it must serve two endpoints:
 | `logoutEndpoint` | `/auth/logout` | Clears the cookie (called with `POST`) |
 
 `@lumoauth/nextjs` provides both endpoints. Its provider sets this adapter up for you.
-`@lumoauth/express` 1.0.0 has no session endpoint, so you would need to add one yourself.
+`@lumoauth/express` has no session endpoint, so you would need to add one yourself.
 
 To store tokens somewhere else, implement the `TokenStorage` interface: `name`, `get()`,
 `set(tokens)`, `clear()`, and an optional `subscribe(onExternalChange)`.
@@ -660,7 +690,7 @@ LumoAuthError
 
 `LumoAuthApiError` has `statusCode` and `body`. `LumoAuthPermissionDeniedError` also has
 `requiredScopes`, and `LumoAuthRateLimitError` has `retryAfter` in seconds.
-`LumoAuthAuthError` is an older name for `LumoAuthAuthenticationError`. It will be removed in 2.0.
+`LumoAuthAuthError` is an older name for `LumoAuthAuthenticationError`. It will be removed in the next major version.
 
 ```ts
 import {
@@ -753,8 +783,10 @@ Every request and response also has a Zod schema, exported with its type, such a
 
 ## Versioning and compatibility
 
-This package is version 1.0.0. It needs LumoAuth server API 1.0.0 or newer. Every
-`@lumoauth/*` package in this repository is currently at 1.0.0.
+This package follows semantic versioning. Its [npm page](https://www.npmjs.com/package/@lumoauth/client)
+shows the latest version, and the [release notes](../../release-notes) describe each release.
+It needs LumoAuth server API 1.0.0 or newer. Every `@lumoauth/*` package in this repository
+has the same version number.
 
 To run the tests, see [Development](../../README.md) in the workspace README.
 

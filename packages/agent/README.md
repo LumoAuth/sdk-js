@@ -19,6 +19,7 @@ sure that it is the package that you need? See
 - [Install](#install)
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
+- [Use a custom domain](#use-a-custom-domain)
 - [Guides](#guides)
 - [`LumoAgent` reference](#lumoagent-reference)
 - [Private key JWT: sign in without a secret](#private-key-jwt-sign-in-without-a-secret)
@@ -98,12 +99,13 @@ grant. The SDK refreshes the token 60 seconds before it expires.
 | Option | Environment variable | Default | Description |
 |---|---|---|---|
 | `baseUrl` | `LUMOAUTH_URL` | `https://app.lumoauth.dev` | The LumoAuth host. Use `https://eu.app.lumoauth.dev` for the EU region |
-| `orgId` | `LUMOAUTH_ORG_ID` | none | The organization slug. Every namespace needs it |
+| `customDomain` | `LUMOAUTH_CUSTOM_DOMAIN` | none | The organization's own domain, for example `auth.acme.com`. It wins over `baseUrl`. See [Use a custom domain](#use-a-custom-domain) |
+| `orgId` | `LUMOAUTH_ORG_ID` | none | The organization slug. Every namespace needs it, unless `customDomain` is set |
 | `clientId` | `AGENT_CLIENT_ID` | required | The agent's OAuth client ID |
 | `clientSecret` | `AGENT_CLIENT_SECRET` | required unless `privateKey` | The agent's OAuth client secret |
 | `privateKey` | `AGENT_PRIVATE_KEY` (PEM) | none | For a **Private key JWT** agent: a `ClientAssertionSigner` or the PEM private key. The agent then signs a client assertion instead of sending a secret. See [Private key JWT](#private-key-jwt-sign-in-without-a-secret) |
 | `keyId` | `AGENT_KEY_ID` | none | The `kid` of the registered public key, used with a PEM `privateKey` |
-| `issuer` | none | `{baseUrl}/orgs/{orgId}/api/v1` | The organization's issuer identifier, the assertion's `aud`. Set it on a custom domain |
+| `issuer` | none | `{baseUrl}/orgs/{orgId}/api/v1`, or the bare domain with `customDomain` | The organization's issuer identifier, the assertion's `aud` |
 | `scopes` | none | the agent's defaults | Scopes to request |
 | `redirectUri` | none | none | The callback URL of the delegation consent flow |
 | `timeout` | none | 30 000 ms | Request timeout |
@@ -111,8 +113,48 @@ grant. The SDK refreshes the token 60 seconds before it expires.
 | `dpop` | none | none | A `DpopProofSigner`. Every token the agent obtains is then bound to its key, and every request carries a DPoP proof. See [DPoP](#dpop-sender-constrained-tokens) |
 
 The constructor throws `LumoAuthConfigError` when the client ID is missing, when
-neither a client secret nor a private key is given, or when both are. It does not
-call the server.
+neither a client secret nor a private key is given, when both are, or when the
+custom domain is malformed. It does not call the server.
+
+## Use a custom domain
+
+An organization can serve LumoAuth on its own domain, for example
+`https://auth.acme.com`. Pass the domain as `customDomain`, or set
+`LUMOAUTH_CUSTOM_DOMAIN`:
+
+```ts
+import { LumoAgent } from '@lumoauth/agent';
+
+const agent = new LumoAgent({
+  customDomain: 'auth.acme.com',
+  clientId: process.env.AGENT_CLIENT_ID,
+  clientSecret: process.env.AGENT_CLIENT_SECRET,
+});
+
+if (await agent.isAllowed('documents:read')) {
+  // The token came from https://auth.acme.com/api/v1/oauth/token
+}
+```
+
+- No path has the `/orgs/{orgId}` segment, so `orgId` is not needed. When it
+  is set too, the agent never puts it in a path.
+- The custom domain wins over `baseUrl` and `LUMOAUTH_URL`. The agent sends
+  no request to that address.
+- The issuer is the bare domain, `https://auth.acme.com`. A private key JWT
+  agent uses it as the audience of its client assertion. A DPoP proof names
+  the URL on the domain.
+- `attestWorkload({ customDomain, agentId, attestationToken })` takes the
+  same option and reads the same variable.
+- The token verifiers take `customDomain` in place of `issuer`:
+  `createAccessTokenVerifier({ customDomain: 'auth.acme.com', resource })`.
+  They then accept only tokens whose issuer is the bare domain. A token that
+  names the platform issuer is refused.
+- The value is a host name or an `https://` origin. `http://` is accepted
+  only for `localhost`, `127.0.0.1` and `[::1]`. An empty value means that no
+  custom domain is set.
+
+AAuth follows other rules for its issuer. See
+[AAuth on a custom domain](#aauth-on-a-custom-domain).
 
 ## Guides
 
@@ -316,7 +358,7 @@ also retries a `use_dpop_nonce` challenge from the MCP server.
 | `signer.setNonce(url, nonce)`, `getNonce(url)`, `clearNonces()` | Nonce memory per origin |
 | `buildDpopHeaders(signer, { method, url, accessToken, tokenType? })` | `{ Authorization: 'DPoP …', DPoP }`, or `{ Authorization: 'Bearer …' }` for an unbound token |
 | `fetchWithDpop(fetch, url, init, signer, { accessToken? })` | `fetch` with the proof and the one-time nonce retry |
-| `attestWorkload({ orgId, agentId, attestationToken, dpop? })` | Workload attestation (`POST …/agents/{agentId}/attest`) with an optional proof; returns `{ accessToken, tokenType, expiresIn, scope, identity }` |
+| `attestWorkload({ orgId, agentId, attestationToken, customDomain?, dpop? })` | Workload attestation (`POST …/agents/{agentId}/attest`) with an optional proof; returns `{ accessToken, tokenType, expiresIn, scope, identity }` |
 
 ## Verify LumoAuth access tokens on an MCP server
 
@@ -342,7 +384,10 @@ the same with a process-wide key cache.
 The verifier fetches the organization's keys from
 `{issuer}/.well-known/openid-configuration` (`jwks_uri`), caches them and
 fetches them again once when a token names an unknown `kid`. Pass `jwks` to
-skip the network. It checks:
+skip the network. For an organization on its own domain, pass
+`customDomain: 'auth.acme.com'` in place of `issuer`. The trusted issuer is
+then `https://auth.acme.com`, and the discovery document is
+`https://auth.acme.com/api/v1/.well-known/openid-configuration`. It checks:
 
 - `typ` is `at+jwt` or `application/at+jwt`; `alg` is asymmetric (`none`
   and `HS*` are refused); `kid` resolves;
@@ -424,7 +469,9 @@ must be the key in the agent token's `cnf` claim.
 | `agentIdentifier` | required | The HTTPS URL that names the agent |
 | `privateKeyPem` | required | A PEM Ed25519 (PKCS#8) or RSA private key |
 | `baseUrl` | `LUMOAUTH_URL`, then `https://app.lumoauth.dev` | The LumoAuth host |
-| `orgId` | `LUMOAUTH_ORG_ID` | The organization slug |
+| `customDomain` | `LUMOAUTH_CUSTOM_DOMAIN` | The organization's own domain. It wins over `baseUrl`. See [AAuth on a custom domain](#aauth-on-a-custom-domain) |
+| `orgId` | `LUMOAUTH_ORG_ID` | The organization slug. Not needed with `customDomain` |
+| `issuer` | `{baseUrl}/orgs/{orgId}/api/v1`; the issuer metadata with `customDomain` | The AAuth issuer, when you state it yourself |
 | `kid` | `key-1` | The key ID. It must match the registered JWKS entry |
 | `fetch` | global `fetch` | A custom `fetch` |
 | `timeout` | 30 000 ms | Request timeout |
@@ -442,8 +489,9 @@ must be the key in the agent token's `cnf` claim.
 | `signRequest(method, url, options?)` | Returns RFC 9421 signature headers for a request |
 | `signedRequest(method, url, { authToken, data?, headers? })` | Sends a signed request with the auth token, and returns the `fetch` `Response` |
 | `verifyAuthToken(token, { resource, jwks?, clockSkew?, issuer? })` | Verifies a token. The issuer defaults to this organization's issuer |
+| `resolveIssuer()` | Returns the AAuth issuer. With `customDomain` it reads the issuer from the domain's issuer metadata once and caches it |
 | `discoverIssuer()`, `discoverAgents()`, `discoverResource(url)` | Read the AAuth metadata documents |
-| `issuer`, `publicJwk`, `publicJwkThumbprint` | The issuer URL and the agent's public key |
+| `issuer`, `publicJwk`, `publicJwkThumbprint` | The issuer URL and the agent's public key. With `customDomain`, `issuer` throws until `resolveIssuer()` has run, unless you passed `issuer` |
 
 ### Resource-server side
 
@@ -457,10 +505,45 @@ const claims = await verifyAuthToken(bearer, {
 // Then check the request signature against claims.cnf.jwk.
 ```
 
-`verifyAuthToken()` fetches the issuer's keys unless you pass `jwks`. It
+`verifyAuthToken()` fetches the issuer's keys unless you pass `jwks`. With
+`customDomain` in place of `issuer`, it reads the issuer and the keys from the
+domain: see [AAuth on a custom domain](#aauth-on-a-custom-domain). It
 accepts only asymmetric algorithms, so `HS*` and `none` always fail. It allows
 no clock skew on `exp` unless you set `clockSkew` in seconds. It throws
 `AAuthError` when a check fails.
+
+### AAuth on a custom domain
+
+AAuth requests go to the custom domain like every other request, without the
+`/orgs/{orgId}` segment:
+
+```ts
+import { AAuthClient } from '@lumoauth/agent';
+
+const aauth = new AAuthClient({
+  agentIdentifier: 'https://my-agent.example.com',
+  privateKeyPem: process.env.AGENT_PRIVATE_KEY!,
+  customDomain: 'auth.acme.com',
+});
+
+const issuer = await aauth.resolveIssuer();
+// https://app.lumoauth.dev/orgs/acme-corp/api/v1
+```
+
+The AAuth issuer is the exception to the rule that the issuer is the bare
+domain. LumoAuth names the AAuth issuer with the platform address on every
+host. An AAuth token carries that address as `iss`, and an agent addresses it
+as the audience. So the SDK never derives the AAuth issuer from the custom
+domain, and never from a default base URL:
+
+- `resolveIssuer()` reads the `issuer` member of
+  `https://auth.acme.com/api/v1/.well-known/aauth-issuer` once and caches it.
+  Pass `issuer` to the constructor to state it yourself. No request is then
+  made.
+- `aauth.verifyAuthToken()` uses that issuer. It fetches the key set from the
+  custom domain.
+- The plain `verifyAuthToken(token, { customDomain, resource })` does the
+  same. A token whose issuer is the bare domain is refused.
 
 ### Exports
 

@@ -137,8 +137,11 @@ Templates are in this package's `templates/` folder. The CLI replaces `{{project
 
 ## Versioning
 
-This package is version 0.1.0. The generated project depends on `@lumoauth/client` and
-`@lumoauth/react` `^1.0.0`.
+This package has its own version line. Its
+[npm page](https://www.npmjs.com/package/create-lumo-agent) shows the latest version, and
+`npx create-lumo-agent@latest` runs it. The generated project
+depends on `@lumoauth/client` and `@lumoauth/react`, and `npm install` gives it the latest
+compatible release of both.
 
 ## Related packages
 

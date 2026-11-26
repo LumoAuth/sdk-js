@@ -7,6 +7,7 @@ import {
     LumoAuthRateLimitError,
     LumoAuthNetworkError,
 } from '../errors';
+import { LumoAuthAddress, type RouteName } from '../routes';
 import { fetchWithDpop, type DpopProofProvider } from './dpop';
 
 // ─── Types ────────────────────────────────────────────────────────────
@@ -18,7 +19,20 @@ export type CredentialSource = string | (() => string | undefined | null | Promi
 export const ORGANIZATION_API_KEY_PREFIX = 'lmk_';
 
 export interface HttpClientConfig {
-    baseUrl: string;
+    /** The LumoAuth host. Required unless `customDomain` is set. */
+    baseUrl?: string;
+    /**
+     * The organization's custom domain, for example `auth.acme.com`. When
+     * set, every request goes to it, `baseUrl` is not used, and no path
+     * carries the `/orgs/{orgId}` segment.
+     */
+    customDomain?: string;
+    /**
+     * The organization slug of the client. The transport never adds it to a
+     * path. It is used for one thing: on a custom domain, a path that the
+     * caller wrote with this organization's `/orgs/…` segment loses it.
+     */
+    orgId?: string;
     /**
      * Bearer credential: a user access token, a machine access token or an
      * agent credential (`agk_…`). A value that starts with `lmk_` is an
@@ -45,14 +59,54 @@ export interface HttpClientConfig {
      * retried once. Set it when the token was obtained with the same signer.
      */
     dpop?: DpopProofProvider;
+    /**
+     * HTTP Basic credentials (RFC 7617) for endpoints that authenticate a
+     * confidential application with its client id and client secret. The
+     * header is `Authorization: Basic base64(username ":" password)` with the
+     * raw values, encoded as UTF-8.
+     *
+     * When set, it is the only credential of every request: `token`, `apiKey`
+     * and `dpop` are not used, an `Authorization`, `X-API-Key` or `DPoP`
+     * entry of `headers` is dropped, and a redirect is an error, so that the
+     * credentials never follow one.
+     */
+    basic?: { username: string; password: string };
 }
 
-interface RequestOptions {
+/** Per-request options of {@link HttpClient.post}. */
+export interface HttpRequestOptions {
+    /**
+     * The only success status that the endpoint documents. Another 2xx
+     * status throws a `LumoAuthError`, so that it is never read as a result.
+     */
+    expectStatus?: number;
+}
+
+interface RequestOptions extends HttpRequestOptions {
     method: 'GET' | 'POST' | 'PUT' | 'DELETE';
     path: string;
     body?: unknown;
     signal?: AbortSignal;
     headers?: Record<string, string>;
+}
+
+/** Header names that carry a credential. Compared in lower case. */
+const CREDENTIAL_HEADERS = ['authorization', 'x-api-key', 'dpop'];
+
+function withoutCredentialHeaders(headers: Record<string, string> | undefined): Record<string, string> {
+    const kept: Record<string, string> = {};
+    for (const [name, value] of Object.entries(headers ?? {})) {
+        if (!CREDENTIAL_HEADERS.includes(name.toLowerCase())) kept[name] = value;
+    }
+    return kept;
+}
+
+/** `Basic base64(username ":" password)`, UTF-8, without `Buffer` (isomorphic). */
+function basicAuthorization(username: string, password: string): string {
+    const bytes = new TextEncoder().encode(`${username}:${password}`);
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return `Basic ${btoa(binary)}`;
 }
 
 // ─── HTTP Client ──────────────────────────────────────────────────────
@@ -62,6 +116,12 @@ interface RequestOptions {
  * Framework-agnostic — works with any `fetch`-compatible runtime.
  */
 export class HttpClient {
+    /**
+     * Where the organization is served. The modules ask it for the path of
+     * each route, so the choice between the platform form and the custom
+     * domain form is made in one place.
+     */
+    readonly address: LumoAuthAddress;
     private baseUrl: string;
     private tokenProvider: () => string | undefined | null | Promise<string | undefined | null>;
     private apiKeyProvider: () => string | undefined | null | Promise<string | undefined | null>;
@@ -69,14 +129,20 @@ export class HttpClient {
     private fetchFn: typeof globalThis.fetch;
     private defaultHeaders: Record<string, string>;
     private dpop: DpopProofProvider | undefined;
+    private basic: string | undefined;
 
     constructor(config: HttpClientConfig) {
-        // Normalise trailing slash
-        this.baseUrl = config.baseUrl.replace(/\/+$/, '');
+        // Normalise trailing slash; a custom domain wins over the base URL.
+        this.address = new LumoAuthAddress(config).required();
+        this.baseUrl = this.address.baseUrl;
         this.timeout = config.timeout ?? 30_000;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
         this.defaultHeaders = config.headers ?? {};
         this.dpop = config.dpop;
+        if (config.basic) {
+            this.basic = basicAuthorization(config.basic.username, config.basic.password);
+            this.dpop = undefined;
+        }
 
         // Normalise both credentials to provider functions
         this.tokenProvider = HttpClient.provider(config.token);
@@ -97,6 +163,9 @@ export class HttpClient {
      * the request can carry the `DPoP` scheme and a proof.
      */
     private async credential(): Promise<{ headers: Record<string, string>; dpopToken?: string }> {
+        if (this.basic) {
+            return { headers: { Authorization: this.basic } };
+        }
         const token = await this.tokenProvider();
         if (token) {
             if (token.startsWith(ORGANIZATION_API_KEY_PREFIX)) {
@@ -116,12 +185,32 @@ export class HttpClient {
 
     // ── Public helpers ──────────────────────────────────────────────────
 
+    /** `true` when the requests go to the organization's custom domain. */
+    get isCustomDomain(): boolean {
+        return this.address.isCustomDomain;
+    }
+
+    /**
+     * The path of a registry route for this client: with the
+     * `/orgs/{orgId}` segment on the platform host, without it on a custom
+     * domain (where `orgId` is not needed).
+     */
+    path(route: RouteName, params: Record<string, string | number> = {}): string {
+        return this.address.path(route, params);
+    }
+
     async get<T>(path: string, signal?: AbortSignal): Promise<T> {
         return this.request<T>({ method: 'GET', path, signal });
     }
 
-    async post<T>(path: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>): Promise<T> {
-        return this.request<T>({ method: 'POST', path, body, signal, headers });
+    async post<T>(
+        path: string,
+        body?: unknown,
+        signal?: AbortSignal,
+        headers?: Record<string, string>,
+        options?: HttpRequestOptions,
+    ): Promise<T> {
+        return this.request<T>({ method: 'POST', path, body, signal, headers, ...options });
     }
 
     async put<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -137,7 +226,9 @@ export class HttpClient {
     private async request<T>(opts: RequestOptions): Promise<T> {
         const credential = await this.credential();
 
-        const url = `${this.baseUrl}${opts.path}`;
+        // A path from `path()` is already in the right form. A path that the
+        // caller wrote with its own organization's segment is fixed here.
+        const url = `${this.baseUrl}${this.address.rawPath(opts.path)}`;
 
         // Create an abort controller for timeout
         const controller = new AbortController();
@@ -148,13 +239,23 @@ export class HttpClient {
             opts.signal.addEventListener('abort', () => controller.abort());
         }
 
-        const headers: Record<string, string> = {
-            ...credential.headers,
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            ...this.defaultHeaders,
-            ...opts.headers,
-        };
+        // With Basic credentials, no other credential header may travel
+        // next to them, whatever the caller configured.
+        const headers: Record<string, string> = this.basic
+            ? {
+                  'Content-Type': 'application/json',
+                  Accept: 'application/json',
+                  ...withoutCredentialHeaders(this.defaultHeaders),
+                  ...withoutCredentialHeaders(opts.headers),
+                  ...credential.headers,
+              }
+            : {
+                  ...credential.headers,
+                  'Content-Type': 'application/json',
+                  Accept: 'application/json',
+                  ...this.defaultHeaders,
+                  ...opts.headers,
+              };
 
         try {
             const init: RequestInit = {
@@ -163,6 +264,9 @@ export class HttpClient {
                 body: opts.body != null ? JSON.stringify(opts.body) : undefined,
                 signal: controller.signal,
             };
+            if (this.basic) {
+                init.redirect = 'error';
+            }
             const response =
                 this.dpop && credential.dpopToken
                     ? await fetchWithDpop(this.fetchFn, url, init, this.dpop, { accessToken: credential.dpopToken })
@@ -208,6 +312,13 @@ export class HttpClient {
                         : 'API_ERROR';
 
                 throw new LumoAuthApiError(errorMessage, errorCode, response.status, parsedBody);
+            }
+
+            if (opts.expectStatus !== undefined && response.status !== opts.expectStatus) {
+                throw new LumoAuthError(
+                    `LumoAuth answered ${opts.path} with status ${response.status}; the SDK reads only status ${opts.expectStatus}.`,
+                    'LUMOAUTH_ERROR',
+                );
             }
 
             // Some endpoints may return 204 No Content

@@ -9,6 +9,26 @@ export { auth, currentUser, protectPage, type AuthObject } from './auth';
 export { createRouteHandler } from './route-handler';
 export { lumoAuthMiddleware, type MiddlewareOptions } from './middleware';
 export { resolveConfig, type LumoAuthNextConfig } from './config';
+// Personal Agent Protocol: verify the requests that personal agents send to
+// your route handlers.
+export {
+    verifyPoppyRequest,
+    withPoppySession,
+    poppyRefusalResponse,
+    type PoppyRequestOptions,
+    type PoppyVerifier,
+} from './poppy';
+export {
+    PoppyModule,
+    type PoppyModuleConfig,
+    type PoppyVerification,
+    type PoppyVerified,
+    type PoppyRefused,
+    type PoppySession,
+    type PoppyAccount,
+    type PoppySessionStatus,
+    type PoppyEndSessionResult,
+} from '@lumoauth/shared';
 export {
     SESSION_COOKIE,
     REFRESHED_SESSION_HEADER,

@@ -49,10 +49,23 @@ export interface AuthState {
 // ─── Provider Config ──────────────────────────────────────────────────
 
 export interface LumoAuthProviderProps {
-    /** Your LumoAuth instance domain (e.g. "https://auth.example.com") */
-    domain: string;
-    /** Your organization ID (e.g. "acme-corp") */
-    orgId: string;
+    /**
+     * The LumoAuth host (e.g. "https://app.lumoauth.dev"). Required unless
+     * `customDomain` is set.
+     */
+    domain?: string;
+    /**
+     * Your organization ID (e.g. "acme-corp"). Required on the LumoAuth
+     * host. Not needed with `customDomain`.
+     */
+    orgId?: string;
+    /**
+     * Your organization's custom domain: a host name or an `https://` origin
+     * (e.g. "auth.acme.com"). When set, sign-in, sign-out, the hosted pages
+     * and every API call use it, and `domain` is not used. No address
+     * carries the `/orgs/{orgId}` segment.
+     */
+    customDomain?: string;
     /** OAuth client ID */
     clientId: string;
     /**
@@ -385,8 +398,12 @@ export interface LumoAuthContextValue extends AuthState {
     authStrategy: 'pkce' | 'password';
     /** Provider configuration */
     config: {
+        /** The origin in use: the custom domain when one is set, otherwise the LumoAuth host. */
         domain: string;
+        /** The organization ID, or `''` when a custom domain is used without one. */
         orgId: string;
+        /** The custom domain as an origin, when one is set. */
+        customDomain?: string;
         clientId: string;
         redirectUri?: string;
         afterSignInUrl?: string;

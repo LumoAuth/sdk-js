@@ -6,3 +6,4 @@ export { ApprovalsModule } from './approvals';
 export { DelegationModule, MAX_DELEGATION_DEPTH } from './delegation';
 export { JitModule, JIT_MAX_TTL } from './jit';
 export { McpModule } from './mcp';
+export { PoppyModule, buildPoppyVerifyBody, buildPoppyRelay, normalizePoppyPublicOrigin, POPPY_FORWARDED_HEADERS } from './poppy';

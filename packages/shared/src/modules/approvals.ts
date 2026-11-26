@@ -4,7 +4,6 @@ import {
     LumoAuthApprovalNotDeliveredError,
     LumoAuthConfigError,
 } from '../errors';
-import { ROUTES, buildPath } from '../routes';
 
 /**
  * Approvals module — push-approval-for-agent-actions.
@@ -128,7 +127,7 @@ export class ApprovalsModule {
         let created: CreateResponse;
         try {
             created = await this.http.post<CreateResponse>(
-                buildPath(ROUTES['approvals.create'].path, { orgId: this.requireOrgId() }),
+                this.http.path('approvals.create', { orgId: this.requireOrgId() }),
                 {
                     task_id: req.taskId,
                     reason: req.reason,
@@ -201,7 +200,7 @@ export class ApprovalsModule {
      */
     async getStatus(approvalToken: string): Promise<ApprovalResult> {
         const status = await this.http.get<StatusResponse>(
-            buildPath(ROUTES['approvals.status'].path, {
+            this.http.path('approvals.status', {
                 orgId: this.requireOrgId(),
                 token: approvalToken,
             }),
@@ -233,7 +232,7 @@ export class ApprovalsModule {
     }
 
     private requireOrgId(): string {
-        if (!this.orgId) {
+        if (!this.orgId && !this.http.isCustomDomain) {
             throw new LumoAuthConfigError(
                 'approvals requires `orgId` — pass it to the constructor: new LumoAuth({ baseUrl, orgId, token })',
             );

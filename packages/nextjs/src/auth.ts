@@ -125,7 +125,12 @@ export async function currentUser(
     const cfg = resolveConfig(overrides);
 
     try {
-        const mod = new AuthModule({ baseUrl: cfg.domain, orgId: cfg.orgId, clientId: cfg.clientId });
+        const mod = new AuthModule({
+            baseUrl: cfg.domain,
+            customDomain: cfg.customDomain,
+            orgId: cfg.orgId,
+            clientId: cfg.clientId,
+        });
         return await mod.getUserInfo(token);
     } catch {
         // A failed /userinfo does not invalidate the session — treat it as

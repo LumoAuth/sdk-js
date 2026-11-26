@@ -10,6 +10,10 @@
  *   - `requireAuth([opts])`        — gate handler that 401s when there's
  *                                    no `req.user`, with optional scope /
  *                                    permission checks.
+ *   - `poppySession(opts)`         — gate handler for routes that personal
+ *                                    agents call (Personal Agent Protocol);
+ *                                    sets `req.poppy`. It needs no session
+ *                                    middleware. See ./poppy.ts.
  *
  * Sessions are stored via Express's session middleware (the host app is
  * expected to mount `express-session` before this middleware). The PKCE
@@ -45,7 +49,29 @@ export {
     LumoAuthApprovalTimeoutError,
     LumoAuthApprovalNotDeliveredError,
     LumoAuthBudgetExceededError,
+    // Personal Agent Protocol: the namespace behind `lumo.poppy`, for apps
+    // that verify a request themselves.
+    PoppyModule,
+    buildPoppyVerifyBody,
+    buildPoppyRelay,
+    type PoppyModuleConfig,
+    type PoppyVerification,
+    type PoppyVerified,
+    type PoppyRefused,
+    type PoppySession,
+    type PoppyAccount,
+    type PoppySessionStatus,
+    type PoppyEndSessionResult,
+    type PoppyVerifyOptions,
 } from '@lumoauth/backend';
+import type { PoppyVerified } from '@lumoauth/shared';
+
+export {
+    poppySession,
+    relayPoppyRefusal,
+    type PoppySessionOptions,
+    type PoppyVerifier,
+} from './poppy';
 
 // Express types are loose to avoid a direct dependency on @types/express —
 // callers bring their own types. We only need the subset we use.
@@ -88,21 +114,38 @@ export type LumoAuthRequestHandler = (
 
 declare global {
   // Augment express's Request so `req.user` is typed for consumers using
-  // lumoAuthMiddleware(). Merges with @types/express when present; harmless
-  // (creates the namespace) otherwise.
+  // lumoAuthMiddleware(), and `req.poppy` for consumers using poppySession().
+  // Merges with @types/express when present; harmless (creates the
+  // namespace) otherwise.
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       user?: SessionUser;
+      /**
+       * Who a request from a personal agent is from. Set by `poppySession()`
+       * on a verified request: `req.poppy.clientId`, `req.poppy.userId`,
+       * `req.poppy.session.id`, `req.poppy.account`.
+       */
+      poppy?: PoppyVerified;
     }
   }
 }
 
 export interface LumoAuthMiddlewareOptions {
-  /** e.g. "https://app.lumoauth.dev" */
-  baseUrl: string;
-  /** The tenant slug that owns the OAuth client. */
-  organization: string;
+  /** e.g. "https://app.lumoauth.dev". Required unless `customDomain` is set. */
+  baseUrl?: string;
+  /**
+   * The organization slug that owns the OAuth client. Required on the
+   * LumoAuth host. Not needed with `customDomain`.
+   */
+  organization?: string;
+  /**
+   * The organization's custom domain: a host name or an `https://` origin,
+   * for example `auth.acme.com`. When set, sign-in, the token exchange and
+   * sign-out use it, `baseUrl` is not used, and no address carries the
+   * `/orgs/{organization}` segment.
+   */
+  customDomain?: string;
   /** OAuth client id registered for this app. */
   clientId: string;
   /**
@@ -222,8 +265,11 @@ export function lumoAuthMiddleware(opts: LumoAuthMiddlewareOptions): LumoAuthReq
     return pending;
   };
 
+  // Throws LumoAuthConfigError now for a malformed `customDomain`, and when
+  // neither it nor `baseUrl` is set.
   const auth = new AuthModule({
     baseUrl: opts.baseUrl,
+    customDomain: opts.customDomain,
     orgId: opts.organization,
     clientId: opts.clientId,
     fetch: opts.fetch,

@@ -3,10 +3,8 @@ import {
     generateCodeVerifier,
     generateCodeChallenge,
     generateState,
-    ROUTES,
-    buildPath,
 } from '@lumoauth/shared';
-import { resolveConfig, type LumoAuthNextConfig } from './config';
+import { addressOf, resolveConfig, type LumoAuthNextConfig } from './config';
 import { appOrigin, callbackUrl } from './origin';
 import {
     SESSION_COOKIE,
@@ -46,7 +44,12 @@ import {
 type Ctx = { params: Promise<{ lumoauth?: string[] }> };
 
 function authModule(cfg: LumoAuthNextConfig): AuthModule {
-    return new AuthModule({ baseUrl: cfg.domain, orgId: cfg.orgId, clientId: cfg.clientId });
+    return new AuthModule({
+        baseUrl: cfg.domain,
+        customDomain: cfg.customDomain,
+        orgId: cfg.orgId,
+        clientId: cfg.clientId,
+    });
 }
 
 /** Same-origin relative paths only — never trust a caller-supplied absolute URL. */
@@ -79,9 +82,7 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
             const state = generateState();
             const codeChallenge = await generateCodeChallenge(codeVerifier);
 
-            const authorize = new URL(
-                `${cfg.domain.replace(/\/+$/, '')}${buildPath(ROUTES['oauth.authorize'].path, { orgId: cfg.orgId })}`,
-            );
+            const authorize = new URL(addressOf(cfg).url('oauth.authorize'));
             authorize.searchParams.set('response_type', 'code');
             authorize.searchParams.set('client_id', cfg.clientId);
             authorize.searchParams.set('redirect_uri', redirectUri);
@@ -195,9 +196,7 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
 
         // End the IdP session too, otherwise the next /authorize silently
         // re-issues a code and the user is never really signed out.
-        const logout = new URL(
-            `${cfg.domain.replace(/\/+$/, '')}${buildPath(ROUTES['oauth.logout'].path, { orgId: cfg.orgId })}`,
-        );
+        const logout = new URL(addressOf(cfg).url('oauth.logout'));
         logout.searchParams.set('post_logout_redirect_uri', origin + cfg.afterSignOutUrl!);
         if (session?.idToken) logout.searchParams.set('id_token_hint', session.idToken);
 

@@ -1,12 +1,21 @@
+import { LumoAuthAddress, normalizeCustomDomain } from '@lumoauth/shared';
 import { DEFAULT_DOMAIN } from './defaults';
 
 export interface LumoAuthNextConfig {
     /**
      * Base URL of the LumoAuth region of the organization.
      * @default 'https://app.lumoauth.dev' (US). EU: 'https://eu.app.lumoauth.dev'.
+     *
+     * With a `customDomain`, the resolved config holds the custom domain here.
      */
     domain: string;
-    /** Organization slug. */
+    /**
+     * The organization's custom domain: a host name or an `https://` origin,
+     * for example `auth.acme.com`. When set, every request and redirect
+     * uses it, `domain` is not used, and `orgId` is not needed.
+     */
+    customDomain?: string;
+    /** Organization slug. Not needed with `customDomain`. */
     orgId: string;
     /** OAuth client id. */
     clientId: string;
@@ -55,8 +64,14 @@ const REQUIRED: Array<[keyof LumoAuthNextConfig, string]> = [
  */
 export function resolveConfig(overrides: Partial<LumoAuthNextConfig> = {}): LumoAuthNextConfig {
     const env = process.env;
+    // A malformed value throws here, with the option's name.
+    const customDomain = normalizeCustomDomain(overrides.customDomain || env.NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN);
     const cfg: LumoAuthNextConfig = {
-        domain: (overrides.domain || env.NEXT_PUBLIC_LUMOAUTH_DOMAIN || DEFAULT_DOMAIN).replace(/\/+$/, ''),
+        // A custom domain wins over the region's base URL.
+        domain:
+            customDomain ??
+            (overrides.domain || env.NEXT_PUBLIC_LUMOAUTH_DOMAIN || DEFAULT_DOMAIN).replace(/\/+$/, ''),
+        customDomain,
         orgId: overrides.orgId || env.NEXT_PUBLIC_LUMOAUTH_ORG_ID || '',
         clientId: overrides.clientId || env.NEXT_PUBLIC_LUMOAUTH_CLIENT_ID || '',
         clientSecret: overrides.clientSecret || env.LUMOAUTH_CLIENT_SECRET || undefined,
@@ -68,7 +83,8 @@ export function resolveConfig(overrides: Partial<LumoAuthNextConfig> = {}): Lumo
         sessionMaxAge: overrides.sessionMaxAge ?? 60 * 60 * 24 * 30,
     };
 
-    const missing = REQUIRED.filter(([key]) => !cfg[key]);
+    // On a custom domain no address carries the organization slug.
+    const missing = REQUIRED.filter(([key]) => !cfg[key] && !(key === 'orgId' && customDomain));
     if (missing.length) {
         throw new Error(
             `@lumoauth/nextjs is missing required config: ${missing.map(([, name]) => name).join(', ')}. ` +
@@ -84,6 +100,14 @@ export function resolveConfig(overrides: Partial<LumoAuthNextConfig> = {}): Lumo
         );
     }
     return cfg;
+}
+
+/**
+ * Where the organization of a resolved config is served. Every address that
+ * this package builds itself comes from here.
+ */
+export function addressOf(cfg: LumoAuthNextConfig): LumoAuthAddress {
+    return new LumoAuthAddress({ baseUrl: cfg.domain, orgId: cfg.orgId, customDomain: cfg.customDomain });
 }
 
 // Not URL.canParse(): it needs Node 18.17, and the package supports Node 18.0.

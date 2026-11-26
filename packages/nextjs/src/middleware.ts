@@ -121,6 +121,7 @@ export function lumoAuthMiddleware(options: MiddlewareOptions = {}) {
         try {
             const mod = new AuthModule({
                 baseUrl: cfg.domain,
+                customDomain: cfg.customDomain,
                 orgId: cfg.orgId,
                 clientId: cfg.clientId,
             });

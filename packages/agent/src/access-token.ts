@@ -1,5 +1,5 @@
 import { constants, createHash, createPublicKey, verify as cryptoVerify, type KeyObject } from 'node:crypto';
-import { DPOP_SCHEME, LumoAuthError, dpopHtu } from '@lumoauth/shared';
+import { DPOP_SCHEME, LumoAuthConfigError, LumoAuthError, apiBaseOfIssuer, dpopHtu, normalizeCustomDomain } from '@lumoauth/shared';
 import { jwkThumbprint, type AAuthJwk } from './keys';
 
 /**
@@ -13,7 +13,8 @@ import { jwkThumbprint, type AAuthJwk } from './keys';
  * Checks, in order: compact JWS shape; `typ` is `at+jwt` or
  * `application/at+jwt`; `alg` is an asymmetric JWS algorithm (`none` and
  * HMAC are refused); `kid` resolves in the issuer's JWKS, which is read from
- * `{issuer}/.well-known/openid-configuration` → `jwks_uri` and cached, with
+ * `{issuer}/.well-known/openid-configuration` → `jwks_uri` (on a custom
+ * domain: `{domain}/api/v1/.well-known/openid-configuration`) and cached, with
  * one refetch on an unknown `kid`; signature; `iss`; `aud` contains the
  * resource; `exp` / `nbf` with a clock skew (default 60 s); `token_use` is
  * not `test`; and, when the token carries `cnf.jkt`, the RFC 9449 proof
@@ -82,8 +83,17 @@ export interface IncomingDpopProof {
 }
 
 export interface VerifyAccessTokenOptions {
-    /** The trusted issuer, e.g. `https://app.lumoauth.dev/orgs/acme-corp/api/v1`. */
-    issuer: string;
+    /**
+     * The trusted issuer, e.g. `https://app.lumoauth.dev/orgs/acme-corp/api/v1`.
+     * Required unless `customDomain` is set.
+     */
+    issuer?: string;
+    /**
+     * The organization's custom domain, for example `auth.acme.com`. The
+     * trusted issuer is then the bare domain, and only that one: a token
+     * that names the platform issuer is refused.
+     */
+    customDomain?: string;
     /** This resource server's URI. The token's `aud` must contain it. */
     resource: string;
     /** Pre-fetched issuer JWKS (no network). */
@@ -198,8 +208,33 @@ export class JwksCache {
     }
 }
 
+/**
+ * The one issuer that a token may name. With a custom domain it is the bare
+ * domain, never the platform form as well.
+ *
+ * @throws LumoAuthConfigError when neither option is set, when
+ *         `customDomain` is malformed, or when the two name different issuers.
+ */
+export function trustedIssuer(options: { issuer?: string; customDomain?: string }): string {
+    const customDomain = normalizeCustomDomain(options.customDomain);
+    if (customDomain === undefined) {
+        if (typeof options.issuer !== 'string' || options.issuer === '') {
+            throw new LumoAuthConfigError('issuer is required (or customDomain, for an organization on its own domain).');
+        }
+        return options.issuer;
+    }
+    if (options.issuer && options.issuer.replace(/\/+$/, '') !== customDomain) {
+        throw new LumoAuthConfigError(
+            `issuer and customDomain name different issuers. With a custom domain the issuer is ${customDomain}; leave issuer out.`,
+        );
+    }
+    return customDomain;
+}
+
 async function fetchJwks(issuer: string, doFetch: typeof globalThis.fetch): Promise<AAuthJwk[]> {
-    const base = issuer.replace(/\/+$/, '');
+    // The platform issuer is its own API base. A custom domain's issuer is
+    // the bare domain, and its documents are under /api/v1.
+    const base = apiBaseOfIssuer(issuer);
     const discovery = await doFetch(`${base}/.well-known/openid-configuration`, {
         headers: { Accept: 'application/json' },
     });
@@ -295,6 +330,7 @@ export async function verifyAccessToken(
     token: string,
     options: VerifyAccessTokenOptions,
 ): Promise<AccessTokenClaims> {
+    const issuer = trustedIssuer(options);
     if (typeof token !== 'string' || token === '') {
         throw new AccessTokenError('Missing access token', 'invalid_token');
     }
@@ -321,7 +357,7 @@ export async function verifyAccessToken(
         throw new AccessTokenError(`Disallowed JWS algorithm: ${alg}`, 'invalid_token');
     }
 
-    if (claims.iss !== options.issuer) {
+    if (claims.iss !== issuer) {
         throw new AccessTokenError('Untrusted issuer', 'invalid_token');
     }
 
@@ -331,7 +367,7 @@ export async function verifyAccessToken(
         jwk = options.jwks.keys.find((k) => k.kid === kid);
     } else {
         const cache = options.jwksCache ?? sharedJwksCache;
-        jwk = await cache.find(options.issuer, kid, options.fetch);
+        jwk = await cache.find(issuer, kid, options.fetch);
     }
     if (!jwk) {
         throw new AccessTokenError(`Key not found: kid=${kid}`, 'invalid_token');
@@ -588,6 +624,8 @@ export interface AccessTokenVerifier {
  * ```
  */
 export function createAccessTokenVerifier(options: AccessTokenVerifierOptions): AccessTokenVerifier {
+    // A missing issuer or a malformed custom domain is an error now.
+    trustedIssuer(options);
     const jwksCache = new JwksCache(options.fetch);
     const replayCache = options.replayCache ?? new InMemoryDpopReplayCache();
     const base: VerifyAccessTokenOptions = { ...options, jwksCache, replayCache };

@@ -1,12 +1,14 @@
 import { constants, createPublicKey, verify as cryptoVerify, type KeyObject } from 'node:crypto';
 import type { AAuthJwk } from './keys';
 import { AAuthError } from './errors';
+import { LumoAuthAddress, LumoAuthConfigError } from '@lumoauth/shared';
 
 /**
  * Auth-token (`auth+jwt`) verification for resource servers.
  *
  * Verifies the JWS signature against the organization's AAuth issuer JWKS
- * (`{issuer}/aauth/jwks.json`), plus `typ`, `iss`, `aud`, and `exp` — the
+ * (`{issuer}/aauth/jwks.json`; with a custom domain
+ * `{domain}/api/v1/aauth/jwks.json`), plus `typ`, `iss`, `aud`, and `exp` — the
  * same checks LumoAuth's own `validateAuthToken()` performs (revocation
  * excepted: use `POST {issuer}/aauth/auth/token/verify` for live
  * revocation-aware introspection).
@@ -49,8 +51,21 @@ export interface AAuthTokenClaims {
 }
 
 export interface VerifyAuthTokenOptions {
-    /** The trusted issuer URL, e.g. `https://app.lumoauth.dev/orgs/acme-corp/api/v1`. */
-    issuer: string;
+    /**
+     * The trusted AAuth issuer, e.g. `https://app.lumoauth.dev/orgs/acme-corp/api/v1`.
+     * Required unless `customDomain` is set.
+     */
+    issuer?: string;
+    /**
+     * The organization's custom domain, for example `auth.acme.com`. The key
+     * set is then fetched from the domain.
+     *
+     * The AAuth issuer is NOT the bare domain: LumoAuth names it with the
+     * platform address on every host. Without an explicit `issuer`, it is
+     * read from the `issuer` member of the domain's AAuth issuer metadata
+     * (`{domain}/api/v1/.well-known/aauth-issuer`) and cached.
+     */
+    customDomain?: string;
     /** Your resource identifier — must equal the token's `aud`. */
     resource: string;
     /** Pre-fetched issuer JWKS (skips the network fetch). */
@@ -118,6 +133,7 @@ export async function verifyAuthToken(
     token: string,
     options: VerifyAuthTokenOptions
 ): Promise<AAuthTokenClaims> {
+    const { issuer, jwksUrl } = await aauthTrust(options);
     const parts = token.split('.');
     if (parts.length !== 3) {
         throw new AAuthError('Invalid JWT format', 'invalid_token');
@@ -138,12 +154,12 @@ export async function verifyAuthToken(
         throw new AAuthError(`Disallowed JWS algorithm: ${alg}`, 'invalid_token');
     }
 
-    if (claims.iss !== options.issuer) {
+    if (claims.iss !== issuer) {
         throw new AAuthError('Untrusted issuer', 'invalid_token');
     }
 
     // Resolve the signing key from the issuer JWKS
-    const jwks = options.jwks ?? (await fetchIssuerJwks(options.issuer, options.fetch));
+    const jwks = options.jwks ?? (await fetchIssuerJwks(jwksUrl, options.fetch));
     const jwk = jwks.keys.find((k) => k.kid === kid);
     if (!jwk) {
         throw new AAuthError(`Key not found: kid=${kid}`, 'invalid_token');
@@ -187,12 +203,85 @@ function assertAlgMatchesKey(alg: string, jwk: AAuthJwk): void {
     }
 }
 
+/** AAuth issuers that were read from issuer metadata, by the URL of the document. */
+const discoveredIssuers = new Map<string, Promise<string>>();
+
+/**
+ * The AAuth issuer of an organization on its custom domain.
+ *
+ * LumoAuth names the AAuth issuer with the platform address on every host,
+ * so it cannot be derived from the domain. This reads the `issuer` member of
+ * the AAuth issuer metadata document on the custom domain. The answer is
+ * cached for the life of the process; a failed read is not cached.
+ *
+ * @throws AAuthError (`issuer_metadata_failed`) when the document cannot be
+ *         read or names no issuer.
+ */
+export function discoverAAuthIssuer(
+    address: LumoAuthAddress,
+    fetchFn?: typeof globalThis.fetch,
+): Promise<string> {
+    const url = address.url('aauth.issuerMetadata');
+    let pending = discoveredIssuers.get(url);
+    if (!pending) {
+        pending = readAAuthIssuer(url, fetchFn ?? globalThis.fetch).catch((error) => {
+            discoveredIssuers.delete(url);
+            throw error;
+        });
+        discoveredIssuers.set(url, pending);
+    }
+    return pending;
+}
+
+async function readAAuthIssuer(url: string, doFetch: typeof globalThis.fetch): Promise<string> {
+    let document: unknown;
+    try {
+        const response = await doFetch(url, { headers: { Accept: 'application/json' } });
+        if (!response.ok) {
+            throw new AAuthError(`Failed to fetch AAuth issuer metadata (HTTP ${response.status})`, 'issuer_metadata_failed', response.status);
+        }
+        document = await response.json();
+    } catch (error) {
+        if (error instanceof AAuthError) throw error;
+        throw new AAuthError(
+            `Failed to fetch AAuth issuer metadata: ${error instanceof Error ? error.message : String(error)}`,
+            'issuer_metadata_failed',
+        );
+    }
+    const issuer = typeof document === 'object' && document !== null ? (document as { issuer?: unknown }).issuer : undefined;
+    if (typeof issuer !== 'string' || !/^https?:\/\/\S+$/.test(issuer)) {
+        throw new AAuthError('AAuth issuer metadata names no issuer', 'issuer_metadata_failed');
+    }
+    return issuer;
+}
+
+/**
+ * The issuer that an AAuth token must name, and where its key set is.
+ *
+ * Without a custom domain both come from `issuer`. With a custom domain the
+ * key set is the domain's own route, and the issuer is the configured one
+ * or the one that the domain's issuer metadata names. It is never derived
+ * from the domain.
+ */
+async function aauthTrust(options: VerifyAuthTokenOptions): Promise<{ issuer: string; jwksUrl: string }> {
+    const address = new LumoAuthAddress({ customDomain: options.customDomain });
+    if (!address.isCustomDomain) {
+        if (typeof options.issuer !== 'string' || options.issuer === '') {
+            throw new LumoAuthConfigError('issuer is required (or customDomain, for an organization on its own domain).');
+        }
+        return { issuer: options.issuer, jwksUrl: `${options.issuer.replace(/\/+$/, '')}/aauth/jwks.json` };
+    }
+    return {
+        issuer: options.issuer || (await discoverAAuthIssuer(address, options.fetch)),
+        jwksUrl: address.url('aauth.jwks'),
+    };
+}
+
 async function fetchIssuerJwks(
-    issuer: string,
+    url: string,
     fetchFn?: typeof globalThis.fetch
 ): Promise<{ keys: AAuthJwk[] }> {
     const doFetch = fetchFn ?? globalThis.fetch;
-    const url = `${issuer.replace(/\/+$/, '')}/aauth/jwks.json`;
     const response = await doFetch(url, { headers: { Accept: 'application/json' } });
     if (!response.ok) {
         throw new AAuthError(`Failed to fetch issuer JWKS (HTTP ${response.status})`, 'jwks_fetch_failed', response.status);

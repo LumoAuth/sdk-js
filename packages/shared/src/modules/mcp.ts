@@ -4,7 +4,7 @@ import {
     LumoAuthNetworkError,
     LumoAuthValidationError,
 } from '../errors';
-import { ROUTES, buildPath } from '../routes';
+import { LumoAuthAddress } from '../routes';
 import { fetchWithDpop, type DpopProofProvider } from '../utils/dpop';
 import { HttpClient } from '../utils/http';
 
@@ -30,10 +30,16 @@ import { HttpClient } from '../utils/http';
  */
 
 export interface McpModuleConfig {
-    /** Base URL of the LumoAuth instance. */
-    baseUrl: string;
-    /** Organization slug — the token endpoint is org-scoped. */
-    orgId: string;
+    /** Base URL of the LumoAuth instance. Not used with `customDomain`. */
+    baseUrl?: string;
+    /** Organization slug — the token endpoint is org-scoped. Not needed with `customDomain`. */
+    orgId?: string;
+    /**
+     * The organization's custom domain, for example `auth.acme.com`. When
+     * set, it wins over `baseUrl`, no path carries the `/orgs/{orgId}`
+     * segment, and `orgId` is not needed.
+     */
+    customDomain?: string;
     /** Provider returning the caller's current access token. */
     token: () => string | Promise<string>;
     /** Custom fetch implementation. */
@@ -125,22 +131,27 @@ export interface AgentMcpToolDecision {
 }
 
 export class McpModule {
-    private readonly baseUrl: string;
-    private readonly orgId: string;
+    private readonly address: LumoAuthAddress;
     private readonly token: () => string | Promise<string>;
     private readonly fetchFn: typeof globalThis.fetch;
     private readonly http: HttpClient;
     private readonly dpop: DpopProofProvider | undefined;
 
     constructor(config: McpModuleConfig) {
-        this.baseUrl = config.baseUrl.replace(/\/+$/, '');
-        this.orgId = config.orgId;
+        this.address = new LumoAuthAddress(config).required();
         this.token = config.token;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
         this.dpop = config.dpop;
         this.http =
             config.http ??
-            new HttpClient({ baseUrl: this.baseUrl, token: config.token, fetch: config.fetch, dpop: config.dpop });
+            new HttpClient({
+                baseUrl: config.baseUrl,
+                customDomain: config.customDomain,
+                orgId: config.orgId,
+                token: config.token,
+                fetch: config.fetch,
+                dpop: config.dpop,
+            });
     }
 
     /**
@@ -173,16 +184,13 @@ export class McpModule {
         }
         assertMcpName('serverId', serverId);
         assertMcpTool(tool);
-        if (!this.orgId) {
+        if (!this.address.hasOrganization) {
             throw new LumoAuthConfigError(
                 'mcp requires `orgId` — pass it to the constructor config.',
             );
         }
 
-        const path = buildPath(ROUTES['mcp.authorizeTool'].path, {
-            orgId: this.orgId,
-            serverId,
-        });
+        const path = this.address.path('mcp.authorizeTool', { serverId });
         const extraHeaders = traceparent ? { traceparent } : undefined;
         const body = await mcpDecision(() =>
             this.http.post<Record<string, unknown>>(
@@ -228,7 +236,7 @@ export class McpModule {
 
     /** Like {@link getToken} but returns the full token response. */
     async getTokenDetailed(serverId: string): Promise<McpTokenResponse> {
-        if (!this.orgId) {
+        if (!this.address.hasOrganization) {
             throw new LumoAuthConfigError(
                 'mcp requires `orgId` — pass it to the constructor config.',
             );
@@ -236,7 +244,7 @@ export class McpModule {
         assertMcpServerId(serverId);
         const subjectToken = await this.token();
 
-        const url = `${this.baseUrl}${buildPath(ROUTES['oauth.token'].path, { orgId: this.orgId })}`;
+        const url = this.address.url('oauth.token');
         const init: RequestInit = {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

@@ -1,14 +1,20 @@
 import { generateCodeVerifier, generateCodeChallenge, generateState } from '../utils/pkce';
 import { LumoAuthApiError, LumoAuthNetworkError } from '../errors';
-import { ROUTES, buildPath, type RouteName } from '../routes';
+import { LumoAuthAddress, type RouteName } from '../routes';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
 export interface AuthModuleConfig {
-    /** Base URL of the LumoAuth instance (e.g. "https://auth.example.com") */
-    baseUrl: string;
-    /** Organization ID */
-    orgId: string;
+    /** Base URL of the LumoAuth instance (e.g. "https://app.lumoauth.dev"). Not used with `customDomain`. */
+    baseUrl?: string;
+    /** Organization ID. Not needed with `customDomain`. */
+    orgId?: string;
+    /**
+     * The organization's custom domain, for example `auth.acme.com`. When
+     * set, it wins over `baseUrl`, no path carries the `/orgs/{orgId}`
+     * segment, and `orgId` is not needed.
+     */
+    customDomain?: string;
     /** OAuth client ID */
     clientId: string;
     /** Custom fetch implementation */
@@ -213,21 +219,20 @@ const EMPTY_EMAIL_CHECK: EmailCheckResult = {
  * ```
  */
 export class AuthModule {
-    private readonly baseUrl: string;
-    private readonly orgId: string;
+    /** Where the organization is served: the platform host, or its custom domain. */
+    readonly address: LumoAuthAddress;
     private readonly clientId: string;
     private readonly fetchFn: typeof globalThis.fetch;
 
     constructor(config: AuthModuleConfig) {
-        this.baseUrl = config.baseUrl.replace(/\/+$/, '');
-        this.orgId = config.orgId;
+        this.address = new LumoAuthAddress(config).required();
         this.clientId = config.clientId;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
     }
 
     /** Absolute URL for an org-scoped route from the shared registry. */
     private routeUrl(name: RouteName): string {
-        return `${this.baseUrl}${buildPath(ROUTES[name].path, { orgId: this.orgId })}`;
+        return this.address.url(name);
     }
 
     // ── Authorization URL ────────────────────────────────────────────

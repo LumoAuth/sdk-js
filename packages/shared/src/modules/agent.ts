@@ -1,6 +1,5 @@
 import type { HttpClient } from '../utils/http';
 import { LumoAuthConfigError, LumoAuthValidationError } from '../errors';
-import { ROUTES, buildPath } from '../routes';
 import {
     assertMcpName,
     assertMcpTool,
@@ -127,7 +126,7 @@ export class AgentsModule {
         const body: Record<string, unknown> = { action };
         if (context) body.context = context;
         return this.http.post<AgentAskResult>(
-            buildPath(ROUTES['agents.ask'].path, { orgId: this.requireOrgId() }),
+            this.http.path('agents.ask', { orgId: this.requireOrgId() }),
             body,
         );
     }
@@ -165,7 +164,7 @@ export class AgentsModule {
             throw new LumoAuthValidationError('report tokens or costUsd greater than zero', [{ field: 'tokens', value: tokens }, { field: 'costUsd', value: costUsd }]);
         }
         return this.http.post<UsageReportResult>(
-            buildPath(ROUTES['agents.reportUsage'].path, { orgId: this.requireOrgId() }),
+            this.http.path('agents.reportUsage', { orgId: this.requireOrgId() }),
             { tokens, cost_usd: costUsd },
         );
     }
@@ -178,7 +177,7 @@ export class AgentsModule {
      */
     async me(): Promise<AgentIdentity> {
         return this.http.get<AgentIdentity>(
-            buildPath(ROUTES['agents.me'].path, { orgId: this.requireOrgId() }),
+            this.http.path('agents.me', { orgId: this.requireOrgId() }),
         );
     }
 
@@ -199,7 +198,7 @@ export class AgentsModule {
     async authorizeMcpTool(serverId: string, tool: string): Promise<AgentMcpToolDecision> {
         assertMcpName('serverId', serverId);
         assertMcpTool(tool);
-        const path = buildPath(ROUTES['agents.authorizeMcpTool'].path, {
+        const path = this.http.path('agents.authorizeMcpTool', {
             orgId: this.requireOrgId(),
         });
         const body = await mcpDecision(() =>
@@ -230,7 +229,7 @@ export class AgentsModule {
      */
     async budget(): Promise<AgentBudget> {
         const info = await this.http.get<Record<string, unknown>>(
-            buildPath(ROUTES['oauth.userinfo'].path, { orgId: this.requireOrgId() }),
+            this.http.path('oauth.userinfo', { orgId: this.requireOrgId() }),
         );
         const budget = info.budget_policy;
         return (budget && typeof budget === 'object' ? budget : {}) as AgentBudget;
@@ -249,7 +248,7 @@ export class AgentsModule {
         if (req.capabilities) body.capabilities = req.capabilities;
         if (req.jwksUri) body.jwks_uri = req.jwksUri;
         return this.http.post<Record<string, unknown>>(
-            buildPath(ROUTES['agents.register'].path, { orgId: this.requireOrgId() }),
+            this.http.path('agents.register', { orgId: this.requireOrgId() }),
             body,
         );
     }
@@ -269,7 +268,7 @@ export class AgentsModule {
     // ── Internal ──────────────────────────────────────────────────────
 
     private requireOrgId(): string {
-        if (!this.orgId) {
+        if (!this.orgId && !this.http.isCustomDomain) {
             throw new LumoAuthConfigError(
                 'agents requires `orgId` — pass it to the constructor: new LumoAuth({ baseUrl, orgId, token })',
             );

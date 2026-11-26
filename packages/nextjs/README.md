@@ -11,7 +11,8 @@ correct on the first paint, with no flash of signed-out content.
 The package has two entry points:
 
 - `@lumoauth/nextjs/server` is for server code: `auth()`, `currentUser()`, `protectPage()`, the
-  route handler and the middleware.
+  route handler and the middleware. It also has `withPoppySession()` for route handlers that
+  personal agents call.
 - `@lumoauth/nextjs` is for client components. It re-exports every component and hook from
   [`@lumoauth/react`](../react/README.md) and adds `<LumoAuthNextProvider>`.
 
@@ -32,6 +33,8 @@ It is part of the [LumoAuth JavaScript SDK](../../README.md).
   - [Use components and hooks in client components](#use-components-and-hooks-in-client-components)
   - [Request more scopes](#request-more-scopes)
   - [The callback URL](#the-callback-url)
+  - [Use a custom domain](#use-a-custom-domain)
+  - [Verify requests from personal agents](#verify-requests-from-personal-agents)
 - [How the session is protected](#how-the-session-is-protected)
 - [Sessions and access tokens](#sessions-and-access-tokens)
 - [API reference](#api-reference)
@@ -160,7 +163,8 @@ environment.
 | Option | Environment variable | Required | Default | Description |
 |---|---|---|---|---|
 | `domain` | `NEXT_PUBLIC_LUMOAUTH_DOMAIN` | no | `https://app.lumoauth.dev` | Root URL of the region. EU: `https://eu.app.lumoauth.dev` |
-| `orgId` | `NEXT_PUBLIC_LUMOAUTH_ORG_ID` | yes | none | Organization slug |
+| `customDomain` | `NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN` | no | none | The organization's own domain, for example `auth.acme.com`. It wins over `domain`. See [Use a custom domain](#use-a-custom-domain). |
+| `orgId` | `NEXT_PUBLIC_LUMOAUTH_ORG_ID` | yes, unless `customDomain` is set | none | Organization slug |
 | `clientId` | `NEXT_PUBLIC_LUMOAUTH_CLIENT_ID` | yes | none | OAuth client ID |
 | `redirectUri` | `NEXT_PUBLIC_REDIRECT_URI` | no | `<origin>/api/auth/callback` of each request | Pins the callback URL, and the origin of every redirect back to the app. See [The callback URL](#the-callback-url). |
 | `secret` | `LUMOAUTH_SECRET` | yes | none | Encrypts the session cookie. At least 32 characters. |
@@ -367,6 +371,157 @@ example `https://app.example.com/api/auth/callback`. Its origin then also become
 the redirects after sign-in and sign-out. Pin it when a proxy in front of the app sends neither
 `X-Forwarded-Host` nor the public `Host` header.
 
+### Use a custom domain
+
+An organization can serve LumoAuth on its own domain, for example `https://auth.acme.com`. Set
+one variable. This package names its variables `NEXT_PUBLIC_LUMOAUTH_…`, so the variable is
+`NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN`:
+
+```bash
+# .env.local
+NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN=auth.acme.com
+NEXT_PUBLIC_LUMOAUTH_CLIENT_ID=your-client-id
+LUMOAUTH_SECRET=replace-with-64-hex-characters
+```
+
+The server functions read it: `createRouteHandler()`, `lumoAuthMiddleware()`, `auth()`,
+`currentUser()`, `withPoppySession()` and `verifyPoppyRequest()`. Each one also takes
+`customDomain` in its config. The client provider takes it as a prop:
+
+```tsx
+// app/providers.tsx
+'use client';
+import { LumoAuthNextProvider } from '@lumoauth/nextjs';
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <LumoAuthNextProvider
+      customDomain={process.env.NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN}
+      clientId={process.env.NEXT_PUBLIC_LUMOAUTH_CLIENT_ID!}
+    >
+      {children}
+    </LumoAuthNextProvider>
+  );
+}
+```
+
+- `/api/auth/login` redirects to `https://auth.acme.com/api/v1/oauth/authorize`. The token
+  exchange, the token refresh and sign-out use the domain too.
+- No address has the `/orgs/{orgId}` segment, so `NEXT_PUBLIC_LUMOAUTH_ORG_ID` is not needed.
+  When it is set too, the package never puts it in an address.
+- The custom domain wins over `NEXT_PUBLIC_LUMOAUTH_DOMAIN`. No request goes to that address,
+  and `resolveConfig().domain` holds the custom domain.
+- The issuer is the bare domain, `https://auth.acme.com`.
+- The value is a host name or an `https://` origin. `http://` is accepted only for `localhost`,
+  `127.0.0.1` and `[::1]`. A value with a path, a query, a fragment or credentials throws
+  `LumoAuthConfigError`. An empty variable counts as unset.
+
+The callback URL does not change: it is an address of your app. See
+[The callback URL](#the-callback-url).
+
+### Verify requests from personal agents
+
+A personal agent that follows the [Personal Agent Protocol](https://personalagentprotocol.org)
+sends the `Poppy-Session` header to your API. `withPoppySession()` wraps a route handler. It asks
+LumoAuth who the request is from, and it runs your handler only for a verified request.
+
+LumoAuth is asked with the client ID and the client secret of a confidential application. That
+application's allowed scopes must include **`poppy:verify`**. Add the scope under
+**Applications** in the portal. The values come from `NEXT_PUBLIC_LUMOAUTH_ORG_ID`,
+`NEXT_PUBLIC_LUMOAUTH_CLIENT_ID` and `LUMOAUTH_CLIENT_SECRET`, and from
+`NEXT_PUBLIC_LUMOAUTH_DOMAIN` for the EU region. `LUMOAUTH_SECRET` is not needed here.
+
+```ts
+// app/api/orders/route.ts
+import { withPoppySession } from '@lumoauth/nextjs/server';
+
+export const GET = withPoppySession(
+  { publicOrigin: process.env.PUBLIC_ORIGIN!, requiredScope: 'orders:read' },
+  async (request, { poppy }) => {
+    // poppy.clientId, poppy.userId, poppy.session.id, poppy.account
+    return Response.json({ account: poppy.account!.sub, orders: [] });
+  },
+);
+```
+
+The handler gets the verification as `context.poppy`, next to `context.params`. To type the
+route parameters, pass the context type as the second type argument:
+`withPoppySession<Request, { params: Promise<{ id: string }> }>(options, handler)`.
+
+| Option | Default | Description |
+|---|---|---|
+| `publicOrigin` | required | The address that personal agents call, for example `https://shop.example.com`. It may carry a base path. |
+| `requiredScope` | none | The scopes that the route needs: a string or a list |
+| `resource` | none | The resource identifier of your service, when it takes only tokens issued for it |
+| `allowReplay` | `false` | `true` accepts a Session JWT that was verified before |
+| `domain`, `orgId`, `clientId`, `clientSecret` | the environment | Use them when the application with `poppy:verify` is not the OAuth client of your sign-in |
+| `customDomain` | `NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN` | The organization's own domain. It replaces `domain` and `orgId`. |
+| `lumo` | none | A `LumoAuthBackend` that is configured with `clientId` and `clientSecret`. It replaces the four options above. |
+
+`withPoppySession()` throws `LumoAuthConfigError` when `publicOrigin` is missing. It throws
+when the route module is loaded. The credentials are read at the first request.
+
+**`publicOrigin` comes from configuration.** A Session JWT names the address that the personal
+agent called, and a `Host` header is whatever the caller sent. The helpers never read the `Host`
+header or the `X-Forwarded-*` headers. They build the URL from `publicOrigin` and the path of
+`request.url`, without the query. Next.js removes a `basePath` of `next.config` from
+`request.url`. With `basePath: '/shop'`, set `publicOrigin` to `https://shop.example.com/shop`.
+
+**The three outcomes.**
+
+- **Verified.** Your handler runs with `context.poppy`. `poppy.account` is `null` for a
+  signed-out request. Find account data with `poppy.account.sub`, never with `poppy.userId`.
+- **Refused.** LumoAuth returns the exact response for the personal agent. The wrapper returns
+  that response unchanged: its status, its headers and its body. Your handler does not run.
+- **An SDK error.** LumoAuth could not be reached, or it rejected your own application (401,
+  403, 404 or 429). Such an error is about your service, so nothing of it is relayed. The
+  wrapper throws, and Next.js answers `500`. Do not catch the error to build a response for the
+  personal agent from it.
+
+`verifyPoppyRequest()` is the same check as a function, for a handler that needs more control.
+It returns the verification, or the `Response` to return:
+
+```ts
+// app/api/cart/route.ts
+import { verifyPoppyRequest } from '@lumoauth/nextjs/server';
+
+export async function GET(request: Request) {
+  const poppy = await verifyPoppyRequest(request, { publicOrigin: process.env.PUBLIC_ORIGIN! });
+  if (poppy instanceof Response) return poppy;
+  return Response.json({ session: poppy.session.id, signedIn: poppy.signedIn });
+}
+```
+
+To look up or end a Session, use the `poppy` namespace itself. It needs no `secretKey`:
+
+```ts
+import { PoppyModule } from '@lumoauth/nextjs/server';
+
+const poppy = new PoppyModule({
+  baseUrl: 'https://app.lumoauth.dev',
+  orgId: process.env.NEXT_PUBLIC_LUMOAUTH_ORG_ID!,
+  clientId: process.env.NEXT_PUBLIC_LUMOAUTH_CLIENT_ID,
+  clientSecret: process.env.LUMOAUTH_CLIENT_SECRET,
+});
+
+export async function sessionState(personalAgent: string, sid: string) {
+  return poppy.getSessionStatus(personalAgent, sid);
+  // { status: 'active' | 'ended' | 'unknown', userId, agentId, account, signedIn, lastSeenAt }
+}
+
+export async function endSession(personalAgent: string, sid: string) {
+  const { ended } = await poppy.endSession(personalAgent, sid);
+  return ended; // false when the Session had ended before
+}
+```
+
+A handler that calls `poppy.verifyRequest()` itself relays a refusal with
+`poppyRefusalResponse(result)`. The
+[workspace guide](../../README.md#verify-requests-from-personal-agents) describes the namespace,
+and the guide to
+[Session verification](https://docs.lumoauth.dev/agents/personal-agent-protocol-verify)
+lists every check and every refusal.
+
 ## How the session is protected
 
 The cookie is encrypted and authenticated with AES-256-GCM, using a key derived from
@@ -430,7 +585,11 @@ the build)
 | `SESSION_COOKIE` | `'lumo_session'` |
 | `REFRESHED_SESSION_HEADER` | `'x-lumo-session'` |
 | `isSessionLive(session)`, `isTokenStale(session)` | Helpers for custom integrations |
-| Types | `AuthObject`, `MiddlewareOptions`, `LumoAuthNextConfig`, `ServerSession` |
+| `withPoppySession(options, handler)` | Wraps a route handler that personal agents call. The handler gets `context.poppy`; a refusal is returned unchanged |
+| `verifyPoppyRequest(request, options)` | Returns the verification of a verified request, or the `Response` to return for a refused one |
+| `poppyRefusalResponse(refusal)` | Builds the `Response` for a refusal from `poppy.verifyRequest()` |
+| `PoppyModule` | The `poppy` namespace: `verifyRequest`, `getSessionStatus`, `endSession` |
+| Types | `AuthObject`, `MiddlewareOptions`, `LumoAuthNextConfig`, `ServerSession`, `PoppyRequestOptions`, `PoppyVerifier`, `PoppyVerification`, `PoppyVerified`, `PoppyRefused`, `PoppySession`, `PoppyAccount`, `PoppySessionStatus`, `PoppyEndSessionResult`, `PoppyModuleConfig` |
 
 **Routes from `createRouteHandler()`** (shown with the default mount point)
 
@@ -464,6 +623,8 @@ the build)
 | A `403` with `requiredScopes`, such as `['authz:read']` | The token lacks a scope. | Add the scope to `scope` and sign in again. |
 | Hooks show the user as signed out after `<SignInButton>` | A browser sign-in cannot save tokens into the cookie session. | Link to `/api/auth/login` instead. |
 | The cookie stops working after you change `LUMOAUTH_SECRET` | The old cookie cannot be decrypted. | This is expected. The middleware clears the cookie and the user signs in again. |
+| A route behind `withPoppySession()` answers `500` with a `LumoAuthConfigError` in the log | The client ID or the client secret is not set. | Set the variables named in the message. The application needs the `poppy:verify` scope. |
+| Every personal agent gets `invalid_session` with "signed for another URL (htu)" | `publicOrigin` is not the address that personal agents call, or the app has a `basePath`. | Set `publicOrigin` to the public address, and add the `basePath` to it. |
 
 ## Limitations
 
@@ -473,8 +634,9 @@ the build)
 
 ## Versioning and compatibility
 
-This package is version 1.0.0. It needs LumoAuth server API 1.0.0 or newer, Next.js 14 or newer,
-and React 18 or newer.
+This package follows semantic versioning. Its [npm page](https://www.npmjs.com/package/@lumoauth/nextjs)
+shows the latest version, and the [release notes](../../release-notes) describe each release.
+It needs LumoAuth server API 1.0.0 or newer, Next.js 14 or newer, and React 18 or newer.
 
 ## Related packages
 

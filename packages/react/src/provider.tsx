@@ -1,7 +1,7 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { defaultMagicLinkReturnTo, takeMagicLinkContinue } from './utils/magicLink';
 import { LumoAuthSession, type EmailCheckResult } from '@lumoauth/client';
-import { AuthModule } from '@lumoauth/client';
+import { AuthModule, LumoAuthAddress } from '@lumoauth/client';
 import type {
     LumoAuthProviderProps,
     LumoAuthContextValue,
@@ -108,6 +108,7 @@ const DEFAULT_SCOPE = 'openid profile email';
 export function LumoAuthProvider({
     domain,
     orgId,
+    customDomain,
     clientId,
     authStrategy = 'pkce',
     redirectUri,
@@ -128,14 +129,22 @@ export function LumoAuthProvider({
     // Inject styles once
     useEffect(() => { injectStyles(); }, []);
 
+    // Where the organization is served: the LumoAuth host under
+    // /orgs/{orgId}, or its custom domain. Every address below comes from it.
+    const address = useMemo(
+        () => new LumoAuthAddress({ baseUrl: domain, orgId, customDomain }).required(),
+        [domain, orgId, customDomain]
+    );
+
     // AuthModule instance (handles token exchange, refresh, etc.)
     const authModule = useMemo(
         () => new AuthModule({
             baseUrl: domain,
             orgId,
+            customDomain,
             clientId,
         }),
-        [domain, orgId, clientId]
+        [domain, orgId, customDomain, clientId]
     );
 
     // Resolved redirect URI for PKCE callbacks
@@ -382,8 +391,7 @@ export function LumoAuthProvider({
     }) => {
         if (authStrategy === 'pkce') {
             // In PKCE mode, redirect to hosted signup page
-            const safeOrgId = encodeURIComponent(orgId);
-            const signUpUrl = `${domain.replace(/\/+$/, '')}/orgs/${safeOrgId}/register?` +
+            const signUpUrl = `${address.page('register')}?` +
                 new URLSearchParams({
                     client_id: clientId,
                     redirect_uri: resolvedRedirectUri,
@@ -414,10 +422,10 @@ export function LumoAuthProvider({
         throw new Error(
             'Inline registration is not supported by this LumoAuth server: there is no JSON ' +
             'registration endpoint. Use redirectToSignUp() to send the user to the hosted ' +
-            `registration page (${domain.replace(/\/+$/, '')}/orgs/${encodeURIComponent(orgId)}/register), ` +
+            `registration page (${address.page('register')}), ` +
             'or set authStrategy: "pkce".',
         );
-    }, [authStrategy, domain, orgId, clientId, resolvedRedirectUri, scope, signIn]);
+    }, [authStrategy, address, clientId, resolvedRedirectUri, scope, signIn]);
 
     // ── Magic Link ───────────────────────────────────────────────────
 
@@ -464,14 +472,13 @@ export function LumoAuthProvider({
         // anything else — once we clear it, we can't supply id_token_hint.
         const targetUrl = options?.afterSignOutUrl || afterSignOutUrl || '/';
         const postLogoutRedirectUri = new URL(targetUrl, window.location.origin).toString();
-        const safeOrgId = encodeURIComponent(orgId);
         const params = new URLSearchParams({
             post_logout_redirect_uri: postLogoutRedirectUri,
         });
         if (idToken) {
             params.set('id_token_hint', idToken);
         }
-        const logoutUrl = `${domain.replace(/\/+$/, '')}/orgs/${safeOrgId}/api/v1/oauth/logout?${params.toString()}`;
+        const logoutUrl = `${address.url('oauth.logout')}?${params.toString()}`;
 
         // Clear local tokens *before* navigating so they don't survive in
         // sessionStorage if the navigation is somehow cancelled. We do NOT
@@ -501,7 +508,7 @@ export function LumoAuthProvider({
         // Block forever — the page is unloading. This guarantees no caller
         // code runs after signOut() resolves and tries to navigate elsewhere.
         await new Promise<void>(() => { });
-    }, [authModule, domain, orgId, afterSignOutUrl, session, storage, dispatch]);
+    }, [authModule, address, afterSignOutUrl, session, storage, dispatch]);
 
     // ── Initialize (check for existing session) ──────────────────────
 
@@ -624,15 +631,17 @@ export function LumoAuthProvider({
         checkEmail,
         authStrategy,
         config: {
-            domain,
-            orgId,
+            // On a custom domain, the origin in use is that domain.
+            domain: address.isCustomDomain ? address.baseUrl : (domain ?? ''),
+            orgId: orgId ?? '',
+            customDomain: address.customDomain,
             clientId,
             redirectUri: resolvedRedirectUri,
             afterSignInUrl,
             afterSignUpUrl,
             afterSignOutUrl,
         },
-    }), [state, signIn, signInWithRedirect, signInWithSocial, signUp, signOut, getToken, handleCallback, sendMagicLink, checkEmail, authStrategy, domain, orgId, clientId, resolvedRedirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl]);
+    }), [state, signIn, signInWithRedirect, signInWithSocial, signUp, signOut, getToken, handleCallback, sendMagicLink, checkEmail, authStrategy, domain, orgId, address, clientId, resolvedRedirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl]);
 
     return (
         <LumoAuthContext.Provider value={contextValue}>

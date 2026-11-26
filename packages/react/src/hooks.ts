@@ -93,11 +93,12 @@ export function useLumoAuth(): LumoAuth {
         () =>
             new LumoAuth({
                 baseUrl: config.domain,
+                customDomain: config.customDomain,
                 orgId: config.orgId,
                 clientId: config.clientId,
                 token: () => getToken().then((t) => t || ''),
             }),
-        [config.domain, config.orgId, config.clientId, getToken]
+        [config.domain, config.customDomain, config.orgId, config.clientId, getToken]
     );
 
     return client;

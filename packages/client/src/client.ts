@@ -9,6 +9,7 @@ import {
     type AuthModuleConfig,
     AgentsModule,
     ApprovalsModule,
+    LumoAuthAddress,
     LumoAuthConfigError,
 } from '@lumoauth/shared';
 import { assertBrowserSafeCredential } from './guard';
@@ -17,10 +18,20 @@ import { assertBrowserSafeCredential } from './guard';
 
 export interface LumoAuthConfig {
     /**
-     * Base URL of your LumoAuth instance.
-     * @example "https://auth.example.com"
+     * Base URL of your LumoAuth instance. Required unless `customDomain`
+     * is set.
+     * @example "https://app.lumoauth.dev"
      */
-    baseUrl: string;
+    baseUrl?: string;
+
+    /**
+     * Your organization's custom domain: a host name or an `https://`
+     * origin. When set, every request and every sign-in address uses it,
+     * and `baseUrl` is not used. No path carries the `/orgs/{orgId}`
+     * segment, so `orgId` is not needed.
+     * @example "auth.acme.com"
+     */
+    customDomain?: string;
 
     /**
      * Access token for the authenticated user.
@@ -48,7 +59,8 @@ export interface LumoAuthConfig {
 
     /**
      * Your organization ID (e.g. "acme-corp").
-     * Required for building authorization URLs.
+     * Required for building authorization URLs on the platform host. Not
+     * needed with `customDomain`.
      */
     orgId?: string;
 
@@ -134,9 +146,12 @@ export class LumoAuth {
     private readonly http: HttpClient;
 
     constructor(config: LumoAuthConfig) {
-        if (!config.baseUrl) {
+        // Checks `customDomain` now. A custom domain wins over `baseUrl`.
+        const address = new LumoAuthAddress(config);
+        if (!address.baseUrl) {
             throw new LumoAuthConfigError('baseUrl is required');
         }
+        const customDomain = address.customDomain;
 
         // Refuse a server credential in a client that ships to browsers.
         // See ./guard for why this is a hard error rather than a warning.
@@ -147,6 +162,8 @@ export class LumoAuth {
 
         const httpConfig: HttpClientConfig = {
             baseUrl: config.baseUrl,
+            customDomain,
+            orgId: config.orgId,
             token: tokenProvider,
             timeout: config.timeout,
             fetch: config.fetch,
@@ -164,6 +181,7 @@ export class LumoAuth {
         // Auth module
         const authConfig: AuthModuleConfig = {
             baseUrl: config.baseUrl,
+            customDomain,
             orgId: config.orgId ?? '',
             clientId: config.clientId ?? '',
             fetch: config.fetch,

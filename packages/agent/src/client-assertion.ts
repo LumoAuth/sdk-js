@@ -7,6 +7,7 @@ import {
     constants as cryptoConstants,
     type KeyObject,
 } from 'node:crypto';
+import { LumoAuthAddress } from '@lumoauth/shared';
 
 /**
  * `private_key_jwt` client assertions (RFC 7523 §2.2, OpenID Connect Core §9).
@@ -199,13 +200,15 @@ export class ClientAssertionSigner {
 }
 
 /**
- * The issuer identifier of an organization on `baseUrl`: the `issuer` of
- * `/orgs/{orgId}/api/v1/.well-known/openid-configuration`, and the `aud` a
- * client assertion must carry. On a custom domain the issuer differs; pass it
- * explicitly there.
+ * The issuer identifier of an organization: the `issuer` of its discovery
+ * document, and the `aud` that a client assertion must carry.
+ *
+ * On the platform host it is `{baseUrl}/orgs/{orgId}/api/v1`. With a
+ * `customDomain` it is the bare domain, and `baseUrl` and `orgId` are not
+ * used.
  */
-export function issuerFor(baseUrl: string, orgId: string): string {
-    return `${baseUrl.replace(/\/+$/, '')}/orgs/${orgId}/api/v1`;
+export function issuerFor(baseUrl: string, orgId: string, customDomain?: string): string {
+    return new LumoAuthAddress({ baseUrl, orgId, customDomain }).issuer;
 }
 
 function naturalAlgorithm(key: KeyObject): ClientAssertionAlgorithm {
