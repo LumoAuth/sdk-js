@@ -15,6 +15,7 @@ export {
     // Deprecated alias for AgentsModule — kept until 2.0.
     AgentModule,
     type AgentAskResult,
+    type AgentCallOptions,
     type AgentIdentity,
     type AgentBudget,
     type UsageReport,
@@ -28,6 +29,7 @@ export {
     type ApprovalImpact,
     type ApprovalWaitOptions,
     type ApprovalRequestResult,
+    type ApprovalDelivery,
     type CreateApprovalRequest,
 } from './modules/approvals';
 export {
@@ -37,6 +39,10 @@ export {
     TOKEN_TYPES,
     type TokenType,
     type TokenExchangeTypeOptions,
+    type TokenExchangeClientAuthentication,
+    type DelegationApplication,
+    type ConsentUrlOptions,
+    type ConsentUrlResult,
 } from './modules/delegation';
 export {
     JitModule,
@@ -64,6 +70,8 @@ export {
     PoppyModule,
     buildPoppyVerifyBody,
     buildPoppyRelay,
+    poppyUnavailableRelay,
+    describePoppyVerificationError,
     normalizePoppyPublicOrigin,
     POPPY_FORWARDED_HEADERS,
     type PoppyModuleConfig,
@@ -211,6 +219,11 @@ export {
     LumoAuthApprovalNotDeliveredError,
     type ApprovalNotDeliveredReason,
     LumoAuthBudgetExceededError,
+    // The contract's error-answer rules, for SDK code that reads an answer
+    // without HttpClient (token and attestation endpoints).
+    errorBodyCode,
+    errorFromBodyCode,
+    retryAfterSeconds,
 } from './errors';
 
 // ─── Utilities ────────────────────────────────────────────────────────
@@ -239,6 +252,9 @@ export {
 export {
     HttpClient,
     ORGANIZATION_API_KEY_PREFIX,
+    // HTTP Basic client authentication with the raw client id and secret,
+    // the form that LumoAuth's token endpoint reads.
+    basicAuthorization,
     type HttpClientConfig,
     type HttpRequestOptions,
     type CredentialSource,

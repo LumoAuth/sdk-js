@@ -80,7 +80,7 @@ there is no credential.
 |---|---|---|
 | **Modules** | `PermissionsModule`, `ZanzibarModule`, `AbacModule`, `AgentsModule`, `ApprovalsModule`, `DelegationModule`, `JitModule`, `McpModule`, `AuthModule`, `PoppyModule` | One class per namespace. The same namespaces exist in the Python, Go, PHP, Java and .NET SDKs |
 | **Personal Agent Protocol** | `buildPoppyVerifyBody`, `buildPoppyRelay`, `normalizePoppyPublicOrigin`, `POPPY_FORWARDED_HEADERS` | The pure functions behind `PoppyModule` and the framework helpers. See [Verify requests from personal agents](../../README.md#verify-requests-from-personal-agents) |
-| **Constants** | `TOKEN_TYPES`, `MAX_DELEGATION_DEPTH`, `JIT_MAX_TTL` | The RFC 8693 token types, the delegation depth limit (3) and the longest JIT token lifetime (900 s) |
+| **Constants** | `TOKEN_TYPES`, `MAX_DELEGATION_DEPTH`, `JIT_MAX_TTL` | The RFC 8693 token types, the delegation depth limit (5 actors) and the longest JIT token lifetime (900 s) |
 | **PKCE helpers** | `generateCodeVerifier`, `generateCodeChallenge`, `generateState` | They use Web Crypto, so they work everywhere |
 | **Schemas** | `CheckPermissionRequestSchema`, `ZanzibarCheckRequestSchema`, `AbacCheckRequestSchema`, … | Zod schemas for the requests and responses. The matching TypeScript types are exported too |
 | **Routes** | `ROUTES`, `buildPath`, `routePath` | The registry of every endpoint that the SDK calls. Tests compare it with the server's OpenAPI spec |
@@ -203,16 +203,20 @@ same in every LumoAuth SDK.
 | `LumoAuthAuthenticationError` | HTTP 401. `LumoAuthAuthError` is a deprecated alias, which the next major version removes |
 | `LumoAuthPermissionDeniedError` | HTTP 403. `requiredScopes` lists the scopes that a scope refusal names (`details.required_scopes`), and is `[]` otherwise |
 | `LumoAuthNotFoundError` | HTTP 404 |
-| `LumoAuthRateLimitError` | HTTP 429. `retryAfter` holds the `Retry-After` value in seconds, when the server sent one |
+| `LumoAuthRateLimitError` | HTTP 429. `retryAfter` holds the wait in seconds, from the `Retry-After` header (a number of seconds or an HTTP date), when the server sent one. The SDK does not retry a 429 by itself |
 | `LumoAuthValidationError` | A response did not match its Zod schema. It has `issues` |
 | `LumoAuthConfigError` | A constructor option is missing or invalid |
 | `LumoAuthNetworkError` | `fetch` failed or timed out |
 | `LumoAuthApprovalDeniedError`, `LumoAuthApprovalTimeoutError` | A person declined an approval, or nobody answered in time |
 | `LumoAuthApprovalNotDeliveredError` | An approval prompt reached no device. `reason` is `email_fallback_sent` (HTTP 202: the user was emailed a notice) or `no_enrolled_device` (HTTP 428) |
-| `LumoAuthBudgetExceededError` | An agent ran out of budget |
+| `LumoAuthBudgetExceededError` | HTTP 429 with the body code `budget_exceeded`: an agent's budget is spent. It extends `LumoAuthRateLimitError`, so `retryAfter` is set and a `catch` for the rate-limit error catches it too |
 
 On a scope refusal the `code` is `forbidden`, because the SDK takes it from
 the response body. Branch on the class instead of the code.
+
+No SDK call waits or retries after a `429`. Catch `LumoAuthRateLimitError`,
+wait `retryAfter` seconds, and send the request again if that suits your
+code.
 
 ## Runtime guarantees
 

@@ -2,7 +2,10 @@ import {
     PoppyModule,
     buildPoppyVerifyBody,
     buildPoppyRelay,
+    poppyUnavailableRelay,
+    describePoppyVerificationError,
     normalizePoppyPublicOrigin,
+    LumoAuthError,
     LumoAuthConfigError,
     normalizeCustomDomain,
     type PoppyIncomingRequest,
@@ -75,6 +78,13 @@ export interface PoppyRequestOptions {
     clientSecret?: string;
     /** Custom fetch implementation. */
     fetch?: typeof globalThis.fetch;
+    /**
+     * Called when a request could not be verified (LumoAuth could not be
+     * asked, or it refused your own application: 401, 403, 404, 429), before
+     * the personal agent gets `503`. Receives the SDK error. Default: one
+     * `console.error` line that names the cause and never a credential.
+     */
+    onError?: (error: LumoAuthError, request: Request) => void;
 }
 
 /**
@@ -90,12 +100,14 @@ export interface PoppyRequestOptions {
  * ```
  *
  * @returns The verification of a verified request, or the `Response` that
- *          the personal agent must get for a refused one. Return that
- *          response unchanged.
- * @throws An SDK error when LumoAuth could not be asked or refused your own
- *         application (401, 403, 404, 429). Let it propagate: Next.js then
- *         answers 500, and nothing of the error reaches the personal agent.
- *         Never turn it into a response for the personal agent.
+ *          the personal agent must get: the refusal for a refused request,
+ *          or `503` `temporarily_unavailable` when LumoAuth could not be
+ *          asked or refused your own application (401, 403, 404, 429, for
+ *          example while the protocol is switched off). Return that response
+ *          unchanged. Nothing of LumoAuth's error reaches the personal
+ *          agent; `onError` gets it.
+ * @throws LumoAuthConfigError when the credentials are missing (read at the
+ *         first request), and any error that is not an SDK error.
  */
 export async function verifyPoppyRequest(
     request: Request,
@@ -117,8 +129,8 @@ export async function verifyPoppyRequest(
  * ```
  *
  * A refused request gets the response that LumoAuth worded, unchanged, and
- * the handler does not run. An SDK error is thrown, as
- * {@link verifyPoppyRequest} describes.
+ * the handler does not run. A request that could not be verified gets `503`,
+ * as {@link verifyPoppyRequest} describes.
  *
  * @throws LumoAuthConfigError when `publicOrigin` is missing. It is thrown
  *         here, when the route module is loaded. The credentials are read at
@@ -160,6 +172,7 @@ interface Configured {
     publicOrigin: string;
     verifyOptions: PoppyVerifyOptions;
     verifier: () => PoppyVerifier;
+    onError: (error: LumoAuthError, request: Request) => void;
 }
 
 function configure(options: PoppyRequestOptions): Configured {
@@ -179,6 +192,7 @@ function configure(options: PoppyRequestOptions): Configured {
     return {
         publicOrigin,
         verifyOptions,
+        onError: opts.onError ?? ((error) => console.error(describePoppyVerificationError(error))),
         verifier: () => {
             if (!verifier) verifier = poppyVerifier(opts);
             return verifier;
@@ -198,9 +212,22 @@ async function verifyWith(configured: Configured, request: Request): Promise<Pop
         },
         configured.verifyOptions,
     );
-    const result = await configured
-        .verifier()
-        .verifyRequest({ method: body.method, url: body.url, headers: body.headers }, configured.verifyOptions);
+    // A missing credential is a configuration error of the app: thrown.
+    const verifier = configured.verifier();
+    let result;
+    try {
+        result = await verifier.verifyRequest({ method: body.method, url: body.url, headers: body.headers }, configured.verifyOptions);
+    } catch (error) {
+        // A bug or a configuration error is not hidden behind a 503.
+        if (!(error instanceof LumoAuthError) || error instanceof LumoAuthConfigError) throw error;
+        try {
+            configured.onError(error, request);
+        } catch {
+            // A failing hook must not change the answer.
+        }
+        const relay = poppyUnavailableRelay();
+        return new Response(relay.body, { status: relay.status, headers: relay.headers });
+    }
     return result.active ? result : poppyRefusalResponse(result);
 }
 

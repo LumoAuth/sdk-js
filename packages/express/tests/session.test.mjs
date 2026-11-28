@@ -42,8 +42,12 @@ function setup({ tokens, fetchImpl, ...opts } = {}) {
     return { mw, calls, session };
 }
 
-async function run(mw, session, { path = '/app', method = 'GET' } = {}) {
+async function run(mw, session, { path = '/app', method = 'GET', origin } = {}) {
     const req = { url: path, path, method, query: {}, session };
+    if (origin) {
+        req.protocol = origin.protocol;
+        req.get = (name) => (name.toLowerCase() === 'host' ? origin.host : undefined);
+    }
     const out = { redirect: null, nextCalled: false, status: 200, body: null };
     const res = {
         redirect(url) { out.redirect = url; },
@@ -167,11 +171,33 @@ test('logout ignores a revocation error', async () => {
     }
 });
 
-test('logout with a relative redirect revokes but keeps the local redirect', async () => {
+test('logout resolves a relative redirect against the request origin and ends the LumoAuth session', async () => {
+    for (const [postLogoutRedirect, expected] of [
+        [undefined, 'https://app.example.com/'],
+        ['/', 'https://app.example.com/'],
+        ['/signed-out?bye=1', 'https://app.example.com/signed-out?bye=1'],
+    ]) {
+        const { mw, calls, session } = setup(postLogoutRedirect === undefined ? {} : { postLogoutRedirect });
+        const { out } = await run(mw, session, { path: '/auth/logout', origin: { protocol: 'https', host: 'app.example.com' } });
+        assert.equal(calls.length, 1);
+        assert.match(calls[0].url, /\/oauth\/revoke$/);
+        const loc = new URL(out.redirect);
+        assert.equal(`${loc.origin}${loc.pathname}`, `${BASE}/orgs/acme/api/v1/oauth/logout`);
+        assert.equal(loc.searchParams.get('post_logout_redirect_uri'), expected);
+        assert.equal(loc.searchParams.get('id_token_hint'), 'idt-1');
+    }
+});
+
+test('logout keeps a relative redirect when the request has no host', async () => {
     const { mw, calls, session } = setup();
     const { out } = await run(mw, session, { path: '/auth/logout' });
     assert.equal(calls.length, 1);
-    assert.match(calls[0].url, /\/oauth\/revoke$/);
+    assert.equal(out.redirect, '/');
+});
+
+test('endSessionOnLogout: false keeps a relative redirect local', async () => {
+    const { mw, session } = setup({ endSessionOnLogout: false });
+    const { out } = await run(mw, session, { path: '/auth/logout', origin: { protocol: 'https', host: 'app.example.com' } });
     assert.equal(out.redirect, '/');
 });
 

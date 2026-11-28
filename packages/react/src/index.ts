@@ -60,4 +60,5 @@ export type {
     RedirectToSignInProps,
     UseMagicLinkReturn,
     UseEmailFirstReturn,
+    SignInWithRedirectOptions,
 } from './types';

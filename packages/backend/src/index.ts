@@ -20,6 +20,14 @@ export {
     type LumoAuthApiEscapeHatch,
 } from './backend';
 export { assertServerOnly } from './guard';
+export {
+    BackendAuthModule,
+    type ClientCredentialsOptions,
+    type IntrospectTokenOptions,
+    type TokenIntrospection,
+    type ApplicationTokenExchangeOptions,
+    type TokenExchangeResponse,
+} from './auth';
 
 // The full isomorphic surface: authorization modules, OAuth/PKCE helpers,
 // schemas, errors, and the HTTP client.

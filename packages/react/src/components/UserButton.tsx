@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useLumoAuthContext } from '../provider';
 import type { UserButtonProps } from '../types';
-import { sanitizeRedirectUrl } from '../utils/url';
+import { accountPageUrl, sanitizeRedirectUrl } from '../utils/url';
 
 // ─── UserButton Component ─────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ export function UserButton({
                         role="menuitem"
                         onClick={() => {
                             setIsOpen(false);
-                            window.location.href = `${config.domain}/account/profile`;
+                            window.location.href = accountPageUrl(config, '/account/profile');
                         }}
                     >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -324,7 +324,16 @@ export const AbacBulkCheckResponseSchema = z.object({
 export type AbacBulkCheckResponse = z.infer<typeof AbacBulkCheckResponseSchema>;
 
 /** ABAC user attributes response */
-export const AbacUserAttributesResponseSchema = z.record(z.string(), z.unknown());
+/**
+ * ABAC subject attributes of the caller (`GET …/abac/my-attributes`):
+ * `{ user_id, attributes }`. `attributes` holds the built-in identity
+ * attributes (`email`, `roles`, `groups`, `permissions`, …), `trait_<key>`
+ * entries and the organization's custom attributes by slug.
+ */
+export const AbacUserAttributesResponseSchema = z.looseObject({
+    user_id: z.string(),
+    attributes: z.record(z.string(), z.unknown()),
+});
 export type AbacUserAttributesResponse = z.infer<typeof AbacUserAttributesResponseSchema>;
 
 /** ABAC resource attributes response */

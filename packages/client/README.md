@@ -158,7 +158,7 @@ await client.auth.buildAuthorizationUrl({
 | `token` | `string \| () => string \| Promise<string>` | none | The user's access token. A function is called before each request, so it can return a fresh token. You can leave it out before the user signs in. |
 | `orgId` | `string` | none | Organization slug. Needed for `auth`, `abac`, `agents` and `approvals`, unless `customDomain` is set. |
 | `clientId` | `string` | none | OAuth client ID. Needed for `auth`. |
-| `authStrategy` | `'pkce' \| 'password'` | `'pkce'` | PKCE is the flow for browsers. `'password'` is the older resource-owner grant. |
+| `authStrategy` | `'pkce' \| 'password'` | `'pkce'` | PKCE is the flow for browsers. `'password'` is deprecated: LumoAuth does not offer the password grant. |
 | `timeout` | `number` | `30000` | Request timeout in milliseconds |
 | `cache` | `boolean \| { ttl?: number; maxSize?: number }` | on: 5 minutes, 1000 entries | Cache for permission-check results. `false` turns it off. |
 | `headers` | `Record<string, string>` | none | Extra headers on every request |
@@ -313,7 +313,7 @@ it as `pep.<name>`. To forward the end user's IP address from your own server, s
 Attribute calls:
 
 ```ts
-await client.abac.getMyAttributes();
+const { attributes } = await client.abac.getMyAttributes(); // { user_id, attributes: { email, roles, department, … } }
 await client.abac.setUserAttribute('user_42', 'department', 'finance');          // abac:write
 await client.abac.getResourceAttributes('document', 'doc-123');
 await client.abac.setResourceAttribute('document', 'doc-123', 'classification', 'internal');
@@ -487,29 +487,41 @@ the organization's logout endpoint, `/orgs/{orgId}/api/v1/oauth/logout`, with
 
 ### Choose where tokens are stored
 
-Where tokens are stored is a security decision, so the SDK makes you choose it.
+Where tokens are stored is a security decision, so the SDK makes you choose it. This is what each
+adapter promises:
 
-| Adapter | Readable by injected script | Survives reload | Shared across tabs | Safe for server rendering |
+| Adapter | Access token readable by injected script | Refresh token readable | Survives reload | Other tabs |
 |---|---|---|---|---|
-| `sessionStorageAdapter()` (browser default) | yes | yes, per tab | no | no |
-| `localStorageAdapter()` | yes | yes | yes | no |
-| `memoryStorageAdapter()` (server default) | in memory only | no | no | yes |
-| `cookieStorageAdapter(options?)` | **no** | yes | yes | yes |
+| `sessionStorageAdapter()` (browser default) | yes | yes | yes, per tab | get the tokens through the cross-tab channel |
+| `localStorageAdapter()` | yes | yes | yes | share the stored tokens |
+| `memoryStorageAdapter()` (server default) | only through the SDK in this tab | only through the SDK | no | never get the tokens; a sign-out still signs them out |
+| `cookieStorageAdapter(options?)` | yes, from your server's session endpoint | **never** | yes | re-read the session endpoint |
 
-`cookieStorageAdapter` is the only option that protects tokens from cross-site scripting. Tokens
-stay in an httpOnly cookie that only your server can read. Your same-origin server must own the
-code exchange and the refresh, and it must serve two endpoints:
+**The cross-tab channel.** With `crossTab` on (the default), tabs talk over a `BroadcastChannel`,
+which any script of your origin can listen to. It carries the tokens only for the two web-storage
+adapters, whose tokens such a script can read anyway, and only those stores accept tokens from the
+channel. For the memory and cookie adapters, and for your own adapters, it carries only "changed"
+and "signed out" signals.
+
+**The cookie adapter.** The refresh token and the ID token stay on your server, in an httpOnly
+cookie. Your same-origin server owns the code exchange and the refresh, and it serves these
+endpoints:
 
 | Option | Default | What the endpoint does |
 |---|---|---|
-| `sessionEndpoint` | `/auth/session` | Returns `{ accessToken, idToken, expiresAt }` as JSON, read from the cookie |
-| `logoutEndpoint` | `/auth/logout` | Clears the cookie (called with `POST`) |
+| `sessionEndpoint` | `/auth/session` | Returns `{ accessToken, expiresAt }` as JSON, read from the cookie. The browser hooks need the access token to call LumoAuth. When the token is about to expire, the browser reads the endpoint again: the server refreshes, the browser never does. A stale token never signs the tab out; only an answer without a token does, and the browser then sends no logout request of its own |
+| `logoutEndpoint` | `/auth/logout` | Sign-out: the browser goes there (`GET`); the server revokes the tokens, clears the cookie and redirects through LumoAuth's end-session endpoint |
 
-`@lumoauth/nextjs` provides both endpoints. Its provider sets this adapter up for you.
-`@lumoauth/express` has no session endpoint, so you would need to add one yourself.
+`createRouteHandler()` of `@lumoauth/nextjs` provides both endpoints (`/api/auth/session` and
+`/api/auth/logout`), and `<LumoAuthNextProvider>` sets this adapter up for you. An app whose
+browser code does not call LumoAuth can switch the session endpoint off there
+(`sessionRoute: false`), so that no token reaches page scripts at all. `@lumoauth/express` has no
+session endpoint.
 
 To store tokens somewhere else, implement the `TokenStorage` interface: `name`, `get()`,
-`set(tokens)`, `clear()`, and an optional `subscribe(onExternalChange)`.
+`set(tokens)`, `clear()`, and the optional members `subscribe(onExternalChange)`,
+`serverManaged`, `signOutUrl`, `broadcastTokens` (only `true` when any script of your origin can
+read the tokens anyway) and `survivesReload`.
 
 ### Read an agent's identity and poll an approval
 
@@ -679,17 +691,19 @@ LumoAuthError
 │   ├── LumoAuthPermissionDeniedError  403                          PERMISSION_DENIED
 │   ├── LumoAuthNotFoundError          404                          NOT_FOUND
 │   └── LumoAuthRateLimitError         429                          RATE_LIMITED
+│       └── LumoAuthBudgetExceededError 429 + body code budget_exceeded BUDGET_EXCEEDED
 ├── LumoAuthValidationError            the response did not match its schema
 ├── LumoAuthConfigError                bad options, such as an API key in the browser
 ├── LumoAuthNetworkError               the request failed or timed out
 ├── LumoAuthApprovalDeniedError        a human declined an approval
 ├── LumoAuthApprovalTimeoutError       nobody answered an approval in time
-├── LumoAuthApprovalNotDeliveredError  the approval prompt reached no device
-└── LumoAuthBudgetExceededError        an agent ran out of budget
+└── LumoAuthApprovalNotDeliveredError  the approval prompt reached no device
 ```
 
 `LumoAuthApiError` has `statusCode` and `body`. `LumoAuthPermissionDeniedError` also has
-`requiredScopes`, and `LumoAuthRateLimitError` has `retryAfter` in seconds.
+`requiredScopes`, and `LumoAuthRateLimitError` has `retryAfter` in seconds, read from a
+`Retry-After` header of seconds or an HTTP date. The SDK does not retry a 429 by itself.
+`LumoAuthBudgetExceededError` (an agent's budget is spent) is a `LumoAuthRateLimitError`.
 `LumoAuthAuthError` is an older name for `LumoAuthAuthenticationError`. It will be removed in the next major version.
 
 ```ts

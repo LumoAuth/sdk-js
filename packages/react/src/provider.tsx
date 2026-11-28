@@ -8,6 +8,7 @@ import type {
     AuthState,
     LumoAuthUser,
     TokenState,
+    SignInWithRedirectOptions,
 } from './types';
 import { injectStyles } from './styles';
 
@@ -103,6 +104,40 @@ function parseUserFromUserInfo(data: Record<string, unknown>): LumoAuthUser {
 /** Scopes requested when the provider gets no `scope` prop. */
 const DEFAULT_SCOPE = 'openid profile email';
 
+let passwordStrategyWarned = false;
+
+/**
+ * `authStrategy="password"` signs in with the resource owner password grant,
+ * which LumoAuth does not offer. The mode stays so that existing code still
+ * compiles; the page gets one warning.
+ */
+function warnPasswordStrategyOnce(): void {
+    if (passwordStrategyWarned) return;
+    passwordStrategyWarned = true;
+    if (typeof console === 'undefined') return;
+    console.warn(
+        '[LumoAuth] authStrategy="password" does not work with LumoAuth: LumoAuth does not offer ' +
+        'the password grant, so signIn(email, password) fails with unsupported_grant_type, and ' +
+        'signUp() throws in this mode. Use authStrategy="pkce" (the default) and the hosted ' +
+        'sign-in page; signInWithRedirect({ loginHint }) fills in the address.',
+    );
+}
+
+/** The authorization request parameters of `signInWithRedirect(options)`. */
+function redirectParams(options: SignInWithRedirectOptions | undefined): Record<string, string> {
+    const params: Record<string, string> = {};
+    // Also called as a click handler (`onClick={signInWithRedirect}`): only
+    // string values count, so an event object adds nothing.
+    if (typeof options?.loginHint === 'string' && options.loginHint !== '') params.login_hint = options.loginHint;
+    if (typeof options?.prompt === 'string' && options.prompt !== '') params.prompt = options.prompt;
+    if (typeof options?.acrValues === 'string' && options.acrValues !== '') params.acr_values = options.acrValues;
+    if (typeof options?.maxAge === 'number' && Number.isInteger(options.maxAge) && options.maxAge >= 0) {
+        params.max_age = String(options.maxAge);
+    }
+    if (typeof options?.resource === 'string' && options.resource !== '') params.resource = options.resource;
+    return params;
+}
+
 // ─── Provider Component ───────────────────────────────────────────────
 
 export function LumoAuthProvider({
@@ -120,6 +155,8 @@ export function LumoAuthProvider({
     crossTab = true,
     children,
 }: LumoAuthProviderProps) {
+    if (authStrategy === 'password') warnPasswordStrategyOnce();
+
     const [user, setUser] = useState<LumoAuthUser | null>(null);
     const tokensRef = useRef<TokenState>({ accessToken: null, refreshToken: null, expiresAt: null, idToken: null });
     const callbackHandledRef = useRef(false);
@@ -236,10 +273,11 @@ export function LumoAuthProvider({
 
     // ── Sign In with Redirect (PKCE) ─────────────────────────────────
 
-    const signInWithRedirect = useCallback(() => {
+    const signInWithRedirect = useCallback((options?: SignInWithRedirectOptions) => {
         authModule.buildAuthorizationUrl({
             redirectUri: resolvedRedirectUri,
             scope,
+            extraParams: redirectParams(options),
         }).then(({ url, codeVerifier, state: stateParam }) => {
             savePkceParams(codeVerifier, stateParam);
             if (typeof window !== 'undefined') {
@@ -468,9 +506,27 @@ export function LumoAuthProvider({
             return;
         }
 
+        const targetUrl = options?.afterSignOutUrl || afterSignOutUrl || '/';
+
+        // A server-managed store (the cookie adapter): the app's own logout
+        // route revokes the tokens, clears its cookie and sends the browser
+        // through LumoAuth's end-session endpoint with the ID token that only
+        // the server holds. Its cookie must still be there when the browser
+        // arrives, so the store is not cleared from here.
+        if (storage?.serverManaged && storage.signOutUrl) {
+            const signOutUrl = new URL(storage.signOutUrl, window.location.origin);
+            const target = new URL(targetUrl, window.location.origin);
+            if (target.origin === window.location.origin) {
+                signOutUrl.searchParams.set('return_to', `${target.pathname}${target.search}`);
+            }
+            tokensRef.current = { accessToken: null, refreshToken: null, expiresAt: null, idToken: null };
+            await session.clearSession(null, { emit: false, keepStorage: true });
+            window.location.replace(signOutUrl.toString());
+            await new Promise<void>(() => { });
+        }
+
         // Build the IdP logout URL using the *current* idToken before
         // anything else — once we clear it, we can't supply id_token_hint.
-        const targetUrl = options?.afterSignOutUrl || afterSignOutUrl || '/';
         const postLogoutRedirectUri = new URL(targetUrl, window.location.origin).toString();
         const params = new URLSearchParams({
             post_logout_redirect_uri: postLogoutRedirectUri,
@@ -640,8 +696,10 @@ export function LumoAuthProvider({
             afterSignInUrl,
             afterSignUpUrl,
             afterSignOutUrl,
+            // The default store (sessionStorage) survives a reload; memory does not.
+            tokensSurviveReload: storage?.survivesReload !== false,
         },
-    }), [state, signIn, signInWithRedirect, signInWithSocial, signUp, signOut, getToken, handleCallback, sendMagicLink, checkEmail, authStrategy, domain, orgId, address, clientId, resolvedRedirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl]);
+    }), [storage, state, signIn, signInWithRedirect, signInWithSocial, signUp, signOut, getToken, handleCallback, sendMagicLink, checkEmail, authStrategy, domain, orgId, address, clientId, resolvedRedirectUri, afterSignInUrl, afterSignUpUrl, afterSignOutUrl]);
 
     return (
         <LumoAuthContext.Provider value={contextValue}>

@@ -9,9 +9,13 @@ import {
     LumoAuthConfigError,
     LumoAuthNetworkError,
     LumoAuthAddress,
+    errorFromBodyCode,
+    retryAfterSeconds,
     fetchWithDpop,
     type DpopProofProvider,
+    type DelegationApplication,
     type AgentAskResult,
+    type AgentCallOptions,
     type AgentIdentity,
     type AgentBudget,
     type AgentMcpToolDecision,
@@ -19,6 +23,7 @@ import {
     type UsageReportResult,
 } from '@lumoauth/shared';
 import { CLIENT_ASSERTION_TYPE, ClientAssertionSigner } from './client-assertion';
+import { anyCapabilityCovers } from './capabilities';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -59,7 +64,15 @@ export interface LumoAgentOptions {
     issuer?: string;
     /** Scopes to request. When omitted the server grants the agent's defaults. */
     scopes?: string[];
-    /** OAuth callback URL for the delegation consent flow. */
+    /**
+     * The application that a person consents to before the agent acts for
+     * them (`delegation.buildConsentUrl()` / `handleConsentCallback()`): its
+     * client ID, its secret when confidential, and a registered redirect URI.
+     * Never the agent's own ID. Also needed by `delegation.revoke()` to end
+     * the grant at LumoAuth.
+     */
+    application?: DelegationApplication;
+    /** A registered redirect URI of `application`, when `application.redirectUri` is not set. */
     redirectUri?: string;
     /** Custom fetch implementation. */
     fetch?: typeof globalThis.fetch;
@@ -222,6 +235,7 @@ export class LumoAgent {
             clientId: this.clientId,
             clientSecret: this.clientSecret,
             redirectUri: options.redirectUri,
+            application: options.application,
             agentToken: tokenProvider,
             fetch: options.fetch,
             dpop: this.dpop,
@@ -272,13 +286,20 @@ export class LumoAgent {
 
         const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
         if (!res.ok || typeof body.access_token !== 'string') {
-            throw new LumoAuthApiError(
+            const message =
                 typeof body.error_description === 'string'
                     ? body.error_description
-                    : `Agent authentication failed (HTTP ${res.status})`,
-                typeof body.error === 'string' ? body.error : 'AUTHENTICATION_ERROR',
-                res.status,
-                body,
+                    : `Agent authentication failed (HTTP ${res.status})`;
+            // The grant consumes the agent budget: a spent one is a 429
+            // `budget_exceeded`, raised as LumoAuthBudgetExceededError.
+            throw (
+                errorFromBodyCode(res.status, body, message, retryAfterSeconds(res.headers)) ??
+                new LumoAuthApiError(
+                    message,
+                    typeof body.error === 'string' ? body.error : 'AUTHENTICATION_ERROR',
+                    res.status,
+                    body,
+                )
             );
         }
 
@@ -349,22 +370,26 @@ export class LumoAgent {
 
     // ── Ask API & self-inspection (delegates to `agents`) ─────────────
 
-    /** Preflight check: is the agent authorised to perform `action`? */
-    async ask(action: string, context?: Record<string, unknown>): Promise<AgentAskResult> {
-        return this.agents.ask(action, context);
+    /**
+     * Preflight check: is the agent authorised to perform `action`?
+     * `options.traceparent` (a W3C trace context header) puts the caller's
+     * trace ID on the audit entries of the decision.
+     */
+    async ask(action: string, context?: Record<string, unknown>, options?: AgentCallOptions): Promise<AgentAskResult> {
+        return this.agents.ask(action, context, options);
     }
 
     /** Convenience wrapper: `true` when `action` is allowed. */
-    async isAllowed(action: string, context?: Record<string, unknown>): Promise<boolean> {
-        return this.agents.isAllowed(action, context);
+    async isAllowed(action: string, context?: Record<string, unknown>, options?: AgentCallOptions): Promise<boolean> {
+        return this.agents.isAllowed(action, context, options);
     }
 
     /**
      * May this agent run `tool` on the registered MCP server `serverId`?
      * A deny returns `{ allowed: false }` and does not throw.
      */
-    async authorizeMcpTool(serverId: string, tool: string): Promise<AgentMcpToolDecision> {
-        return this.agents.authorizeMcpTool(serverId, tool);
+    async authorizeMcpTool(serverId: string, tool: string, options?: AgentCallOptions): Promise<AgentMcpToolDecision> {
+        return this.agents.authorizeMcpTool(serverId, tool, options);
     }
 
     /** The agent's own identity, capabilities, and workspace. */
@@ -375,6 +400,18 @@ export class LumoAgent {
     /** The agent's declared capability slugs. */
     async capabilities(): Promise<string[]> {
         return this.agents.capabilities();
+    }
+
+    /**
+     * Whether the agent holds a capability. Names match as on the server:
+     * `'Web.Search'` matches the held `web:search`, and a held `web:*`
+     * covers it (see `capabilityCovers()`). It reads `agents/me` on each
+     * call and checks only the agent's registered capabilities; the Ask API
+     * (`ask()` / `isAllowed()`) also applies your policies and the token's
+     * scope.
+     */
+    async hasCapability(capability: string): Promise<boolean> {
+        return anyCapabilityCovers(await this.capabilities(), capability);
     }
 
     /** The agent's budget policy (empty object when no policy is set). */

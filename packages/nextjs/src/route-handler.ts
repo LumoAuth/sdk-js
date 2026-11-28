@@ -6,11 +6,13 @@ import {
 } from '@lumoauth/shared';
 import { addressOf, resolveConfig, type LumoAuthNextConfig } from './config';
 import { appOrigin, callbackUrl } from './origin';
+import { refreshServerSession } from './refresh';
 import {
     SESSION_COOKIE,
     PKCE_COOKIE,
     cookieOptions,
     isSessionLive,
+    isTokenStale,
     seal,
     unseal,
     type PkceState,
@@ -149,23 +151,39 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
         }
 
         if (action === 'session') {
+            // Switched off: no token reaches page scripts.
+            if (cfg.sessionRoute === false) return new Response('Not found', { status: 404 });
             // Read endpoint for `cookieStorageAdapter`. Returns the access token
-            // only — the refresh token must never leave the server.
+            // only: the refresh token and the ID token never leave the server
+            // (the sign-out goes through the logout route, which has both).
             const session = await unseal<ServerSession>(readCookie(request, SESSION_COOKIE), cfg.secret);
             // Judged on the SESSION, not the access token: reporting "no
             // session" for a merely stale token would sign the client out every
             // hour despite a perfectly good session.
             if (!isSessionLive(session)) {
-                return Response.json({ accessToken: null, expiresAt: null });
+                return Response.json({ accessToken: null, expiresAt: null }, { headers: { 'Cache-Control': 'no-store' } });
             }
-            return Response.json({
-                accessToken: session.accessToken,
-                idToken: session.idToken,
-                expiresAt: session.expiresAt,
-            });
+            // A stale token is refreshed here, so that the browser never gets
+            // a token that has run out (it has no refresh token of its own).
+            if (isTokenStale(session) && session.refreshToken) {
+                const fresh = await refreshServerSession(cfg, session);
+                if (!fresh) {
+                    // The refresh token was refused: the session has ended.
+                    const headers = new Headers({ 'Cache-Control': 'no-store' });
+                    headers.append('Set-Cookie', clearCookie(SESSION_COOKIE, secure));
+                    return Response.json({ accessToken: null, expiresAt: null }, { headers });
+                }
+                const headers = new Headers({ 'Cache-Control': 'no-store' });
+                headers.append('Set-Cookie', `${SESSION_COOKIE}=${await seal(fresh, cfg.secret)}; ${serialize(cookieOptions(cfg.sessionMaxAge!, secure))}`);
+                return Response.json({ accessToken: fresh.accessToken, expiresAt: fresh.expiresAt }, { headers });
+            }
+            return Response.json(
+                { accessToken: session.accessToken, expiresAt: session.expiresAt },
+                { headers: { 'Cache-Control': 'no-store' } },
+            );
         }
 
-        if (action === 'logout') return doLogout(cfg, origin, request, secure);
+        if (action === 'logout') return doLogout(cfg, origin, request, secure, url.searchParams.get('return_to'));
 
         return new Response('Not found', { status: 404 });
     }
@@ -183,6 +201,7 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
         origin: string,
         request: Request,
         secure: boolean,
+        returnTo: string | null = null,
     ): Promise<Response> {
         const session = await unseal<ServerSession>(readCookie(request, SESSION_COOKIE), cfg.secret);
 
@@ -197,7 +216,9 @@ export function createRouteHandler(overrides: Partial<LumoAuthNextConfig> = {}) 
         // End the IdP session too, otherwise the next /authorize silently
         // re-issues a code and the user is never really signed out.
         const logout = new URL(addressOf(cfg).url('oauth.logout'));
-        logout.searchParams.set('post_logout_redirect_uri', origin + cfg.afterSignOutUrl!);
+        // `?return_to=/path` (same-origin paths only) picks another registered
+        // post-logout address, as `<LumoAuthNextProvider>`'s signOut() sends.
+        logout.searchParams.set('post_logout_redirect_uri', origin + safeReturnTo(returnTo, cfg.afterSignOutUrl!));
         if (session?.idToken) logout.searchParams.set('id_token_hint', session.idToken);
 
         return redirectTo(logout.toString(), [clearCookie(SESSION_COOKIE, secure)]);

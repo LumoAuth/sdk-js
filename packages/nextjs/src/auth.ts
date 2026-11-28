@@ -1,4 +1,6 @@
-import { cookies, headers } from 'next/headers';
+// `.js`: Next.js has no `exports` map, so an ESM import outside its bundler
+// (Node, test runners) needs the file name. Its bundler resolves both forms.
+import { cookies, headers } from 'next/headers.js';
 import { AuthModule, type UserInfo } from '@lumoauth/shared';
 import { resolveConfig, type LumoAuthNextConfig } from './config';
 import { LOGIN_PATH } from './defaults';
@@ -153,7 +155,7 @@ export async function currentUser(
 export async function protectPage(opts: { returnTo?: string } = {}): Promise<AuthObject> {
     const result = await auth();
     if (!result.isSignedIn) {
-        const { redirect } = await import('next/navigation');
+        const { redirect } = await import('next/navigation.js');
         const qs = opts.returnTo ? `?return_to=${encodeURIComponent(opts.returnTo)}` : '';
         redirect(`${LOGIN_PATH}${qs}`);
     }

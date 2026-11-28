@@ -330,9 +330,7 @@ const ERROR_ANSWERS = [
 ];
 
 for (const c of ERROR_ANSWERS) {
-    test(`error case ${c.name}: the handler does not run and nothing of the error reaches the personal agent`, async () => {
-        // Express's default error handler, outside production: it answers with
-        // the stack of the error, and with its statusCode when it has one.
+    test(`error case ${c.name}: the handler does not run, the agent gets 503, nothing of the error reaches it`, async () => {
         const { app, seen } = shop(c.answer);
         app.set('env', 'development');
         const logged = [];
@@ -341,15 +339,18 @@ for (const c of ERROR_ANSWERS) {
         let res;
         try {
             res = await send(await listen(app), { path: '/api/orders', headers: AGENT_HEADERS });
-            // Express logs the error on a later tick.
             await new Promise((done) => setTimeout(done, 20));
         } finally {
             console.error = consoleError;
         }
         assert.equal(logged.length, 1, 'the error stays visible in the server log');
+        assert.match(logged[0], /not verified/);
+        assert.ok(!logged[0].includes('shop-secret'), 'the log line names no credential');
 
         assert.equal(seen.length, 0, 'the handler must not run');
-        assert.equal(res.status, 500);
+        assert.equal(res.status, 503, 'never 500');
+        assert.equal(JSON.parse(res.text).error, 'temporarily_unavailable');
+        assert.equal(res.headers['cache-control'], 'no-store');
         assert.equal(res.headers['www-authenticate'], undefined);
         assert.equal(res.headers['retry-after'], undefined);
         const upstream = c.answer instanceof Error ? ['ECONNREFUSED', '10.0.0.7'] : Object.values(c.answer.body ?? {}).filter((v) => typeof v === 'string');
@@ -358,18 +359,16 @@ for (const c of ERROR_ANSWERS) {
         }
     });
 
-    test(`error case ${c.name}: the application's error handler gets a LumoAuthError whose cause is the SDK error`, async () => {
-        const { app, seen } = shop(c.answer);
+    test(`error case ${c.name}: onError gets a LumoAuthError whose cause is the SDK error`, async () => {
         const errors = [];
-        // eslint-disable-next-line no-unused-vars
-        app.use((err, req, res, next) => {
-            errors.push(err);
-            res.status(503).json({ error: 'temporarily_unavailable' });
-        });
+        const { app, seen } = shop(c.answer, { onError: (err, req) => errors.push([err, req.originalUrl]) });
         const res = await send(await listen(app), { path: '/api/orders', headers: AGENT_HEADERS });
 
         assert.equal(seen.length, 0);
         assert.equal(res.status, 503);
+        assert.equal(errors.length, 1);
+        assert.equal(errors[0][1], '/api/orders');
+        errors[0] = errors[0][0];
         assert.equal(errors.length, 1);
         const [err] = errors;
         assert.ok(err instanceof LumoAuthError);
@@ -418,6 +417,7 @@ test('a LumoAuthBackend without client credentials fails closed at the first req
         res.json({});
     });
     const res = await send(await listen(app), { path: '/api/catalog', headers: AGENT_HEADERS });
+    // A configuration error of the app goes to its error handler.
     assert.equal(res.status, 500);
     assert.equal(ran, false);
     assert.equal(mock.calls.length, 0);

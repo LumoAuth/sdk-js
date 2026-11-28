@@ -5,22 +5,26 @@
  * browser SDK, and the right answer depends on the app. This module makes it a
  * choice rather than a hardcoded default.
  *
- * The trade-off:
+ * What each adapter promises:
  *
- * | Adapter          | XSS-readable | Survives reload | Cross-tab | SSR |
- * |------------------|--------------|-----------------|-----------|-----|
- * | `sessionStorage` | yes          | per tab         | no        | no  |
- * | `localStorage`   | yes          | yes             | yes       | no  |
- * | `memory`         | no*          | no              | no        | yes |
- * | `cookie` (BFF)   | no           | yes             | yes       | yes |
+ * | Adapter          | Access token readable by page scripts | Refresh token readable | Survives reload | Shared with other tabs |
+ * |------------------|----------------------------------------|------------------------|-----------------|------------------------|
+ * | `sessionStorage` | yes (web storage)                      | yes                    | yes, per tab    | through the cross-tab channel |
+ * | `localStorage`   | yes (web storage)                      | yes                    | yes             | yes                    |
+ * | `memory`         | only through the SDK in this tab       | only through the SDK   | no              | never: other tabs get a sign-out signal only |
+ * | `cookie` (BFF)   | yes, from the session route            | never                  | yes             | other tabs re-read the session route |
  *
- * \* memory is not readable from another origin's script, but it is still in
- * the JS heap; it is "safe" only in the sense that nothing persists.
+ * The cross-tab channel (`crossTab`, a BroadcastChannel that any script of
+ * the origin can listen to) carries tokens only for the web-storage adapters,
+ * whose tokens any script of the origin can read anyway. For every other
+ * adapter it carries only "changed" and "signed out" signals.
  *
- * `cookie` is the strongest option: tokens live in an httpOnly cookie your
- * server sets, and never enter JavaScript at all. It requires a same-origin
- * backend to exchange and refresh on the browser's behalf, which is what
- * @lumoauth/express and (Phase 3) @lumoauth/nextjs provide.
+ * `cookie` keeps the refresh token and the ID token on the server, in an
+ * httpOnly cookie that your server sets. The browser still receives the
+ * short-lived access token from the server's session route, so that the
+ * browser hooks can call LumoAuth. It needs a same-origin server with that
+ * route: `createRouteHandler()` of `@lumoauth/nextjs` (`/api/auth/session`).
+ * `@lumoauth/express` has no session route.
  */
 
 export interface StoredTokens {
@@ -57,6 +61,25 @@ export interface TokenStorage {
      * revocation request of its own.
      */
     readonly serverManaged?: boolean;
+    /**
+     * Optional. For a server-managed store: the same-origin address that the
+     * browser goes to for sign-out (GET). The server revokes the tokens,
+     * clears its cookie and sends the browser through LumoAuth's end-session
+     * endpoint with its own `id_token_hint`.
+     */
+    readonly signOutUrl?: string;
+    /**
+     * Optional. `true` when any script of the origin can read the tokens of
+     * this store anyway (web storage). Only then does the cross-tab channel
+     * carry the tokens, and only then are tokens from the channel adopted.
+     * Otherwise the channel carries signals only. Default: `false`.
+     */
+    readonly broadcastTokens?: boolean;
+    /**
+     * Optional. `false` when a page load empties the store (memory), so that
+     * the callback page finishes the sign-in without a reload. Default: `true`.
+     */
+    readonly survivesReload?: boolean;
 }
 
 const TOKEN_KEY = 'lumoauth_tokens';
@@ -98,6 +121,8 @@ function webStorageAdapter(
 
     return {
         name,
+        broadcastTokens: true,
+        survivesReload: true,
         get() {
             try {
                 return parse(store()?.getItem(TOKEN_KEY) ?? null);
@@ -155,7 +180,9 @@ export function localStorageAdapter(): TokenStorage {
 }
 
 /**
- * In-memory only. Nothing persists, so a reload signs the user out.
+ * In-memory only. Nothing persists, so a reload signs the user out, and the
+ * tokens never leave this tab: the cross-tab channel carries only signals.
+ * `<AuthCallback>` finishes the sign-in without a reload for this store.
  *
  * This is the correct default on the server: it is inert during SSR instead of
  * touching a `window` that does not exist.
@@ -164,6 +191,7 @@ export function memoryStorageAdapter(): TokenStorage {
     let tokens: StoredTokens = EMPTY_TOKENS;
     return {
         name: 'memory',
+        survivesReload: false,
         get: () => tokens,
         set: (t) => {
             tokens = t;
@@ -177,12 +205,14 @@ export function memoryStorageAdapter(): TokenStorage {
 export interface CookieStorageOptions {
     /**
      * Same-origin endpoint that returns the current session as JSON
-     * (`{accessToken, expiresAt, ...}`) reading it from an httpOnly cookie.
+     * (`{accessToken, expiresAt}`) reading it from an httpOnly cookie, such
+     * as `/api/auth/session` of `@lumoauth/nextjs`'s `createRouteHandler()`.
      * @default '/auth/session'
      */
     sessionEndpoint?: string;
     /**
-     * Same-origin endpoint that clears the session cookie.
+     * Same-origin sign-out endpoint: it clears the session cookie and, on a
+     * GET, redirects through LumoAuth's end-session endpoint.
      * @default '/auth/logout'
      */
     logoutEndpoint?: string;
@@ -190,12 +220,14 @@ export interface CookieStorageOptions {
 }
 
 /**
- * Backend-for-frontend adapter: tokens live in an httpOnly cookie and are never
- * exposed to JavaScript.
+ * Backend-for-frontend adapter: the session lives in an httpOnly cookie that
+ * a same-origin server owns. The refresh token and the ID token never reach
+ * JavaScript; the server's session route hands the short-lived access token
+ * to the page, so that the browser hooks can call LumoAuth.
  *
- * This is the only option here that survives XSS. The cost is that a
- * same-origin server must own the OAuth exchange and refresh —
- * @lumoauth/express already provides those routes.
+ * The server owns the OAuth exchange and the refresh: `createRouteHandler()`
+ * of `@lumoauth/nextjs` provides the routes (`<LumoAuthNextProvider>` sets
+ * this adapter up). `@lumoauth/express` has no session route.
  *
  * `set()` is intentionally a no-op: the browser cannot write an httpOnly
  * cookie, so only the server may establish the session. Reads go over the
@@ -209,6 +241,8 @@ export function cookieStorageAdapter(options: CookieStorageOptions = {}): TokenS
     return {
         name: 'cookie',
         serverManaged: true,
+        signOutUrl: logoutEndpoint,
+        survivesReload: true,
         async get() {
             if (!hasWindow()) return EMPTY_TOKENS;
             try {
@@ -221,7 +255,9 @@ export function cookieStorageAdapter(options: CookieStorageOptions = {}): TokenS
                 return {
                     accessToken: data.accessToken ?? null,
                     refreshToken: null, // never leaves the server
-                    idToken: data.idToken ?? null,
+                    // Older route handlers sent the ID token; the sign-out goes
+                    // through the server now, which holds its own copy.
+                    idToken: null,
                     expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : null,
                 };
             } catch {

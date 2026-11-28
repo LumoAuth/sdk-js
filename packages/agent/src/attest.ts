@@ -3,6 +3,8 @@ import {
     LumoAuthConfigError,
     LumoAuthNetworkError,
     LumoAuthAddress,
+    errorFromBodyCode,
+    retryAfterSeconds,
     fetchWithDpop,
     type DpopProofProvider,
 } from '@lumoauth/shared';
@@ -16,10 +18,12 @@ import {
  * With a `dpop` signer the request carries an RFC 9449 proof and the token
  * comes back sender-constrained (`tokenType: "DPoP"`).
  *
- * NOTE: this endpoint is not yet in sdk-contract/routes.json, so the path
- * template is written here rather than taken from the shared route registry.
- * `LumoAuthAddress` still decides its form: a custom domain serves it without
- * the `/orgs/{orgId}` segment.
+ * The route is `agents.attest` of the shared registry. `LumoAuthAddress`
+ * decides its form: a custom domain serves it without the `/orgs/{orgId}`
+ * segment.
+ *
+ * A spent agent budget is a 429 with the body code `budget_exceeded`:
+ * `LumoAuthBudgetExceededError` (a `LumoAuthRateLimitError`).
  */
 
 export interface AttestWorkloadOptions {
@@ -37,6 +41,13 @@ export interface AttestWorkloadOptions {
     agentId: string;
     /** The workload's OIDC token. */
     attestationToken: string;
+    /**
+     * Ask for fewer scope values than the agent's capabilities: a
+     * space-separated string or a list. Each value must be covered by a
+     * capability of the agent, or the server refuses with 400
+     * `invalid_scope`. Without it, the token carries every capability.
+     */
+    scope?: string | string[];
     /** DPoP proof signer; the returned token is bound to its key. */
     dpop?: DpopProofProvider;
     /** Custom fetch implementation. */
@@ -70,12 +81,15 @@ export async function attestWorkload(options: AttestWorkloadOptions): Promise<At
     if (!options.agentId || !options.attestationToken) {
         throw new LumoAuthConfigError('attestWorkload requires agentId and attestationToken.');
     }
-    const url = address.urlOf('/orgs/{orgId}/api/v1/agents/{agentId}/attest', { agentId: options.agentId });
+    const url = address.url('agents.attest', { agentId: options.agentId });
     const fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
+    const payload: Record<string, string> = { attestation_token: options.attestationToken };
+    const scope = Array.isArray(options.scope) ? options.scope.filter(Boolean).join(' ') : options.scope?.trim();
+    if (scope) payload.scope = scope;
     const init: RequestInit = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ attestation_token: options.attestationToken }),
+        body: JSON.stringify(payload),
     };
 
     let res: Response;
@@ -90,13 +104,18 @@ export async function attestWorkload(options: AttestWorkloadOptions): Promise<At
 
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok || typeof body.access_token !== 'string') {
-        throw new LumoAuthApiError(
+        const message =
             typeof body.error_description === 'string'
                 ? body.error_description
-                : `Agent attestation failed (HTTP ${res.status})`,
-            typeof body.error === 'string' ? body.error : 'ATTESTATION_ERROR',
-            res.status,
-            body,
+                : `Agent attestation failed (HTTP ${res.status})`;
+        throw (
+            errorFromBodyCode(res.status, body, message, retryAfterSeconds(res.headers)) ??
+            new LumoAuthApiError(
+                message,
+                typeof body.error === 'string' ? body.error : 'ATTESTATION_ERROR',
+                res.status,
+                body,
+            )
         );
     }
     return {

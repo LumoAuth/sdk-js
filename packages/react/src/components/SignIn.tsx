@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useLumoAuthContext } from '../provider';
 import type { SignInProps } from '../types';
-import { sanitizeRedirectUrl } from '../utils/url';
+import { accountPageUrl, sanitizeRedirectUrl } from '../utils/url';
 
 // ─── Social Provider SVG Icons ────────────────────────────────────────
 
@@ -305,7 +305,7 @@ function SignInPassword({
                 </div>
 
                 <div className="la-forgot">
-                    <a href={`${config.domain}/account/forgot-password`}>Forgot password?</a>
+                    <a href={accountPageUrl(config, '/account/forgot-password')}>Forgot password?</a>
                 </div>
 
                 <button

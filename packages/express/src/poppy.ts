@@ -13,6 +13,8 @@ import {
   PoppyModule,
   buildPoppyVerifyBody,
   buildPoppyRelay,
+  poppyUnavailableRelay,
+  describePoppyVerificationError,
   normalizePoppyPublicOrigin,
   LumoAuthError,
   LumoAuthConfigError,
@@ -64,6 +66,14 @@ export interface PoppySessionOptions {
   clientSecret?: string;
   /** Optional fetch override (for tests, instrumentation, custom proxies). */
   fetch?: typeof globalThis.fetch;
+  /**
+   * Called when a request could not be verified (LumoAuth could not be asked,
+   * or it refused your own application: 401, 403, 404, 429), before the
+   * personal agent gets `503`. The error is a `LumoAuthError` without a
+   * status; the SDK error is its `cause`. Default: one `console.error` line
+   * that names the cause and never a credential.
+   */
+  onError?: (error: LumoAuthError, req: any) => void; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 // The subset of Node's IncomingMessage and ServerResponse that is used here.
@@ -104,9 +114,12 @@ type PoppyRes = {
  * - Refused: the personal agent gets the response that LumoAuth worded,
  *   unchanged, and the next handler does not run.
  * - LumoAuth could not be asked, or it refused your own application (401,
- *   403, 404, 429): the next handler does not run, nothing is relayed, and
- *   `next(err)` gets a `LumoAuthError` with a fixed message and no status, so
- *   Express answers 500. The original error is its `cause`.
+ *   403, 404, 429, for example while the protocol is switched off): the next
+ *   handler does not run, nothing of LumoAuth's answer is relayed, and the
+ *   personal agent gets `503` `temporarily_unavailable`. `onError` gets a
+ *   `LumoAuthError` with a fixed message whose `cause` is the SDK error.
+ *   A configuration error found at the first request, or any other error (a
+ *   bug), goes to `next(err)`.
  *
  * @throws LumoAuthConfigError when `publicOrigin` or the credentials are
  *         missing. It is thrown here, when the middleware is created.
@@ -143,12 +156,27 @@ export function poppySession(options: PoppySessionOptions): LumoAuthRequestHandl
         return;
       }
     } catch (error) {
-      next(error instanceof LumoAuthError ? notVerified(error) : error);
+      // A bug or a configuration error (for example a `lumo` without client
+      // credentials) goes to the app's error handler, not behind a 503.
+      if (!(error instanceof LumoAuthError) || error instanceof LumoAuthConfigError) {
+        next(error instanceof LumoAuthError ? notVerified(error) : error);
+        return;
+      }
+      try {
+        (opts.onError ?? logNotVerified)(notVerified(error), req);
+      } catch {
+        // A failing hook must not change the answer.
+      }
+      writeRelay(res, poppyUnavailableRelay());
       return;
     }
     req.poppy = result;
     next();
   };
+}
+
+function logNotVerified(error: LumoAuthError): void {
+  console.error(describePoppyVerificationError(error.cause instanceof LumoAuthError ? error.cause : error));
 }
 
 /**
@@ -163,7 +191,10 @@ export function poppySession(options: PoppySessionOptions): LumoAuthRequestHandl
  * Works with an Express response and with a plain `node:http` response.
  */
 export function relayPoppyRefusal(res: PoppyRes, refusal: PoppyRefused): void {
-  const relay = buildPoppyRelay(refusal);
+  writeRelay(res, buildPoppyRelay(refusal));
+}
+
+function writeRelay(res: PoppyRes, relay: { status: number; headers: Record<string, string>; body: string | null }): void {
   res.statusCode = relay.status;
   for (const [name, value] of Object.entries(relay.headers)) {
     res.setHeader(name, value);

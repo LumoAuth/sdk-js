@@ -80,6 +80,9 @@ export {
     type FetchWithDpopOptions,
 } from '@lumoauth/shared';
 
+// ─── Agent capability matching (as the server does it) ────────────────
+export { normalizeCapability, capabilityCovers, anyCapabilityCovers } from './capabilities';
+
 // ─── Workload attestation ─────────────────────────────────────────────
 export { attestWorkload, type AttestWorkloadOptions, type AttestWorkloadResult } from './attest';
 
@@ -105,6 +108,16 @@ export {
     type VerifiedDpopProof,
 } from './access-token';
 
+// ─── JIT token verification (resource-server side) ────────────────────
+export {
+    verifyJitToken,
+    JitTokenError,
+    type JitTokenErrorCode,
+    type JitAuthorizationDetail,
+    type VerifiedJitToken,
+    type VerifyJitTokenOptions,
+} from './jit-token';
+
 export { AAuthError } from './errors';
 
 // The shared error taxonomy, so agent code can catch these without a direct
@@ -129,6 +142,7 @@ export {
     type CreateApprovalRequest,
     type RequireApprovalRequest,
     type AgentMcpToolDecision,
+    type AgentCallOptions,
     type AgentBudget,
     type UsageReport,
     type UsageReportResult,

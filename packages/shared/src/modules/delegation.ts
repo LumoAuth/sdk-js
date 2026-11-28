@@ -6,6 +6,8 @@ import {
 } from '../errors';
 import { LumoAuthAddress } from '../routes';
 import { DPOP_SCHEME, fetchWithDpop, type DpopProofProvider } from '../utils/dpop';
+import { basicAuthorization } from '../utils/http';
+import { generateCodeChallenge, generateCodeVerifier, generateState } from '../utils/pkce';
 
 /**
  * Delegation module — Chain of Agency.
@@ -13,7 +15,10 @@ import { DPOP_SCHEME, fetchWithDpop, type DpopProofProvider } from '../utils/dpo
  * RFC 8693 token exchange for acting on behalf of users and nested agent
  * delegation. Mirrors the Python SDK's `DelegationChain`:
  *
- * 1. **User consent** — `getConsentUrl()` / `handleConsentCallback()`.
+ * 1. **User consent** — the person consents to an APPLICATION of the
+ *    organization (`application`), never to the agent:
+ *    `buildConsentUrl()` / `handleConsentCallback()`. The application
+ *    redeems the code and holds the person's tokens.
  * 2. **Token exchange** — `exchange()` combines the agent token (actor)
  *    with the user token (subject) into a delegated token with an `act`
  *    claim.
@@ -73,8 +78,78 @@ export interface TokenExchangeTypeOptions {
 
 const ACCESS_TOKEN_TYPE = TOKEN_TYPES.ACCESS_TOKEN;
 
-/** Maximum delegation depth enforced by LumoAuth. */
-export const MAX_DELEGATION_DEPTH = 3;
+/**
+ * Maximum number of actors in a delegation chain (`act` nesting) that
+ * LumoAuth allows. An exchange that would add a sixth is refused with 400
+ * `invalid_request` "Delegation chain too deep…", which the SDK raises as a
+ * `LumoAuthApiError` with the code `delegation_depth_exceeded`.
+ */
+export const MAX_DELEGATION_DEPTH = 5;
+
+/**
+ * How the token exchange authenticates the client (RFC 6749 §2.3, RFC 7523).
+ *
+ * - `'none'` (default): no client authentication. LumoAuth accepts this
+ *   only when the actor token is one of the organization's agent tokens.
+ * - `'client_secret_basic'`: HTTP Basic with `clientId` and `clientSecret`.
+ * - `'client_secret_post'`: `client_id` and `client_secret` in the body.
+ * - `'private_key_jwt'`: a client assertion from `clientAssertion`.
+ *
+ * A confidential application uses the method that is registered for it, and
+ * its application must have token exchange switched on.
+ */
+export type TokenExchangeClientAuthentication = 'none' | 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt';
+
+const CLIENT_AUTHENTICATION_METHODS: readonly TokenExchangeClientAuthentication[] = [
+    'none',
+    'client_secret_basic',
+    'client_secret_post',
+    'private_key_jwt',
+];
+
+const CLIENT_ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
+
+/**
+ * The application of the organization that the person consents to. It owns
+ * the consent: the authorization request names its client ID and one of its
+ * registered redirect URIs, and it redeems the code, refreshes the person's
+ * token and revokes it. The agent's own credentials play no part in that.
+ */
+export interface DelegationApplication {
+    /** The application's client ID (not the agent's `agt_…` ID). */
+    clientId: string;
+    /** The application's client secret, for a confidential application. A public application leaves it out (PKCE). */
+    clientSecret?: string;
+    /** One of the application's registered redirect URIs. Defaults to `redirectUri` of the module config. */
+    redirectUri?: string;
+}
+
+/** Options of {@link DelegationModule.buildConsentUrl}. */
+export interface ConsentUrlOptions {
+    /**
+     * The scopes to ask the person for. They must be allowed for the
+     * application and held by the agent as capabilities (`<resource>:<action>`),
+     * or the later exchange ends with no scope. `openid` is always added.
+     */
+    scopes?: string[];
+    /**
+     * Ask for `offline_access`, so that the application gets a refresh token:
+     * needed to renew the person's token and for `revoke()`. Default `false`.
+     */
+    offlineAccess?: boolean;
+    /** Your own `state` value. Default: a random value. */
+    state?: string;
+}
+
+/** The result of {@link DelegationModule.buildConsentUrl}. */
+export interface ConsentUrlResult {
+    /** Send the person here. */
+    url: string;
+    /** The `state` value; `handleConsentCallback()` checks it. */
+    state: string;
+    /** The PKCE verifier. The module keeps it for the session; returned for apps that store it themselves. */
+    codeVerifier: string;
+}
 
 export interface DelegationModuleConfig {
     /** Base URL of the LumoAuth instance. Not used with `customDomain`. */
@@ -87,11 +162,31 @@ export interface DelegationModuleConfig {
      * segment, and `orgId` is not needed.
      */
     customDomain?: string;
-    /** OAuth client ID of the agent performing the delegation. */
+    /** OAuth client ID of the agent performing the delegation (`agt_…`): used for the exchange's client authentication. */
     clientId: string;
-    /** Client secret — required for the consent-code exchange and revocation. */
+    /** The agent's client secret, for `clientAuthentication` of the exchange. */
     clientSecret?: string;
-    /** OAuth callback URL for the user consent flow. */
+    /**
+     * The application that the person consents to; it redeems the code,
+     * refreshes and revokes the person's token. Without it there is no
+     * consent flow: use `setUserToken()` with a token that your application
+     * obtained, and `revoke()` only forgets local state.
+     */
+    application?: DelegationApplication;
+    /**
+     * Client authentication of the token exchanges (`exchange()`,
+     * `delegateToSubAgent()`). Default `'none'`: an agent's exchange. See
+     * {@link TokenExchangeClientAuthentication}.
+     */
+    clientAuthentication?: TokenExchangeClientAuthentication;
+    /**
+     * For `clientAuthentication: 'private_key_jwt'`: returns a new RFC 7523
+     * client assertion for each exchange, for example
+     * `() => signer.create(clientId, issuer)` with `ClientAssertionSigner`
+     * from `@lumoauth/agent` (the audience is the organization's issuer).
+     */
+    clientAssertion?: () => string | Promise<string>;
+    /** A registered redirect URI of the application, when `application.redirectUri` is not set. */
     redirectUri?: string;
     /** Provider returning the agent's own access token (the actor token). */
     agentToken: () => string | Promise<string>;
@@ -126,10 +221,14 @@ export class DelegationModule {
     private readonly address: LumoAuthAddress;
     private readonly clientId: string;
     private readonly clientSecret: string;
-    private readonly redirectUri: string;
     private readonly agentToken: () => string | Promise<string>;
     private readonly fetchFn: typeof globalThis.fetch;
     private readonly dpop: DpopProofProvider | undefined;
+    private readonly clientAuthentication: TokenExchangeClientAuthentication;
+    private readonly clientAssertion: (() => string | Promise<string>) | undefined;
+    private readonly application: DelegationApplication | undefined;
+    /** Consents in progress (state and PKCE verifier), keyed by session id. */
+    private readonly pendingConsents = new Map<string, { state: string; codeVerifier: string; redirectUri: string }>();
 
     /** User consent tokens, keyed by session id. */
     private readonly userTokens = new Map<string, UserTokens>();
@@ -140,58 +239,119 @@ export class DelegationModule {
         this.address = new LumoAuthAddress(config).required();
         this.clientId = config.clientId;
         this.clientSecret = config.clientSecret ?? '';
-        this.redirectUri = config.redirectUri ?? '';
         this.agentToken = config.agentToken;
         this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
         this.dpop = config.dpop;
+        this.application = config.application?.clientId
+            ? { ...config.application, redirectUri: config.application.redirectUri ?? config.redirectUri }
+            : undefined;
+        this.clientAuthentication = config.clientAuthentication ?? 'none';
+        this.clientAssertion = config.clientAssertion;
+        if (!CLIENT_AUTHENTICATION_METHODS.includes(this.clientAuthentication)) {
+            throw new LumoAuthConfigError(
+                `clientAuthentication must be one of ${CLIENT_AUTHENTICATION_METHODS.join(', ')}.`,
+            );
+        }
+        if (this.clientAuthentication.startsWith('client_secret_') && !this.clientSecret) {
+            throw new LumoAuthConfigError(`clientAuthentication '${this.clientAuthentication}' needs clientSecret.`);
+        }
+        if (this.clientAuthentication.startsWith('client_secret_') && !this.clientId) {
+            throw new LumoAuthConfigError(`clientAuthentication '${this.clientAuthentication}' needs clientId.`);
+        }
+        if (this.clientAuthentication === 'private_key_jwt' && typeof this.clientAssertion !== 'function') {
+            throw new LumoAuthConfigError("clientAuthentication 'private_key_jwt' needs clientAssertion, a function that returns a client assertion.");
+        }
     }
 
     // ── Step 1: user consent flow ─────────────────────────────────────
 
     /**
-     * Generate a URL where the user can grant the agent permission to act
-     * on their behalf. Redirect the user there; after consent they come
-     * back to `redirectUri` with an authorization code. Without `scopes`
-     * it asks for `documents:read`.
+     * @deprecated It cannot work: it named the agent as the OAuth client and
+     * sent no PKCE challenge, and LumoAuth refuses both. Configure
+     * `application` and call `await buildConsentUrl(sessionId, { scopes })`.
+     * Throws `LumoAuthConfigError`.
      */
     getConsentUrl(
-        sessionId: string,
-        scopes?: string[],
-        state?: string,
+        _sessionId: string,
+        _scopes?: string[],
+        _state?: string,
     ): string {
-        if (!this.redirectUri) {
-            throw new LumoAuthConfigError(
-                'redirectUri is required for the consent flow — pass it to the delegation config.',
-            );
-        }
-        const params = new URLSearchParams({
-            response_type: 'code',
-            client_id: this.clientId,
-            redirect_uri: this.redirectUri,
-            scope: (scopes ?? ['documents:read']).join(' '),
-            state: state ?? `session:${sessionId}`,
-            prompt: 'consent',
-            access_type: 'offline',
-        });
-        return `${this.authorizeUrl()}?${params.toString()}`;
+        throw new LumoAuthConfigError(
+            'getConsentUrl() cannot work: the person consents to an application of the organization, not to the agent, ' +
+                'and the authorization request needs PKCE. Configure `application` (its client ID and a registered redirect URI) ' +
+                'and call `await delegation.buildConsentUrl(sessionId, { scopes })`.',
+        );
     }
 
     /**
-     * Exchange an authorization code from the consent callback for user
-     * tokens. Returns `true` on success, `false` when the server rejects
-     * the code (Python parity).
+     * The address where the person consents to the application, so that the
+     * agent can then act for them (`exchange()`). The request names the
+     * application's client ID and redirect URI, carries a PKCE challenge
+     * (S256) and asks for `openid` plus `scopes` (and `offline_access` when
+     * asked). The module keeps the `state` and the verifier for the session;
+     * `handleConsentCallback()` uses them.
+     *
+     * @throws LumoAuthConfigError without `application` or its redirect URI.
+     */
+    async buildConsentUrl(sessionId: string, options: ConsentUrlOptions = {}): Promise<ConsentUrlResult> {
+        const app = this.requireApplication('buildConsentUrl');
+        const redirectUri = app.redirectUri;
+        if (!redirectUri) {
+            throw new LumoAuthConfigError(
+                'buildConsentUrl() needs a registered redirect URI of the application: set application.redirectUri.',
+            );
+        }
+        const codeVerifier = generateCodeVerifier();
+        const state = options.state ?? generateState();
+        const scope = [
+            'openid',
+            ...(options.scopes ?? []).filter((v) => v && v !== 'openid' && v !== 'offline_access'),
+            ...(options.offlineAccess ? ['offline_access'] : []),
+        ];
+        const params = new URLSearchParams({
+            response_type: 'code',
+            client_id: app.clientId,
+            redirect_uri: redirectUri,
+            scope: scope.join(' '),
+            state,
+            code_challenge: await generateCodeChallenge(codeVerifier),
+            code_challenge_method: 'S256',
+        });
+        this.pendingConsents.set(sessionId, { state, codeVerifier, redirectUri });
+        return { url: `${this.authorizeUrl()}?${params.toString()}`, state, codeVerifier };
+    }
+
+    /**
+     * Redeem the code of the consent callback as the application (its client
+     * ID, plus its secret when it is confidential, and the PKCE verifier),
+     * and keep the person's tokens for the session. Never with the agent's
+     * credentials: the code belongs to the application.
+     *
+     * Pass the `state` of the callback: a missing or different value, or a
+     * session without a consent in progress, returns `false` before any
+     * request. `false` also when the server refuses the code.
+     *
+     * @throws LumoAuthConfigError without `application`.
      */
     async handleConsentCallback(
         sessionId: string,
         authorizationCode: string,
+        state?: string,
     ): Promise<boolean> {
-        const res = await this.postForm(this.tokenUrl(), {
+        const app = this.requireApplication('handleConsentCallback');
+        const pending = this.pendingConsents.get(sessionId);
+        if (!pending || typeof state !== 'string' || state !== pending.state) return false;
+        this.pendingConsents.delete(sessionId);
+
+        const form: Record<string, string> = {
             grant_type: 'authorization_code',
             code: authorizationCode,
-            redirect_uri: this.redirectUri,
-            client_id: this.clientId,
-            client_secret: this.clientSecret,
-        });
+            redirect_uri: pending.redirectUri,
+            code_verifier: pending.codeVerifier,
+            client_id: app.clientId,
+        };
+        if (app.clientSecret) form.client_secret = app.clientSecret;
+        const res = await this.postForm(this.tokenUrl(), form);
         if (!res.ok) return false;
 
         const body = (await res.json()) as TokenEndpointResponse;
@@ -288,8 +448,9 @@ export class DelegationModule {
 
     /**
      * Create a nested delegation token for a sub-agent — the chain
-     * **user → this agent → sub-agent**. LumoAuth enforces a maximum
-     * depth of {@link MAX_DELEGATION_DEPTH}.
+     * **user → this agent → sub-agent**. LumoAuth allows at most
+     * {@link MAX_DELEGATION_DEPTH} actors; a deeper chain throws a
+     * `LumoAuthApiError` with the code `delegation_depth_exceeded`.
      */
     async delegateToSubAgent(
         sessionId: string,
@@ -340,31 +501,40 @@ export class DelegationModule {
     // ── Revocation ────────────────────────────────────────────────────
 
     /**
-     * Revoke the delegation for a session: best-effort refresh-token
-     * revocation at the server, then clear local state. Returns `true`
-     * (revocation never throws — the local state is going away regardless).
+     * End the delegation of a session.
+     *
+     * With `application` and a refresh token of the person (the consent asked
+     * for `offlineAccess`), it revokes that refresh token as the application
+     * (`POST …/oauth/revoke` with the application's client ID and secret).
+     * That ends the whole grant, every delegated token that the agent got
+     * from it included, and returns `true`.
+     *
+     * Otherwise (no `application`, a token given with `setUserToken()`, or
+     * the server refused) nothing is revoked: the delegated tokens stay valid
+     * until they expire, and it returns `false`. The local state is
+     * forgotten either way; it never throws.
      */
     async revoke(sessionId: string): Promise<boolean> {
         const user = this.userTokens.get(sessionId);
-        if (user?.refreshToken) {
+        let revoked = false;
+        if (user?.refreshToken && this.application) {
+            const form: Record<string, string> = {
+                token: user.refreshToken,
+                token_type_hint: 'refresh_token',
+                client_id: this.application.clientId,
+            };
+            if (this.application.clientSecret) form.client_secret = this.application.clientSecret;
             try {
-                await this.postForm(
-                    this.address.url('oauth.revoke'),
-                    {
-                        token: user.refreshToken,
-                        token_type_hint: 'refresh_token',
-                        client_id: this.clientId,
-                        client_secret: this.clientSecret,
-                    },
-                );
+                const res = await this.postForm(this.address.url('oauth.revoke'), form);
+                revoked = res.ok;
             } catch {
-                // Best-effort — server-side revocation failure must not
-                // block local cleanup.
+                // A network failure must not block local cleanup.
             }
         }
         this.userTokens.delete(sessionId);
         this.delegatedTokens.delete(sessionId);
-        return true;
+        this.pendingConsents.delete(sessionId);
+        return revoked;
     }
 
     /** Revoke all active delegation sessions. */
@@ -398,6 +568,16 @@ export class DelegationModule {
         return this.address.url('oauth.authorize');
     }
 
+    private requireApplication(method: string): DelegationApplication {
+        if (!this.application) {
+            throw new LumoAuthConfigError(
+                `${method}() needs \`application\`: the client ID (and secret, when confidential) and a registered redirect URI ` +
+                    'of the application that the person consents to. The agent itself never starts a sign-in.',
+            );
+        }
+        return this.application;
+    }
+
     /** Delegation endpoints are org-scoped: they need the slug, or a custom domain. */
     private requireOrgId(): void {
         if (!this.address.hasOrganization) {
@@ -414,7 +594,23 @@ export class DelegationModule {
         // Token exchanges are the requests that mint tokens, so they carry the
         // DPoP proof. The consent-code and refresh requests stay plain: they
         // obtain the user's token, which the agent then presents as subject.
-        const res = await this.postForm(this.tokenUrl(), form, this.dpop);
+        const headers: Record<string, string> = {};
+        const body = { ...form };
+        switch (this.clientAuthentication) {
+            case 'client_secret_basic':
+                headers.Authorization = basicAuthorization(this.clientId, this.clientSecret);
+                break;
+            case 'client_secret_post':
+                body.client_id = this.clientId;
+                body.client_secret = this.clientSecret;
+                break;
+            case 'private_key_jwt':
+                body.client_assertion_type = CLIENT_ASSERTION_TYPE;
+                body.client_assertion = await this.clientAssertion!();
+                if (this.clientId) body.client_id = this.clientId;
+                break;
+        }
+        const res = await this.postForm(this.tokenUrl(), body, this.dpop, headers);
 
         if (res.ok) {
             const body = (await res.json()) as TokenEndpointResponse;
@@ -426,6 +622,20 @@ export class DelegationModule {
             errorBody = (await res.json()) as Record<string, unknown>;
         } catch {
             // non-JSON error body
+        }
+
+        // LumoAuth refuses a chain beyond MAX_DELEGATION_DEPTH actors with
+        // 400 invalid_request "Delegation chain too deep: act nesting depth N
+        // exceeds the maximum of M".
+        const description = typeof errorBody.error_description === 'string' ? errorBody.error_description : '';
+        if (res.status === 400 && /delegation chain too deep/i.test(description)) {
+            const max = /maximum of (\d+)/i.exec(description)?.[1] ?? String(MAX_DELEGATION_DEPTH);
+            throw new LumoAuthApiError(
+                `Delegation chain too deep (max depth: ${max}): ${description}`,
+                'delegation_depth_exceeded',
+                res.status,
+                errorBody,
+            );
         }
 
         if (res.status === 403) {
@@ -466,12 +676,15 @@ export class DelegationModule {
     }
 
     private async refreshUserToken(sessionId: string, user: UserTokens): Promise<void> {
-        const res = await this.postForm(this.tokenUrl(), {
+        // The person's tokens belong to the application: only it refreshes them.
+        if (!this.application) return;
+        const form: Record<string, string> = {
             grant_type: 'refresh_token',
             refresh_token: user.refreshToken ?? '',
-            client_id: this.clientId,
-            client_secret: this.clientSecret,
-        });
+            client_id: this.application.clientId,
+        };
+        if (this.application.clientSecret) form.client_secret = this.application.clientSecret;
+        const res = await this.postForm(this.tokenUrl(), form);
         if (!res.ok) return; // keep the stale token; the server will reject it
 
         const body = (await res.json()) as TokenEndpointResponse;
@@ -489,10 +702,11 @@ export class DelegationModule {
         url: string,
         form: Record<string, string>,
         dpop?: DpopProofProvider,
+        headers: Record<string, string> = {},
     ): Promise<Response> {
         const init: RequestInit = {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
             body: new URLSearchParams(form),
         };
         try {

@@ -1,5 +1,6 @@
-import { NextResponse, type NextRequest } from 'next/server';
-import { AuthModule } from '@lumoauth/shared';
+// `.js`: see auth.ts.
+import { NextResponse, type NextRequest } from 'next/server.js';
+import { refreshServerSession } from './refresh';
 import { resolveConfig, type LumoAuthNextConfig } from './config';
 import { LOGIN_PATH } from './defaults';
 import { appOrigin } from './origin';
@@ -118,25 +119,9 @@ export function lumoAuthMiddleware(options: MiddlewareOptions = {}) {
             return NextResponse.redirect(login);
         }
 
-        try {
-            const mod = new AuthModule({
-                baseUrl: cfg.domain,
-                customDomain: cfg.customDomain,
-                orgId: cfg.orgId,
-                clientId: cfg.clientId,
-            });
-            const tokens = await mod.refreshToken(session.refreshToken);
-
-            const next: ServerSession = {
-                accessToken: tokens.access_token,
-                // Keep the existing token when the server does not rotate;
-                // losing it here would silently end the session at the next
-                // refresh.
-                refreshToken: tokens.refresh_token ?? session.refreshToken,
-                idToken: tokens.id_token ?? session.idToken,
-                expiresAt: Date.now() + tokens.expires_in * 1000,
-                sessionExpiresAt: session.sessionExpiresAt,
-            };
+        // The shared refresh sends the client secret of a confidential client.
+        const next = await refreshServerSession(cfg, session);
+        if (next) {
             const sealed = await seal(next, cfg.secret);
 
             // Forward to the page rendering THIS request...
@@ -148,15 +133,14 @@ export function lumoAuthMiddleware(options: MiddlewareOptions = {}) {
             const opts = cookieOptions(cfg.sessionMaxAge!, origin.startsWith('https:'));
             res.cookies.set(SESSION_COOKIE, sealed, opts);
             return res;
-        } catch {
-            // The refresh token was rejected — revoked, rotated away, or the
-            // session ended server-side. Treat it as signed out rather than
-            // leaving a cookie that can never succeed.
-            const res = isProtected
-                ? NextResponse.redirect(new URL(LOGIN_PATH, origin))
-                : NextResponse.next();
-            res.cookies.delete(SESSION_COOKIE);
-            return res;
         }
+        // The refresh token was rejected — revoked, rotated away, or the
+        // session ended server-side. Treat it as signed out rather than
+        // leaving a cookie that can never succeed.
+        const res = isProtected
+            ? NextResponse.redirect(new URL(LOGIN_PATH, origin))
+            : NextResponse.next();
+        res.cookies.delete(SESSION_COOKIE);
+        return res;
     };
 }

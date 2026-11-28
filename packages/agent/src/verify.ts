@@ -11,7 +11,11 @@ import { LumoAuthAddress, LumoAuthConfigError } from '@lumoauth/shared';
  * `{domain}/api/v1/aauth/jwks.json`), plus `typ`, `iss`, `aud`, and `exp` — the
  * same checks LumoAuth's own `validateAuthToken()` performs (revocation
  * excepted: use `POST {issuer}/aauth/auth/token/verify` for live
- * revocation-aware introspection).
+ * revocation-aware introspection. That request is signed by the resource
+ * (RFC 9421, with a key registered for it), and its JSON body must name
+ * the resource: `{"resource": "<your resource identifier>", "auth_token":
+ * "<token>"}`. Without `resource` LumoAuth answers 400. The SDK does not
+ * call this endpoint itself).
  *
  * NOTE: AAuth auth tokens are proof-of-possession tokens. After verifying
  * the JWT, the resource MUST also verify the request's RFC 9421 signature

@@ -221,8 +221,9 @@ const EMPTY_EMAIL_CHECK: EmailCheckResult = {
 export class AuthModule {
     /** Where the organization is served: the platform host, or its custom domain. */
     readonly address: LumoAuthAddress;
-    private readonly clientId: string;
-    private readonly fetchFn: typeof globalThis.fetch;
+    // Protected so that @lumoauth/backend can add the server-only grants.
+    protected readonly clientId: string;
+    protected readonly fetchFn: typeof globalThis.fetch;
 
     constructor(config: AuthModuleConfig) {
         this.address = new LumoAuthAddress(config).required();
@@ -231,7 +232,7 @@ export class AuthModule {
     }
 
     /** Absolute URL for an org-scoped route from the shared registry. */
-    private routeUrl(name: RouteName): string {
+    protected routeUrl(name: RouteName): string {
         return this.address.url(name);
     }
 
@@ -288,7 +289,11 @@ export class AuthModule {
 
     /**
      * Exchange username/password for tokens (Resource Owner Password grant).
-     * Only available when `authStrategy` is set to `'password'`.
+     *
+     * @deprecated LumoAuth does not offer the password grant: the token
+     * endpoint answers `unsupported_grant_type`. Use the authorization code
+     * flow (`buildAuthorizationUrl()`), or `loginWithPassword()` from a page
+     * on LumoAuth's own origin. Kept so that existing code still compiles.
      */
     async passwordGrant(
         username: string,
@@ -597,17 +602,32 @@ export class AuthModule {
 
     // ── Internal ─────────────────────────────────────────────────────
 
-    private async postTokenRequest(body: URLSearchParams): Promise<TokenResponse> {
+    protected async postTokenRequest(body: URLSearchParams): Promise<TokenResponse> {
+        return this.postForm<TokenResponse>(this.routeUrl('oauth.token'), body, 'Token request', 'TOKEN_ERROR');
+    }
+
+    /**
+     * POST a form to an OAuth endpoint and read the JSON answer. An error
+     * answer throws `LumoAuthApiError` with the server's `error` as `code`
+     * (`defaultCode` without one); a failed request `LumoAuthNetworkError`.
+     */
+    protected async postForm<T>(
+        url: string,
+        body: URLSearchParams,
+        what: string,
+        defaultCode: string,
+        headers: Record<string, string> = {},
+    ): Promise<T> {
         let res: Response;
         try {
-            res = await this.fetchFn(this.routeUrl('oauth.token'), {
+            res = await this.fetchFn(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
                 body,
             });
         } catch (error) {
             throw new LumoAuthNetworkError(
-                `Token request failed: ${error instanceof Error ? error.message : String(error)}`,
+                `${what} failed: ${error instanceof Error ? error.message : String(error)}`,
                 error
             );
         }
@@ -617,13 +637,13 @@ export class AuthModule {
             throw new LumoAuthApiError(
                 (errorData as Record<string, string>).error_description ||
                 (errorData as Record<string, string>).error ||
-                `Token request failed: ${res.status}`,
-                (errorData as Record<string, string>).error || 'TOKEN_ERROR',
+                `${what} failed: ${res.status}`,
+                (errorData as Record<string, string>).error || defaultCode,
                 res.status,
                 errorData
             );
         }
 
-        return (await res.json()) as TokenResponse;
+        return (await res.json()) as T;
     }
 }

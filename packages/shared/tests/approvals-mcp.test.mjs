@@ -153,3 +153,20 @@ test('auth.revokeToken authenticates the client; buildEndSessionUrl adds the hin
     assert.equal(url.searchParams.get('id_token_hint'), 'idt');
     assert.equal(url.searchParams.get('post_logout_redirect_uri'), 'https://app.example.com/');
 });
+
+test('create: delivery lists where the request went, as the server answered', async () => {
+    const { mod } = approvals(() => jsonResponse({
+        approval_token: 'apr-tok', status: 'pending', expires_at: '2026-11-27T12:00:00+00:00', task_id: 't-1', impact: 'critical', delivery: ['push', 'slack'],
+    }, 201));
+    const created = await mod.create(REQ);
+    assert.deepEqual(created.delivery, ['push', 'slack']);
+    assert.equal(created.token, 'apr-tok');
+});
+
+test('create: delivery is [] for the email fallback and for an answer without it', async () => {
+    assert.deepEqual((await approvals(() => jsonResponse(FALLBACK, 202)).mod.create(REQ)).delivery, []);
+    const old = approvals(() => jsonResponse({ approval_token: 'apr', status: 'pending', task_id: 't-1' }, 201));
+    assert.deepEqual((await old.mod.create(REQ)).delivery, []);
+    const odd = approvals(() => jsonResponse({ approval_token: 'apr', status: 'pending', task_id: 't-1', delivery: ['push', 7, null, 'carrier-pigeon'] }, 201));
+    assert.deepEqual((await odd.mod.create(REQ)).delivery, ['push', 'carrier-pigeon'], 'strings are kept, other values dropped');
+});

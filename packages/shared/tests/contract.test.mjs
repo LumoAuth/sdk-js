@@ -5,7 +5,7 @@
 // 2. Every contract route in a namespace this SDK claims (features.json)
 //    is in ROUTES, unless listed in known_missing_routes with a reason.
 // 3. The error classes carry the contract's names, codes, statuses and
-//    parent chain.
+//    parent chain, and the shared mapping follows `body_code_map`.
 //
 // Skips cleanly when the contract is not checked out next to sdk-js
 // (LUMO_SDK_CONTRACT overrides the location).
@@ -70,6 +70,30 @@ test('error taxonomy matches the contract', { skip: !CONTRACT && 'sdk-contract n
         if (spec.status !== null) assert.equal(e.statusCode, spec.status, `${spec.name} status`);
         if (spec.parent) assert.ok(e instanceof sdk[spec.parent], `${spec.name} extends ${spec.parent}`);
         assert.ok(e instanceof Error);
+    }
+});
+
+test('body_code_map: a 429 with the body code raises the named class', { skip: !CONTRACT && 'sdk-contract not found' }, async () => {
+    const { body_code_map: map, errors } = load('errors.json');
+    assert.ok(map && Object.keys(map).length > 0, 'errors.json has a body_code_map');
+    for (const [bodyCode, name] of Object.entries(map)) {
+        const spec = errors.find((e) => e.name === name);
+        assert.ok(spec, `${name} is in the taxonomy`);
+        // api_error_body_fields.code: `code`, then `error`.
+        for (const body of [{ error: bodyCode }, { code: bodyCode }]) {
+            const http = new sdk.HttpClient({
+                baseUrl: 'https://app.lumoauth.dev',
+                token: 'tok',
+                fetch: async () => new Response(JSON.stringify(body), { status: spec.status, headers: { 'Content-Type': 'application/json' } }),
+            });
+            await assert.rejects(http.get('/x'), (e) => {
+                assert.ok(e instanceof sdk[name], `${JSON.stringify(body)} raises ${name}`);
+                assert.ok(e instanceof sdk[spec.parent], `${name} is still a ${spec.parent}`);
+                assert.equal(e.code, spec.code);
+                assert.equal(e.statusCode, spec.status);
+                return true;
+            });
+        }
     }
 });
 

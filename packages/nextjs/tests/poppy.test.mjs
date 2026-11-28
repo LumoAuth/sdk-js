@@ -256,30 +256,56 @@ const ERROR_ANSWERS = [
 ];
 
 for (const c of ERROR_ANSWERS) {
-    test(`error case ${c.name}: the handler does not run and no response is made from the error`, async () => {
+    test(`error case ${c.name}: the handler does not run, the agent gets 503, onError gets the SDK error`, async () => {
         for (const run of ['withPoppySession', 'verifyPoppyRequest']) {
             const lumo = lumoAuth(c.answer);
             let ran = false;
-            const outcome = await (run === 'withPoppySession'
-                ? withPoppySession(options(lumo.fetch), () => {
+            const errors = [];
+            const opts = options(lumo.fetch, { onError: (error, req) => errors.push([error, req]) });
+            const req = request();
+            const response = await (run === 'withPoppySession'
+                ? withPoppySession(opts, () => {
                       ran = true;
                       return new Response('handler');
-                  })(request(), context)
-                : verifyPoppyRequest(request(), options(lumo.fetch))
-            ).then(
-                (value) => ({ value }),
-                (error) => ({ error }),
-            );
+                  })(req, context)
+                : verifyPoppyRequest(req, opts));
 
-            // The error is thrown: Next.js answers 500 by itself. Nothing is
-            // returned that could carry LumoAuth's status, headers or text.
+            // Never 500, and nothing of LumoAuth's status, headers or text.
             assert.equal(ran, false, 'the handler must not run');
-            assert.equal(outcome.value, undefined, 'no response and no verification is returned');
-            assert.ok(outcome.error instanceof LumoAuthError, String(outcome.error));
-            assert.ok(outcome.error instanceof shared[c.expect.error_class], outcome.error.name);
-            assert.equal(outcome.error.name, c.expect.error_class);
-            if ('retry_after' in c.expect) assert.equal(outcome.error.retryAfter, c.expect.retry_after);
+            assert.ok(response instanceof Response, run);
+            assert.equal(response.status, 503);
+            assert.equal(response.headers.get('cache-control'), 'no-store');
+            assert.equal(response.headers.get('www-authenticate'), null);
+            assert.equal(response.headers.get('retry-after'), null);
+            const text = await response.text();
+            assert.equal(JSON.parse(text).error, 'temporarily_unavailable');
+            const upstream = c.answer instanceof Error ? ['ECONNREFUSED', '10.0.0.7'] : Object.values(c.answer.body ?? {}).filter((v) => typeof v === 'string');
+            for (const leak of [...upstream, 'shop-secret', 'invalid_client']) assert.ok(!text.includes(leak), `leaks ${leak}`);
+
+            assert.equal(errors.length, 1);
+            const [error, seenRequest] = errors[0];
+            assert.equal(seenRequest, req);
+            assert.ok(error instanceof LumoAuthError, String(error));
+            assert.ok(error instanceof shared[c.expect.error_class], error.name);
+            assert.equal(error.name, c.expect.error_class);
+            if ('retry_after' in c.expect) assert.equal(error.retryAfter, c.expect.retry_after);
         }
+    });
+
+    test(`error case ${c.name}: without onError one log line names the cause, never a credential`, async () => {
+        const lumo = lumoAuth(c.answer);
+        const logged = [];
+        const consoleError = console.error;
+        console.error = (...args) => logged.push(args.join(' '));
+        try {
+            const response = await verifyPoppyRequest(request(), options(lumo.fetch));
+            assert.equal(response.status, 503);
+        } finally {
+            console.error = consoleError;
+        }
+        assert.equal(logged.length, 1);
+        assert.match(logged[0], /not verified/);
+        assert.ok(!logged[0].includes('shop-secret'));
     });
 }
 
@@ -343,7 +369,15 @@ test('a client can be passed as `lumo`', async () => {
     await assert.rejects(verifyPoppyRequest(request(), { lumo: {}, publicOrigin: PUBLIC_ORIGIN }), LumoAuthConfigError);
 });
 
-test('an unreachable LumoAuth is a network error of the SDK', async () => {
+test('an unreachable LumoAuth is a network error of the SDK, handed to onError', async () => {
     const lumo = lumoAuth(new TypeError('fetch failed'));
-    await assert.rejects(verifyPoppyRequest(request(), options(lumo.fetch)), LumoAuthNetworkError);
+    let seen;
+    const response = await verifyPoppyRequest(request(), options(lumo.fetch, { onError: (error) => { seen = error; } }));
+    assert.equal(response.status, 503);
+    assert.ok(seen instanceof LumoAuthNetworkError);
+});
+
+test('an error that is not an SDK error (a bug) is not hidden behind a 503', async () => {
+    const lumo = { poppy: { verifyRequest: async () => { throw new RangeError('bug'); } } };
+    await assert.rejects(verifyPoppyRequest(request(), { lumo, publicOrigin: PUBLIC_ORIGIN }), RangeError);
 });

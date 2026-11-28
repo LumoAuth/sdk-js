@@ -104,7 +104,10 @@ export interface FetchWithDpopOptions {
  * `fetch` with a DPoP proof.
  *
  * Adds the `DPoP` header (and `Authorization: DPoP <token>` when
- * `accessToken` is given). Reads `DPoP-Nonce` from every response and hands
+ * `accessToken` is given, which replaces any `Authorization` of `init`).
+ * Without `accessToken`, an HTTP Basic `Authorization` of `init` (client
+ * authentication at the token endpoint) is kept; any other scheme is
+ * dropped. Reads `DPoP-Nonce` from every response and hands
  * it to `provider.setNonce`. When the server asks for a nonce, with a 400
  * body `{"error":"use_dpop_nonce"}` (token endpoint) or a 401 whose
  * `WWW-Authenticate` names `use_dpop_nonce` (resource server), the request
@@ -130,7 +133,7 @@ export async function fetchWithDpop(
             accessToken: options.accessToken,
             nonce,
         });
-        const headers = plainHeaders(init.headers);
+        const headers = plainHeaders(init.headers, !options.accessToken);
         headers.DPoP = proof;
         if (options.accessToken) {
             headers.Authorization = `${DPOP_SCHEME} ${options.accessToken}`;
@@ -151,14 +154,19 @@ export async function fetchWithDpop(
 }
 
 /**
- * Copy request headers into a plain record, dropping any `Authorization` or
- * `DPoP` header the caller set (case-insensitive) so the DPoP pair wins.
+ * Copy request headers into a plain record. A `DPoP` header of the caller is
+ * always dropped (the proof is ours). An `Authorization` header is dropped
+ * too, so that a request never carries a Bearer and a DPoP scheme together,
+ * except HTTP Basic client authentication (RFC 6749 §2.3.1) on a request
+ * without an access token: a token-endpoint request of a confidential client
+ * keeps it next to the proof.
  */
-function plainHeaders(headers: HeadersInit | undefined): Record<string, string> {
+function plainHeaders(headers: HeadersInit | undefined, keepBasic: boolean): Record<string, string> {
     const out: Record<string, string> = {};
     const add = (name: string, value: string) => {
         const lower = name.toLowerCase();
-        if (lower === 'authorization' || lower === 'dpop') return;
+        if (lower === 'dpop') return;
+        if (lower === 'authorization' && !(keepBasic && /^basic\s/i.test(value))) return;
         out[name] = value;
     };
     if (!headers) return out;

@@ -499,6 +499,42 @@ export function buildPoppyRelay(refusal: PoppyRefused): PoppyRelay {
     return { status, headers: relayed, body: JSON.stringify(body) };
 }
 
+/**
+ * The answer of a framework helper when the request could not be verified:
+ * LumoAuth could not be asked, refused the calling application itself (its
+ * credential, its scope, the organization's switch, its own rate limit), or
+ * answered something the SDK cannot read. `503` with
+ * `{"error":"temporarily_unavailable"}` and nothing of LumoAuth's answer:
+ * that answer is about your application and is never relayed to the
+ * personal agent.
+ */
+export function poppyUnavailableRelay(): PoppyRelay {
+    return {
+        status: 503,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        body: JSON.stringify({
+            error: 'temporarily_unavailable',
+            error_description: 'The request could not be verified. Try again later.',
+        }),
+    };
+}
+
+/**
+ * The log line of a framework helper for a request that was not verified.
+ * It names the SDK error, never a credential; a 404 usually means that the
+ * Personal Agent Protocol is switched off for the organization.
+ */
+export function describePoppyVerificationError(error: LumoAuthError): string {
+    const status = error.statusCode ? ` ${error.statusCode}` : '';
+    const hint =
+        error.statusCode === 404
+            ? ' Is the Personal Agent Protocol switched on for the organization?'
+            : error.statusCode === 401 || error.statusCode === 403
+              ? ' Check the client id and secret of the application, and that it may use poppy:verify.'
+              : '';
+    return `[LumoAuth] A request from a personal agent was not verified (${error.name}${status}: ${error.message}). It was answered with 503.${hint}`;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -14,6 +14,25 @@ export { LumoAuth, type LumoAuthConfig } from '@lumoauth/react';
 // Provider
 export { LumoAuthProvider } from '@lumoauth/react';
 
+// The SDK error classes, for instanceof checks in client components. In a
+// route handler or a server component, import them from
+// '@lumoauth/nextjs/server'.
+export {
+    LumoAuthError,
+    LumoAuthApiError,
+    LumoAuthAuthenticationError,
+    LumoAuthPermissionDeniedError,
+    LumoAuthNotFoundError,
+    LumoAuthRateLimitError,
+    LumoAuthBudgetExceededError,
+    LumoAuthValidationError,
+    LumoAuthConfigError,
+    LumoAuthNetworkError,
+    LumoAuthApprovalDeniedError,
+    LumoAuthApprovalTimeoutError,
+    LumoAuthApprovalNotDeliveredError,
+} from '@lumoauth/client';
+
 // Authentication Components
 export { SignIn, SignUp, AuthCallback } from '@lumoauth/react';
 

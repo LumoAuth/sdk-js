@@ -75,6 +75,9 @@ export const ROUTES = {
         path: '/orgs/{orgId}/api/v1/agents/me/mcp/authorize',
     },
     'agents.register': { method: 'POST', path: '/orgs/{orgId}/api/v1/agents/register' },
+    // Workload attestation (attestWorkload() in @lumoauth/agent). No credential:
+    // the workload's OIDC token is the proof.
+    'agents.attest': { method: 'POST', path: '/orgs/{orgId}/api/v1/agents/{agentId}/attest' },
 
     // ── Approvals (push-approval-for-actions) ─────────────────────────
     'approvals.create': { method: 'POST', path: '/orgs/{orgId}/api/v1/agents/me/approvals' },

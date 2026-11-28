@@ -210,3 +210,24 @@ test('checkBulk refuses both checks and requests at once', async () => {
     );
     assert.equal(calls.length, 0);
 });
+
+test('abac.getMyAttributes returns the server answer: user_id and the attributes object', async () => {
+    const answer = {
+        user_id: USER,
+        attributes: { id: USER, email: 'ada@acme.com', roles: ['editor'], department: 'engineering', clearance_level: 3 },
+    };
+    const { http, calls } = recorder({ token: 'tok' }, answer);
+    const abac = new AbacModule(http, 'acme');
+    const attrs = await abac.getMyAttributes();
+    assert.equal(calls[0].url, 'https://app.lumoauth.dev/orgs/acme/api/v1/abac/my-attributes');
+    assert.equal(attrs.user_id, USER);
+    assert.equal(attrs.attributes.department, 'engineering');
+    assert.equal(attrs.attributes.clearance_level, 3);
+    assert.deepStrictEqual(attrs.attributes.roles, ['editor']);
+    assert.equal(attrs.department, undefined, 'attributes are not at the top level');
+});
+
+test('abac.getMyAttributes refuses an answer without the attributes object', async () => {
+    const { http } = recorder({ token: 'tok' }, { department: 'engineering' });
+    await assert.rejects(new AbacModule(http, 'acme').getMyAttributes(), LumoAuthValidationError);
+});

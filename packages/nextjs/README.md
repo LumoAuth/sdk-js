@@ -35,6 +35,7 @@ It is part of the [LumoAuth JavaScript SDK](../../README.md).
   - [The callback URL](#the-callback-url)
   - [Use a custom domain](#use-a-custom-domain)
   - [Verify requests from personal agents](#verify-requests-from-personal-agents)
+  - [Protect an API route with a bearer token](#protect-an-api-route-with-a-bearer-token)
 - [How the session is protected](#how-the-session-is-protected)
 - [Sessions and access tokens](#sessions-and-access-tokens)
 - [API reference](#api-reference)
@@ -173,6 +174,7 @@ environment.
 | `afterSignOutUrl` | none | no | `'/'` | Where a user goes after sign-out. Also used when sign-in fails. |
 | `scope` | none | no | `'openid profile email'` | OAuth scopes to request. See [Request more scopes](#request-more-scopes). |
 | `sessionMaxAge` | none | no | 30 days | Session lifetime, in seconds |
+| `sessionRoute` | none | no | `true` | `false` turns `/api/auth/session` off (404), so that no token reaches page scripts. Only for apps whose browser code does not call LumoAuth |
 
 The public values use the `NEXT_PUBLIC_` prefix, so the client provider and the server read the
 same names. The two secrets do not, because Next.js puts every `NEXT_PUBLIC_` value into the
@@ -386,7 +388,9 @@ LUMOAUTH_SECRET=replace-with-64-hex-characters
 
 The server functions read it: `createRouteHandler()`, `lumoAuthMiddleware()`, `auth()`,
 `currentUser()`, `withPoppySession()` and `verifyPoppyRequest()`. Each one also takes
-`customDomain` in its config. The client provider takes it as a prop:
+`customDomain` in its config. The client provider `<LumoAuthNextProvider>` reads the same
+variable (and `NEXT_PUBLIC_LUMOAUTH_DOMAIN` for `domain`), so the browser and the route handler
+use the same address. A `customDomain` prop wins over the variable:
 
 ```tsx
 // app/providers.tsx
@@ -395,10 +399,7 @@ import { LumoAuthNextProvider } from '@lumoauth/nextjs';
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <LumoAuthNextProvider
-      customDomain={process.env.NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN}
-      clientId={process.env.NEXT_PUBLIC_LUMOAUTH_CLIENT_ID!}
-    >
+    <LumoAuthNextProvider clientId={process.env.NEXT_PUBLIC_LUMOAUTH_CLIENT_ID!}>
       {children}
     </LumoAuthNextProvider>
   );
@@ -454,6 +455,7 @@ route parameters, pass the context type as the second type argument:
 | `requiredScope` | none | The scopes that the route needs: a string or a list |
 | `resource` | none | The resource identifier of your service, when it takes only tokens issued for it |
 | `allowReplay` | `false` | `true` accepts a Session JWT that was verified before |
+| `onError` | one `console.error` line | `(error, request) => void`, called with the SDK error when a request could not be verified, before the personal agent gets `503` |
 | `domain`, `orgId`, `clientId`, `clientSecret` | the environment | Use them when the application with `poppy:verify` is not the OAuth client of your sign-in |
 | `customDomain` | `NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN` | The organization's own domain. It replaces `domain` and `orgId`. |
 | `lumo` | none | A `LumoAuthBackend` that is configured with `clientId` and `clientSecret`. It replaces the four options above. |
@@ -473,10 +475,12 @@ header or the `X-Forwarded-*` headers. They build the URL from `publicOrigin` an
   signed-out request. Find account data with `poppy.account.sub`, never with `poppy.userId`.
 - **Refused.** LumoAuth returns the exact response for the personal agent. The wrapper returns
   that response unchanged: its status, its headers and its body. Your handler does not run.
-- **An SDK error.** LumoAuth could not be reached, or it rejected your own application (401,
-  403, 404 or 429). Such an error is about your service, so nothing of it is relayed. The
-  wrapper throws, and Next.js answers `500`. Do not catch the error to build a response for the
-  personal agent from it.
+- **Not verified.** LumoAuth could not be reached, or it rejected your own application (401,
+  403, 404 or 429; a 404 while the Personal Agent Protocol is switched off for the
+  organization). Such an answer is about your service, so nothing of it is relayed. The wrapper
+  returns `503` with `{"error":"temporarily_unavailable"}`, and your handler does not run. The
+  `onError(error, request)` option gets the SDK error; without it, one `console.error` line names
+  the cause. A missing credential (`LumoAuthConfigError`) and any other error are thrown.
 
 `verifyPoppyRequest()` is the same check as a function, for a handler that needs more control.
 It returns the verification, or the `Response` to return:
@@ -522,6 +526,45 @@ and the guide to
 [Session verification](https://docs.lumoauth.dev/agents/personal-agent-protocol-verify)
 lists every check and every refusal.
 
+### Protect an API route with a bearer token
+
+An API route that other apps or agents call with an access token (`Authorization: Bearer …`,
+or `DPoP …`) uses `withBearerToken()` or `verifyBearerRequest()`. The token is checked on your
+server, against the organization's keys: issuer, expiry, the DPoP binding when the token has one,
+and the audience. The token must be for this API: its `aud` must contain `resource`, the address
+that clients ask tokens for. A token for another API is refused, also when LumoAuth would still
+answer UserInfo for it.
+
+```ts
+// app/api/documents/route.ts
+import { withBearerToken } from '@lumoauth/nextjs/server';
+
+export const GET = withBearerToken(
+  { resource: 'https://api.example.com', requiredScope: 'documents:read' },
+  async (request, { token }) => Response.json({ user: token.sub, client: token.client_id }),
+);
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `resource` | required | This API's identifier; the token's `aud` must contain it |
+| `requiredScope` | none | Scopes the token must carry, all of them: a string or a list. Compared exactly |
+| `issuer` | from `NEXT_PUBLIC_LUMOAUTH_DOMAIN` and `NEXT_PUBLIC_LUMOAUTH_ORG_ID` | The trusted issuer |
+| `customDomain` | `NEXT_PUBLIC_LUMOAUTH_CUSTOM_DOMAIN` | On a custom domain the issuer is the bare domain |
+| `requireDpop` | `false` | Refuse tokens that are not DPoP-bound |
+| `publicOrigin` | the origin of `request.url` | The public origin behind a proxy, for the `htu` of a DPoP proof |
+
+The answers follow RFC 6750: `401` with `WWW-Authenticate: Bearer` without a token, `401`
+`invalid_token` for a token that is not accepted, `403` `insufficient_scope` (the challenge names
+the scopes), and `503` when the organization's keys cannot be read. `verifyBearerRequest(request,
+options)` returns `{ token, accessToken }` or that `Response`. The check uses `node:crypto`, so
+the route runs on the Node.js runtime (the default), not on the Edge runtime.
+
+The error classes of the SDK are exported from both entry points: from `@lumoauth/nextjs` for
+client components and from `@lumoauth/nextjs/server` for route handlers and server components.
+Import them from `/server` in server code; there, a class from the client entry is a client
+reference, and `instanceof` does not match.
+
 ## How the session is protected
 
 The cookie is encrypted and authenticated with AES-256-GCM, using a key derived from
@@ -529,8 +572,13 @@ The cookie is encrypted and authenticated with AES-256-GCM, using a key derived 
 and counts as no session.
 
 The cookie is encrypted, not only signed, because it holds the refresh token. The
-`/api/auth/session` route returns the access token, the ID token and the expiry time to the
-client provider. It never returns the refresh token.
+`/api/auth/session` route returns the access token and its expiry time to the client provider,
+so that the browser hooks can call LumoAuth: page scripts can read that access token. The route
+never returns the refresh token or the ID token. The sign-out of `<LumoAuthNextProvider>` goes to
+`/api/auth/logout`, which sends the ID token to LumoAuth from the server. When your browser code
+does not call LumoAuth (you use only `auth()`, `currentUser()`, `protectPage()` and the
+middleware), set `sessionRoute: false`: the route then answers `404`, and no token reaches page
+scripts.
 
 `auth()` does not check the access token's signature against LumoAuth's keys. The token can only
 be in the cookie because this package stored it there after a successful code exchange.
@@ -589,6 +637,8 @@ the build)
 | `verifyPoppyRequest(request, options)` | Returns the verification of a verified request, or the `Response` to return for a refused one |
 | `poppyRefusalResponse(refusal)` | Builds the `Response` for a refusal from `poppy.verifyRequest()` |
 | `PoppyModule` | The `poppy` namespace: `verifyRequest`, `getSessionStatus`, `endSession` |
+| `withBearerToken(options, handler)`, `verifyBearerRequest(request, options)` | Bearer tokens in API route handlers, verified locally with the audience. See [Protect an API route with a bearer token](#protect-an-api-route-with-a-bearer-token) |
+| Error classes | `LumoAuthError`, `LumoAuthApiError`, `LumoAuthAuthenticationError`, `LumoAuthPermissionDeniedError`, `LumoAuthNotFoundError`, `LumoAuthRateLimitError`, `LumoAuthBudgetExceededError`, `LumoAuthValidationError`, `LumoAuthConfigError`, `LumoAuthNetworkError`, the approval errors, and `AccessTokenError` (also on the client entry, except `AccessTokenError`) |
 | Types | `AuthObject`, `MiddlewareOptions`, `LumoAuthNextConfig`, `ServerSession`, `PoppyRequestOptions`, `PoppyVerifier`, `PoppyVerification`, `PoppyVerified`, `PoppyRefused`, `PoppySession`, `PoppyAccount`, `PoppySessionStatus`, `PoppyEndSessionResult`, `PoppyModuleConfig` |
 
 **Routes from `createRouteHandler()`** (shown with the default mount point)
@@ -597,8 +647,8 @@ the build)
 |---|---|---|
 | `/api/auth/login` | GET | Starts sign-in and redirects to LumoAuth. Accepts `?return_to=/path`. |
 | `/api/auth/callback` | GET | Checks `state`, exchanges the code, stores the session, and redirects to `return_to` |
-| `/api/auth/session` | GET | Returns `{ accessToken, idToken, expiresAt }` for the client provider. Returns `null` values without a session. |
-| `/api/auth/logout` | GET, POST | Revokes the access token, clears the cookie, and ends the LumoAuth session through its logout endpoint. LumoAuth then redirects to `afterSignOutUrl`. |
+| `/api/auth/session` | GET | Returns `{ accessToken, expiresAt }` for the client provider (`Cache-Control: no-store`). A token that is about to expire is refreshed first, and the new session cookie is set. Returns `null` values without a session or when the refresh is refused (the cookie is then cleared), and `404` with `sessionRoute: false`. |
+| `/api/auth/logout` | GET, POST | Revokes the access token, clears the cookie, and ends the LumoAuth session through its logout endpoint, with the ID token as `id_token_hint`. LumoAuth then redirects to `?return_to=/path` (same-origin paths only) or to `afterSignOutUrl`. Register each address as a post-logout redirect URI. |
 
 **`@lumoauth/nextjs`** (client)
 
@@ -631,6 +681,10 @@ the build)
 - Only the App Router is supported. The Pages Router is not supported yet.
 - Without the middleware, `getToken()` returns `null` after the access token expires. The session
   stays valid, but you get no token until a refresh runs.
+- `@lumoauth/nextjs/server` is marked `server-only`. A script or a test that imports it in plain
+  Node.js runs Node with `--conditions=react-server`, as a React Server environment does; without
+  that condition the import is refused on purpose. Functions that read the request (`auth()`,
+  `currentUser()`) still need Next.js at run time.
 
 ## Versioning and compatibility
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLumoAuthContext } from '../provider';
 import type { AuthCallbackProps } from '../types';
-import { sanitizeRedirectUrl } from '../utils/url';
+import { goAfterSignIn, sanitizeRedirectUrl } from '../utils/url';
 
 // ─── AuthCallback Component ──────────────────────────────────────────
 
@@ -26,6 +26,7 @@ import { sanitizeRedirectUrl } from '../utils/url';
  */
 export function AuthCallback({
     afterSignInUrl,
+    navigate,
     loading,
     error: errorComponent,
 }: AuthCallbackProps) {
@@ -39,9 +40,11 @@ export function AuthCallback({
 
         handleCallback()
             .then(() => {
-                if (!cancelled && typeof window !== 'undefined') {
-                    window.location.href = sanitizeRedirectUrl(resolvedAfterSignInUrl);
-                }
+                if (cancelled || typeof window === 'undefined') return;
+                goAfterSignIn(sanitizeRedirectUrl(resolvedAfterSignInUrl), {
+                    navigate,
+                    tokensSurviveReload: config.tokensSurviveReload,
+                });
             })
             .catch((err: unknown) => {
                 if (!cancelled) {
@@ -50,7 +53,7 @@ export function AuthCallback({
             });
 
         return () => { cancelled = true; };
-    }, [handleCallback, resolvedAfterSignInUrl]);
+    }, [handleCallback, resolvedAfterSignInUrl, navigate, config.tokensSurviveReload]);
 
     if (error) {
         if (errorComponent) {

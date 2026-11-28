@@ -71,7 +71,17 @@ export interface ApprovalRequestResult {
     expiresAt: string | null;
     /** Server message, sent with `email_fallback_sent`. */
     message: string | null;
+    /**
+     * Where the request went: `push` (the LumoAuth app), `slack`,
+     * `discord`, as the server listed it. `[]` for the email fallback.
+     * Use it to tell the person where to look ("Waiting for approval in
+     * Slack").
+     */
+    delivery: ApprovalDelivery[];
 }
+
+/** A place where an approval request was delivered. Other strings may appear later. */
+export type ApprovalDelivery = 'push' | 'slack' | 'discord' | (string & {});
 
 export interface ApprovalWaitOptions {
     /** Polling cadence (ms). Default: 1500. */
@@ -87,6 +97,7 @@ interface CreateResponse {
     task_id?: string;
     impact?: ApprovalImpact;
     message?: string;
+    delivery?: unknown;
 }
 
 interface StatusResponse {
@@ -160,6 +171,9 @@ export class ApprovalsModule {
             impact: created.impact ?? req.impact ?? 'medium',
             expiresAt: created.expires_at ?? null,
             message: typeof created.message === 'string' ? created.message : null,
+            delivery: Array.isArray(created.delivery)
+                ? created.delivery.filter((d): d is string => typeof d === 'string' && d !== '')
+                : [],
         };
     }
 

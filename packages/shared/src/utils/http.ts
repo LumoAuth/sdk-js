@@ -6,6 +6,8 @@ import {
     LumoAuthNotFoundError,
     LumoAuthRateLimitError,
     LumoAuthNetworkError,
+    errorFromBodyCode,
+    retryAfterSeconds,
 } from '../errors';
 import { LumoAuthAddress, type RouteName } from '../routes';
 import { fetchWithDpop, type DpopProofProvider } from './dpop';
@@ -102,7 +104,7 @@ function withoutCredentialHeaders(headers: Record<string, string> | undefined): 
 }
 
 /** `Basic base64(username ":" password)`, UTF-8, without `Buffer` (isomorphic). */
-function basicAuthorization(username: string, password: string): string {
+export function basicAuthorization(username: string, password: string): string {
     const bytes = new TextEncoder().encode(`${username}:${password}`);
     let binary = '';
     for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -288,6 +290,16 @@ export class HttpClient {
                         ? String((parsedBody as Record<string, unknown>).error)
                         : `LumoAuth API error: ${response.status} ${response.statusText}`;
 
+                // A body code of the contract's `body_code_map` wins over the
+                // status (429 `budget_exceeded` is the budget error).
+                const byBodyCode = errorFromBodyCode(
+                    response.status,
+                    parsedBody,
+                    errorMessage,
+                    retryAfterSeconds(response.headers),
+                );
+                if (byBodyCode) throw byBodyCode;
+
                 // Map well-known statuses to the typed error taxonomy.
                 switch (response.status) {
                     case 401:
@@ -296,14 +308,8 @@ export class HttpClient {
                         throw new LumoAuthPermissionDeniedError(errorMessage, parsedBody);
                     case 404:
                         throw new LumoAuthNotFoundError(errorMessage, parsedBody);
-                    case 429: {
-                        const retryAfterRaw = response.headers?.get?.('Retry-After');
-                        const retryAfter =
-                            retryAfterRaw != null && /^\d+$/.test(retryAfterRaw.trim())
-                                ? Number(retryAfterRaw.trim())
-                                : undefined;
-                        throw new LumoAuthRateLimitError(errorMessage, retryAfter, parsedBody);
-                    }
+                    case 429:
+                        throw new LumoAuthRateLimitError(errorMessage, retryAfterSeconds(response.headers), parsedBody);
                 }
 
                 const errorCode =

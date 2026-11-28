@@ -58,12 +58,14 @@ export interface SessionOptions {
     scope?: string;
     storage?: TokenStorage;
     /**
-     * Share the session across tabs. When enabled, a token refresh in one tab
-     * is broadcast to the others, and only one tab performs the refresh.
-     *
-     * Independent of the storage adapter: `sessionStorage` is per-tab, so
-     * broadcasting keeps siblings live for the current session even though
-     * nothing is shared on disk.
+     * Share the session across tabs. When enabled, a sign-out in one tab signs
+     * the others out, only one tab performs a refresh, and a change of the
+     * tokens is announced. The channel is a BroadcastChannel, which any
+     * script of the origin can listen to, so it carries the tokens only for a
+     * store whose tokens such a script can read anyway (`broadcastTokens`:
+     * `sessionStorage`, `localStorage`). For the memory and cookie stores it
+     * carries only signals: a cookie tab re-reads the session route, a memory
+     * tab keeps its own session.
      * @default true
      */
     crossTab?: boolean;
@@ -72,7 +74,7 @@ export interface SessionOptions {
 }
 
 interface Broadcast {
-    type: 'tokens' | 'signout';
+    type: 'tokens' | 'changed' | 'signout';
     tokens?: StoredTokens;
 }
 
@@ -164,7 +166,13 @@ export class LumoAuthSession {
     private async persist(tokens: StoredTokens, broadcast = true): Promise<void> {
         this.tokens = tokens;
         await this.storage.set(tokens);
-        if (broadcast) this.channel?.postMessage({ type: 'tokens', tokens } satisfies Broadcast);
+        if (broadcast) {
+            this.channel?.postMessage(
+                (this.storage.broadcastTokens === true
+                    ? { type: 'tokens', tokens }
+                    : { type: 'changed' }) satisfies Broadcast,
+            );
+        }
         this.onTokens?.(tokens);
     }
 
@@ -209,6 +217,12 @@ export class LumoAuthSession {
     }
 
     private async doRefresh(): Promise<string | null> {
+        // A server-managed store (the cookie adapter) has no refresh token in
+        // the browser: the server refreshes. Read the store again; never
+        // sign out, and never call storage.clear(), which ends the server
+        // session, because of a stale token.
+        if (this.storage.serverManaged) return this.rereadServer();
+
         if (!this.tokens.refreshToken) {
             await this.clearSession('no_refresh_token');
             return null;
@@ -263,11 +277,35 @@ export class LumoAuthSession {
         return run();
     }
 
+    /**
+     * Read a server-managed store again. No session there: this tab signs
+     * out (the server has already ended it). A session with a token that is
+     * still stale (the server could not refresh yet): the tab stays signed in
+     * and `getToken()` gives no token.
+     */
+    private async rereadServer(): Promise<string | null> {
+        const fresh = await this.storage.get();
+        if (!fresh.accessToken) {
+            await this.clearSession('session_ended', { keepStorage: true });
+            return null;
+        }
+        this.tokens = fresh;
+        this.scheduleRefresh();
+        this.emit({ status: 'authenticated', isLoaded: true, isSignedIn: true, error: null });
+        this.onTokens?.(fresh);
+        const live = !fresh.expiresAt || fresh.expiresAt - Date.now() > 0;
+        return live ? fresh.accessToken : null;
+    }
+
     private scheduleRefresh(): void {
         if (this.timer) clearTimeout(this.timer);
         this.timer = null;
         const { expiresAt, refreshToken } = this.tokens;
-        if (!expiresAt || !refreshToken) return;
+        if (!expiresAt) return;
+        // A server-managed store is read again shortly before expiry, but
+        // not in a loop while the server reports a stale token.
+        const reread = this.storage.serverManaged === true && expiresAt > Date.now();
+        if (!refreshToken && !reread) return;
         const delay = Math.max(expiresAt - Date.now() - REFRESH_MARGIN_MS, MIN_TIMER_MS);
         this.timer = setTimeout(() => void this.refresh(), delay);
     }
@@ -302,13 +340,15 @@ export class LumoAuthSession {
      */
     async clearSession(
         error: string | null = null,
-        opts: { broadcast?: boolean; emit?: boolean } = {},
+        opts: { broadcast?: boolean; emit?: boolean; keepStorage?: boolean } = {},
     ): Promise<void> {
-        const { broadcast = true, emit = true } = opts;
+        const { broadcast = true, emit = true, keepStorage = false } = opts;
         if (this.timer) clearTimeout(this.timer);
         this.timer = null;
         this.tokens = EMPTY_TOKENS;
-        await this.storage.clear();
+        // `keepStorage`: a server-managed store whose sign-out the browser
+        // navigates to; the server clears its own session there.
+        if (!keepStorage) await this.storage.clear();
         if (broadcast) this.channel?.postMessage({ type: 'signout' } satisfies Broadcast);
         if (emit) {
             this.emit({ status: 'unauthenticated', isLoaded: true, isSignedIn: false, error });
@@ -324,7 +364,16 @@ export class LumoAuthSession {
             void this.clearSession(null, { broadcast: false });
             return;
         }
-        if (msg.type === 'tokens' && msg.tokens) {
+        if (msg.type === 'changed') {
+            // Re-read the store: the session route for the cookie store. A
+            // memory store re-reads its own tokens, so nothing changes.
+            void this.hydrate();
+            return;
+        }
+        // Tokens from the channel are adopted only for a store whose tokens
+        // any script of the origin can read and write anyway: a tab with the
+        // memory or cookie store never takes tokens that a script posted.
+        if (msg.type === 'tokens' && msg.tokens && this.storage.broadcastTokens === true) {
             this.tokens = msg.tokens;
             this.scheduleRefresh();
             this.emit({ status: 'authenticated', isLoaded: true, isSignedIn: true, error: null });

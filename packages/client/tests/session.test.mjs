@@ -203,3 +203,79 @@ test('B3 — a fresher in-memory token short-circuits a redundant refresh', asyn
     assert.equal(calls, before, 'a still-valid token should not trigger a network refresh');
     s.dispose();
 });
+
+// ── A server-managed store (the cookie adapter, JS-13) ───────────────────
+//
+// The browser holds no refresh token: the server refreshes. An expired access
+// token from the session route must lead to a second read of the route, never
+// to a sign-out, and never to the store's clear() (which ends the server
+// session).
+
+function serverStore(answers) {
+    const store = {
+        name: 'cookie',
+        serverManaged: true,
+        signOutUrl: '/api/auth/logout',
+        survivesReload: true,
+        reads: 0,
+        clears: 0,
+        async get() {
+            const answer = answers[Math.min(this.reads, answers.length - 1)];
+            this.reads++;
+            return { refreshToken: null, idToken: null, ...answer };
+        },
+        set() {},
+        clear() { this.clears++; },
+    };
+    return store;
+}
+
+test('hydrate with an expired token from a server-managed store re-reads it instead of signing out', async () => {
+    const auth = fakeAuth();
+    const store = serverStore([
+        { accessToken: 'stale', expiresAt: Date.now() - 1000 },
+        { accessToken: 'fresh', expiresAt: Date.now() + HOUR },
+    ]);
+    const s = mkSession(auth, store);
+    await s.hydrate();
+    assert.equal(s.getSnapshot().isSignedIn, true);
+    assert.equal(await s.getToken(), 'fresh');
+    assert.equal(store.reads, 2, 'the session route was read again');
+    assert.equal(store.clears, 0, 'the server session was not ended');
+    assert.equal(auth.calls, 0, 'the browser never refreshes with a refresh token');
+    s.dispose();
+});
+
+test('a server-managed store that reports no session signs the tab out without ending the server session', async () => {
+    const store = serverStore([
+        { accessToken: 'stale', expiresAt: Date.now() - 1000 },
+        { accessToken: null, expiresAt: null },
+    ]);
+    const s = mkSession(fakeAuth(), store);
+    await s.hydrate();
+    assert.equal(s.getSnapshot().isSignedIn, false);
+    assert.equal(store.clears, 0, 'no logout request from the browser');
+    s.dispose();
+});
+
+test('getToken() near expiry re-reads a server-managed store', async () => {
+    const store = serverStore([
+        { accessToken: 'soon-stale', expiresAt: Date.now() + 10_000 },
+        { accessToken: 'fresh', expiresAt: Date.now() + HOUR },
+    ]);
+    const s = mkSession(fakeAuth(), store);
+    await s.hydrate();
+    assert.equal(await s.getToken(), 'fresh');
+    assert.equal(store.clears, 0);
+    s.dispose();
+});
+
+test('a server-managed store whose second read is still stale keeps the session and gives no token', async () => {
+    const store = serverStore([{ accessToken: 'stale', expiresAt: Date.now() - 1000 }]);
+    const s = mkSession(fakeAuth(), store);
+    await s.hydrate();
+    assert.equal(s.getSnapshot().isSignedIn, true, 'the server says the session is live');
+    assert.equal(await s.getToken(), null, 'but there is no usable token');
+    assert.equal(store.clears, 0);
+    s.dispose();
+});

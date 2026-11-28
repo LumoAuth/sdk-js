@@ -33,7 +33,7 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build",
-    "test": "npm run build && tsup src/session-cookie.ts src/config.ts src/origin.ts src/route-handler.ts src/poppy.ts --format esm -d tests/.build --silent && node --test tests/*.test.mjs"
+    "test": "npm run build && tsup src/session-cookie.ts src/config.ts src/origin.ts src/route-handler.ts src/poppy.ts src/provider.tsx src/bearer.ts src/refresh.ts --format esm -d tests/.build --silent && node --test tests/*.test.mjs"
   },
   "keywords": [
     "lumoauth",
@@ -45,7 +45,8 @@
     "middleware"
   ],
   "dependencies": {
-    "@lumoauth/client": "^1.7.0",
+    "@lumoauth/agent": "^1.7.0",
+        "@lumoauth/client": "^1.7.0",
     "@lumoauth/react": "^1.7.0",
     "@lumoauth/shared": "^1.7.0",
     "server-only": "^0.0.1"

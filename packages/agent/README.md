@@ -25,6 +25,7 @@ sure that it is the package that you need? See
 - [Private key JWT: sign in without a secret](#private-key-jwt-sign-in-without-a-secret)
 - [DPoP: sender-constrained tokens](#dpop-sender-constrained-tokens)
 - [Verify LumoAuth access tokens on an MCP server](#verify-lumoauth-access-tokens-on-an-mcp-server)
+- [Verify a JIT token in your API](#verify-a-jit-token-in-your-api)
 - [AAuth: cryptographic agent identity](#aauth-cryptographic-agent-identity)
 - [Errors](#errors)
 - [Troubleshooting](#troubleshooting)
@@ -173,6 +174,73 @@ policies. The server always sets `ip`, `userAgent`, `requestMethod` and
 `requestPath` in the context from the real request. Values that you send under
 those names move to `pep`.
 
+To line the decision up with your own trace, pass the W3C `traceparent` of
+the current span. LumoAuth writes its trace ID into the audit entries of the
+call. `isAllowed()` and `authorizeMcpTool()` take the same option, and
+`signal` aborts the request:
+
+```ts
+await agent.ask('tickets:write', { ticket: 'T-42' }, { traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' });
+```
+
+A malformed `traceparent` throws `LumoAuthValidationError` before any
+request. An OpenTelemetry HTTP instrumentation adds the header to every call
+without this option.
+
+### Check a capability locally
+
+`hasCapability()` reads the agent's capabilities and matches a name the way
+the server does. It checks only the capabilities, not your policies or the
+token's scope: use `ask()` for the decision.
+
+```ts
+if (await agent.hasCapability('web:search')) {
+  // A held web:search or web:* covers it.
+}
+```
+
+To match a list that you already have, such as the `capabilities` claim of a
+verified token, use the functions behind it:
+
+```ts
+import { anyCapabilityCovers, capabilityCovers, normalizeCapability } from '@lumoauth/agent';
+
+anyCapabilityCovers(['tickets:read', 'invoices:*'], 'Invoices.Approve'); // true
+capabilityCovers('invoices:*', 'invoices');                               // false
+normalizeCapability('Invoices.Read');                                     // 'invoices:read'
+```
+
+- Names compare in one form: trimmed, ASCII letters in lower case, `.` read
+  as `:`, repeated `:` collapsed and trimmed. A `-` is part of a name, so
+  `invoices-read` is not `invoices:read`.
+- `*` covers every action. A name that ends in `:*` covers every action
+  under that prefix, at any depth, but not the prefix itself: `invoices:*`
+  covers `invoices:read` and `invoices:read:draft`, not `invoices`.
+- Token scopes are different: they compare exactly. `tokenScopes` and
+  `accessTokenScopes()` give the scope values as they are.
+
+### When the budget is spent
+
+A metered call (the token grant, `ask()`, JIT requests, workload
+attestation) answers 429 with the code `budget_exceeded` when the agent's
+budget is spent. The SDK throws `LumoAuthBudgetExceededError`. It extends
+`LumoAuthRateLimitError`, so a `catch` for the rate-limit error catches it
+too. `retryAfter` is the number of seconds until the spent window ends.
+
+```ts
+import { LumoAuthBudgetExceededError, LumoAuthRateLimitError } from '@lumoauth/agent';
+
+try {
+  await agent.ask('tickets:write');
+} catch (err) {
+  if (err instanceof LumoAuthBudgetExceededError) {
+    // Stop the run; try again in err.retryAfter seconds.
+  } else if (err instanceof LumoAuthRateLimitError) {
+    // Too many requests: wait err.retryAfter seconds and retry.
+  }
+}
+```
+
 ### Ask a person for approval
 
 ```ts
@@ -228,7 +296,7 @@ const result = await agent.jit.requestPermission(
 
 if (result.status === 'approved') {
   const token = await agent.jit.getToken(result.request_id);
-  // Call the resource with `Authorization: Bearer ${token}`.
+  // Send it to the resource; the resource checks it with verifyJitToken().
 }
 
 await agent.jit.completeTask();   // ends the task and revokes its tokens
@@ -240,19 +308,42 @@ return at once. A JIT token lasts at most 900 seconds.
 
 ### Act for a user
 
-```ts
-const agent = new LumoAgent({ redirectUri: 'https://agent.example.com/callback' });
+The person consents to an application of your organization, never to the
+agent. The application's client ID and one of its registered redirect URIs go
+into the authorization request, with PKCE; the application redeems the code
+and holds the person's tokens. The agent then exchanges the person's token.
 
-const url = agent.delegation.getConsentUrl('session-1', ['documents:read']);
-// …the user consents and returns with ?code=…
-await agent.delegation.handleConsentCallback('session-1', code);
+```ts
+const agent = new LumoAgent({
+  application: {
+    clientId: process.env.APP_CLIENT_ID!,          // the application, not the agent's agt_… ID
+    clientSecret: process.env.APP_CLIENT_SECRET,   // only for a confidential application
+    redirectUri: 'https://app.example.com/consent/callback',
+  },
+});
+
+const { url } = await agent.delegation.buildConsentUrl('session-1', {
+  scopes: ['documents:read'],   // allowed for the application and held by the agent
+  offlineAccess: true,          // a refresh token, for renewal and revoke()
+});
+// …the person consents and returns with ?code=…&state=…
+await agent.delegation.handleConsentCallback('session-1', code, state);
 
 const delegated = await agent.delegation.exchange('session-1', ['documents:read'], {
   resource: 'https://api.example.com',   // becomes the token's aud
 });
+
+await agent.delegation.revoke('session-1'); // true: the grant ended at LumoAuth
 ```
 
-When you already hold the user's access token, call
+`handleConsentCallback()` returns `false` for a wrong `state` or a refused
+code. `revoke()` revokes the person's refresh token as the application, which
+ends every delegated token of that grant, and returns `true`. Without
+`application` or a refresh token it only forgets the local state and returns
+`false`; the delegated tokens then stay valid until they expire.
+`getConsentUrl()` is deprecated and throws: it named the agent as the client.
+
+When your application already holds the person's access token, call
 `agent.delegation.setUserToken('session-1', accessToken)` instead of the
 consent steps. The token types and the `resource` option are explained in the
 [workspace guide](../../README.md#act-on-a-users-behalf-delegation).
@@ -268,10 +359,11 @@ consent steps. The token types and the `resource` option are explained in the
 | `tokenScopes` | `string[]` | The scopes that the server granted to the current token |
 | `tokenType` | `string \| null` | `DPoP` when the current token is sender-constrained, otherwise `Bearer`; `null` before the first sign-in |
 | `dpopSigner` | `DpopProofProvider \| undefined` | The signer passed as `dpop` |
-| `ask(action, context?)` | `Promise<AgentAskResult>` | The full decision for an action |
-| `isAllowed(action, context?)` | `Promise<boolean>` | `ask()` reduced to a boolean |
+| `ask(action, context?, options?)` | `Promise<AgentAskResult>` | The full decision for an action. `options`: `traceparent`, `signal` |
+| `isAllowed(action, context?, options?)` | `Promise<boolean>` | `ask()` reduced to a boolean |
 | `getCurrentAgent()` | `Promise<AgentIdentity>` | The agent's identity, capabilities and workspace |
 | `capabilities()` | `Promise<string[]>` | The agent's capabilities |
+| `hasCapability(name)` | `Promise<boolean>` | Whether a capability covers `name`, matched as the server does. See [Check a capability locally](#check-a-capability-locally) |
 | `budget()` | `Promise<AgentBudget>` | The agent's budget policy, or `{}` when none is set |
 | `reportUsage({ tokens, costUsd })` | `Promise<UsageReportResult>` | Report model tokens and cost; token and cost limits count only reported usage |
 | `baseUrl`, `orgId`, `clientId` | `string` | The resolved configuration |
@@ -283,7 +375,7 @@ consent steps. The token types and the `resource` option are explained in the
 | `agents` | Agent identity | `ask`, `isAllowed`, `me`, `getCurrentAgent`, `capabilities`, `budget`, `reportUsage`, `register`, `authorizeMcpTool(serverId, tool)` |
 | `approvals` | Push approval for agent actions | `require`, `create`, `getStatus`, `wait` |
 | `jit` | Just-in-time permissions | `createTask`, `requestPermission`, `getRequestStatus`, `getToken`, `evaluateTask`, `completeTask`. `listPendingRequests` is the human reviewer's view. It needs a user token with `jit:approve`, so the server rejects an agent's own token |
-| `delegation` | Act for a user, or hand work to a sub-agent, with RFC 8693 token exchange | `getConsentUrl`, `handleConsentCallback`, `setUserToken`, `exchange`, `request`, `delegateToSubAgent`, `revoke`, `revokeAll`, `hasDelegation`, `activeSessions` |
+| `delegation` | Act for a user, or hand work to a sub-agent, with RFC 8693 token exchange | `buildConsentUrl`, `handleConsentCallback`, `setUserToken`, `exchange`, `request`, `delegateToSubAgent`, `revoke`, `revokeAll`, `hasDelegation`, `activeSessions`. `getConsentUrl` is deprecated and throws |
 | `mcp` | Secured MCP servers | `getToken`, `getTokenDetailed`. Pass the MCP server's https URL, such as `https://mcp.example.com/mcp`. The SDK sends it as the RFC 8707 `resource`, so the token's `aud` is that URL. Any other ID throws `LumoAuthValidationError`. The token works only at that MCP server. With a `dpop` signer the token is DPoP-bound (`tokenType: 'DPoP'`). `authorizeTool({ serverId, subject, tool })` lets an MCP server check one tool call with its own `mcp:authorize` token. A deny returns `allowed: false` |
 
 The parameters of each method are in the
@@ -347,7 +439,12 @@ await fetch('https://mcp.example.com/mcp', { method: 'POST', headers, body });
 ```
 
 `fetchWithDpop(fetch, url, init, dpop, { accessToken })` does the same and
-also retries a `use_dpop_nonce` challenge from the MCP server.
+also retries a `use_dpop_nonce` challenge from the MCP server. With
+`accessToken` it sets `Authorization: DPoP <token>` and drops any other
+`Authorization` of `init`, so a request never carries a Bearer and a DPoP
+scheme together. Without it (a token request), an HTTP Basic `Authorization`
+of `init` is kept, so a confidential client can authenticate with Basic next
+to the proof.
 
 | Export | What it does |
 |---|---|
@@ -358,7 +455,7 @@ also retries a `use_dpop_nonce` challenge from the MCP server.
 | `signer.setNonce(url, nonce)`, `getNonce(url)`, `clearNonces()` | Nonce memory per origin |
 | `buildDpopHeaders(signer, { method, url, accessToken, tokenType? })` | `{ Authorization: 'DPoP …', DPoP }`, or `{ Authorization: 'Bearer …' }` for an unbound token |
 | `fetchWithDpop(fetch, url, init, signer, { accessToken? })` | `fetch` with the proof and the one-time nonce retry |
-| `attestWorkload({ orgId, agentId, attestationToken, customDomain?, dpop? })` | Workload attestation (`POST …/agents/{agentId}/attest`) with an optional proof; returns `{ accessToken, tokenType, expiresIn, scope, identity }` |
+| `attestWorkload({ orgId, agentId, attestationToken, scope?, customDomain?, dpop? })` | Workload attestation (`POST …/agents/{agentId}/attest`) with an optional proof; returns `{ accessToken, tokenType, expiresIn, scope, identity }`. `scope` (a string or a list) asks for fewer scope values than the agent's capabilities; each one must be covered by a capability, or the server answers 400 `invalid_scope` |
 
 ## Verify LumoAuth access tokens on an MCP server
 
@@ -414,6 +511,42 @@ nonce? })` is exported on its own for servers that bind tokens differently.
 Then ask LumoAuth whether the caller may run the tool with
 [`mcp.authorizeTool`](../../README.md#check-mcp-tool-calls), using
 `claims.sub` as the subject.
+
+## Verify a JIT token in your API
+
+The API that an agent calls with a JIT token checks it with
+`verifyJitToken()`. A JIT token is not an access token for your API: its
+`typ` is `JWT`, its `aud` is the organization slug, and the approval is in
+`permissions.authorization_details`. `verifyAccessToken()` refuses it.
+
+```ts
+import { verifyAccessToken, verifyJitToken, JitTokenError } from '@lumoauth/agent';
+
+const issuer = 'https://app.lumoauth.dev/orgs/acme-corp/api/v1';
+const caller = await verifyAccessToken(accessToken, { issuer, resource: 'https://files.example.com' });
+const jit = await verifyJitToken(req.headers['x-lumoauth-jit-token'], { issuer, orgId: 'acme-corp', caller });
+
+const allowed = jit.authorizationDetails.some(
+  (d) => d.type === 'file_access' && d.actions?.includes('read') && d.identifier === 'report_q4.pdf',
+);
+```
+
+It checks the signature against the organization's keys (read through the
+discovery document and cached), `typ`, `alg`, `iss`, `aud` = `orgId`,
+`jit: true`, the times, and that the token holds an approval. With `caller`
+(the verified access token of the same request) it also checks that the JIT
+token belongs to that caller: the same `sub` and the same agent. It returns
+`authorizationDetails`, `subject`, `agentId`, `taskId`, `requestId`,
+`expiresAt` and `claims`.
+
+A refused token throws `JitTokenError` with the `code` `invalid_jit_token`,
+`jit_token_not_for_caller` or `jwks_fetch_failed`. The rules are the same as
+in `@lumoauth/mcp` and the Python SDK.
+
+The token cannot show a revocation: the task was completed or suspended, or
+the agent was suspended. For an action with consequences, also call token
+introspection, for example `lumo.auth.introspectToken(token)` of
+`@lumoauth/backend`; it answers `active: false` for a revoked JIT token.
 
 ## AAuth: cryptographic agent identity
 
@@ -555,6 +688,8 @@ domain, and never from a default base URL:
 | Verification | `verifyAuthToken`, `decodeJwt` |
 | Errors | `AAuthError` |
 | DPoP (RFC 9449) | `DpopProofSigner`, `dpopAth`, `dpopHtu`, `buildDpopHeaders`, `fetchWithDpop`, `DPOP_SCHEME`, `DPOP_NONCE_HEADER`, `USE_DPOP_NONCE`, `attestWorkload` |
+| Capability matching | `normalizeCapability`, `capabilityCovers`, `anyCapabilityCovers` |
+| JIT token verification | `verifyJitToken`, `JitTokenError` |
 | Access token verification | `verifyAccessToken`, `createAccessTokenVerifier`, `verifyDpopProof`, `parseAuthorizationHeader`, `accessTokenScopes`, `AccessTokenError`, `JwksCache`, `InMemoryDpopReplayCache` |
 
 The signing code is tested byte for byte against the shared test vector in
@@ -574,12 +709,13 @@ most often are:
 | `LumoAuthApiError` | Sign-in failed: the server rejected the client credentials. `statusCode` holds the HTTP status |
 | `LumoAuthAuthenticationError` | A later call got 401, for example because the agent was suspended |
 | `LumoAuthPermissionDeniedError` | The server rejected the call. `requiredScopes` names a missing scope, when there is one |
-| `LumoAuthRateLimitError` | Too many requests. `retryAfter` holds the wait in seconds |
+| `LumoAuthRateLimitError` | Too many requests. `retryAfter` holds the wait in seconds (from a `Retry-After` of seconds or an HTTP date). The SDK does not retry by itself |
+| `LumoAuthBudgetExceededError` | The agent's budget is spent (429 `budget_exceeded`). It is a `LumoAuthRateLimitError`; `retryAfter` holds the seconds until the spent window ends. See [When the budget is spent](#when-the-budget-is-spent) |
 | `LumoAuthApprovalDeniedError`, `LumoAuthApprovalTimeoutError` | A person declined, or nobody answered in time |
 | `LumoAuthApprovalNotDeliveredError` | The approval prompt reached no device. `reason` is `email_fallback_sent` or `no_enrolled_device`, and `taskId` names the task |
-| `LumoAuthBudgetExceededError` | The agent ran out of budget |
 | `AAuthError` | An AAuth request or a token check failed |
 | `AccessTokenError` | `verifyAccessToken` refused a token or its DPoP proof. `code` is `invalid_token`, `invalid_dpop_proof` or `jwks_fetch_failed` |
+| `JitTokenError` | `verifyJitToken` refused a JIT token. `code` is `invalid_jit_token`, `jit_token_not_for_caller` or `jwks_fetch_failed` |
 
 ## Troubleshooting
 

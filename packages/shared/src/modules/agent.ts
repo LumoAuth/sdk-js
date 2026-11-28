@@ -29,6 +29,38 @@ export type {
  * the sibling `approvals` namespace.
  */
 
+/** Per-call options of `ask()`, `isAllowed()` and `authorizeMcpTool()`. */
+export interface AgentCallOptions {
+    /**
+     * W3C `traceparent` header of the caller's current span, for example
+     * `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`. LumoAuth
+     * writes its trace ID into the audit entries of the call, so they line up
+     * with the agent's own trace. A malformed value throws
+     * `LumoAuthValidationError` before any request.
+     */
+    traceparent?: string;
+    /** Abort the request. */
+    signal?: AbortSignal;
+}
+
+// W3C Trace Context: version-traceid-parentid-flags, as the server reads it
+// (TraceparentParser): version ff and all-zero ids are invalid.
+const TRACEPARENT = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/i;
+
+/** The `traceparent` header of one call, or `undefined`; throws for a malformed value. */
+function traceHeaders(options: AgentCallOptions | undefined): Record<string, string> | undefined {
+    const value = options?.traceparent;
+    if (value === undefined) return undefined;
+    const m = typeof value === 'string' ? TRACEPARENT.exec(value) : null;
+    if (!m || m[1].toLowerCase() === 'ff' || /^0+$/.test(m[2]) || /^0+$/.test(m[3])) {
+        throw new LumoAuthValidationError(
+            'traceparent must be a W3C trace context header: 00-<32 hex trace id>-<16 hex parent id>-<2 hex flags>',
+            [{ field: 'traceparent' }],
+        );
+    }
+    return { traceparent: value };
+}
+
 /** Decision returned by the Ask API (`POST /agents/ask`). */
 export interface AgentAskResult {
     allowed: boolean;
@@ -118,16 +150,23 @@ export class AgentsModule {
      * `ip`, `userAgent`, `requestMethod` and `requestPath` in `context` always
      * describe the request LumoAuth received. A value you pass under one of
      * those names is kept under `pep` instead (the same rule as ABAC).
+     *
+     * `options.traceparent` sends the W3C header, so the audit entries of the
+     * decision carry the caller's trace ID.
      */
     async ask(
         action: string,
         context?: Record<string, unknown>,
+        options?: AgentCallOptions,
     ): Promise<AgentAskResult> {
+        const headers = traceHeaders(options);
         const body: Record<string, unknown> = { action };
         if (context) body.context = context;
         return this.http.post<AgentAskResult>(
             this.http.path('agents.ask', { orgId: this.requireOrgId() }),
             body,
+            options?.signal,
+            headers,
         );
     }
 
@@ -135,8 +174,9 @@ export class AgentsModule {
     async isAllowed(
         action: string,
         context?: Record<string, unknown>,
+        options?: AgentCallOptions,
     ): Promise<boolean> {
-        const result = await this.ask(action, context);
+        const result = await this.ask(action, context, options);
         return result.allowed === true;
     }
 
@@ -195,14 +235,15 @@ export class AgentsModule {
      * @throws LumoAuthValidationError before any request when `serverId` or
      *         `tool` is not valid.
      */
-    async authorizeMcpTool(serverId: string, tool: string): Promise<AgentMcpToolDecision> {
+    async authorizeMcpTool(serverId: string, tool: string, options?: AgentCallOptions): Promise<AgentMcpToolDecision> {
         assertMcpName('serverId', serverId);
         assertMcpTool(tool);
+        const headers = traceHeaders(options);
         const path = this.http.path('agents.authorizeMcpTool', {
             orgId: this.requireOrgId(),
         });
         const body = await mcpDecision(() =>
-            this.http.post<Record<string, unknown>>(path, { server_id: serverId, tool }),
+            this.http.post<Record<string, unknown>>(path, { server_id: serverId, tool }, options?.signal, headers),
         );
         return {
             allowed: body.allowed === true,

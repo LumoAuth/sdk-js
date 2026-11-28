@@ -280,7 +280,7 @@ function modules(config, body) {
             ...config,
             clientId: 'agent-1',
             clientSecret: 'shh',
-            redirectUri: 'https://agent.example/callback',
+            application: { clientId: 'app-1', redirectUri: 'https://app.example.com/consent' },
             agentToken: () => 'agent-tok',
             fetch: r.fetch,
         }),
@@ -342,7 +342,7 @@ test('on a custom domain, every namespace sends prefix-less URLs to the domain, 
         assert.equal(authorize.origin + authorize.pathname, custom.url('oauth.authorize'));
         const logout = new URL(m.auth.buildEndSessionUrl({ postLogoutRedirectUri: 'https://app.example.com/' }));
         assert.equal(logout.origin + logout.pathname, custom.url('oauth.logout'));
-        const consent = new URL(m.delegation.getConsentUrl('s-2'));
+        const consent = new URL((await m.delegation.buildConsentUrl('s-2', { scopes: ['documents:read'] })).url);
         assert.equal(consent.origin + consent.pathname, custom.url('oauth.authorize'));
     }
 });
@@ -370,6 +370,7 @@ test('without a custom domain, the organization slug is still required', async (
     await assert.rejects(m.mcp.getToken('https://mcp.example.com/mcp'), LumoAuthConfigError);
     await assert.rejects(m.poppy.getSessionStatus('https://agent.example/agent.json', 'sid-1'), LumoAuthConfigError);
     assert.throws(() => m.delegation.getConsentUrl('s-1'), LumoAuthConfigError);
+    await assert.rejects(m.delegation.buildConsentUrl('s-1', { scopes: ['documents:read'] }), LumoAuthConfigError);
     assert.equal(m.calls.length, 0);
 });
 

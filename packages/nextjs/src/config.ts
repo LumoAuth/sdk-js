@@ -42,6 +42,15 @@ export interface LumoAuthNextConfig {
     scope?: string;
     /** Session cookie lifetime in seconds. @default 30 days */
     sessionMaxAge?: number;
+    /**
+     * Serve `GET {basePath}/session`, which hands the current access token to
+     * page scripts for `<LumoAuthNextProvider>` and its hooks. The refresh
+     * token and the ID token never leave the server. Set `false` when the
+     * browser does not call LumoAuth itself (only `auth()`, `currentUser()`,
+     * `protectPage()` and the middleware): the route then answers 404 and no
+     * token reaches JavaScript. @default true
+     */
+    sessionRoute?: boolean;
 }
 
 /** Environment variable behind each required value, for the error message. */
@@ -81,6 +90,7 @@ export function resolveConfig(overrides: Partial<LumoAuthNextConfig> = {}): Lumo
         afterSignInUrl: overrides.afterSignInUrl ?? '/',
         scope: overrides.scope ?? 'openid profile email',
         sessionMaxAge: overrides.sessionMaxAge ?? 60 * 60 * 24 * 30,
+        sessionRoute: overrides.sessionRoute ?? true,
     };
 
     // On a custom domain no address carries the organization slug.

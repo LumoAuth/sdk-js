@@ -117,10 +117,11 @@ Credentials and scopes are explained in the [client README](../client/README.md#
 | `clientSecret` | `string` | none | Needed for a confidential client. A public client leaves it out and relies on PKCE. |
 | `prefix` | `string` | `'/auth'` | Where the three routes are mounted |
 | `postLoginRedirect` | `string` | `'/'` | Where to go after sign-in when there is no `return_to` |
-| `postLogoutRedirect` | `string` | `'/'` | Where to go after sign-out. Use an absolute URL that is registered as a post-logout redirect URI on the OAuth client, so that sign-out also ends the LumoAuth session. A relative path only clears the local session. |
+| `postLogoutRedirect` | `string` | `'/'` | Where to go after sign-out. A path is resolved against the request's origin. Register the resulting absolute URL as a post-logout redirect URI on the OAuth client. See [Sign-out](#sign-out). |
 | `autoRefresh` | `boolean` | `true` | Refresh the access token when it expires in less than 60 seconds |
 | `endSessionOnLogout` | `boolean` | `true` | On sign-out, revoke the refresh token and end the LumoAuth session. `false` only clears the local session. |
 | `scope` | `string` | `'openid profile email'` | OAuth scopes to request. Add `authz:read` if the app lists the user's permissions, or `abac:read` for ABAC checks. The OAuth client must allow them. |
+| `authorizationParams` | object or `(req) => object` | none | More parameters for the authorization request, such as `organization`, `login_hint` or `prompt`. See [Add parameters to the authorization request](#add-parameters-to-the-authorization-request). |
 | `fetch` | `typeof fetch` | global `fetch` | A custom `fetch`, for tests or a proxy |
 
 `req.user` has this type, added to Express's `Request` for you:
@@ -147,11 +148,59 @@ interface SessionUser {
 | `/auth/logout` | GET or POST | Removes the LumoAuth data from the session, revokes the refresh token, and redirects through the LumoAuth end-session endpoint to `postLogoutRedirect` |
 | any other path | any | Refreshes the access token when needed, restores `req.user` from the session, then calls `next()` |
 
-The new session ID after sign-in prevents session fixation. Sign-out keeps your other session
-data. Call `req.session.destroy()` yourself if you want to remove everything.
+The new session ID after sign-in prevents session fixation. The middleware waits for the session
+store before it saves the tokens, so the tokens are only stored under the new ID. Data that your
+app put on the session before sign-in does not carry over to the new session. If the store fails
+at this step, nobody is signed in and the error goes to your Express error handler.
+
+Sign-out keeps your other session data. Call `req.session.destroy()` yourself if you want to
+remove everything.
 
 If `express-session` is not mounted first, every request fails with `500`
 `session_middleware_missing`.
+
+### Add parameters to the authorization request
+
+`authorizationParams` adds parameters to the request that `/auth/login` sends to LumoAuth. Give
+an object for values that never change, or a function that reads the request. A value of
+`undefined` is left out.
+
+```ts
+app.use(
+  lumoAuthMiddleware({
+    baseUrl: 'https://app.lumoauth.dev',
+    organization: 'acme-corp',
+    clientId: process.env.LUMOAUTH_CLIENT_ID!,
+    // /auth/login?org=globex signs the user in to the B2B organization "globex".
+    authorizationParams: (req) => ({
+      organization: typeof req.query.org === 'string' ? req.query.org : undefined,
+    }),
+  }),
+);
+```
+
+A function also covers a step-up for one sign-in: an API answers `401` with
+`insufficient_user_authentication` and names `acr_values` and `max_age` in its
+`WWW-Authenticate` header. Send the user to `/auth/login` with a marker of your
+own, and add the values only for that request:
+
+```ts
+authorizationParams: (req) =>
+  req.query.step_up === '1'
+    ? { acr_values: 'urn:lumoauth:acr:mfa', max_age: '300', resource: 'https://api.example.com' }
+    : {},
+// Then: res.redirect('/auth/login?step_up=1&return_to=/payouts');
+```
+
+`resource` makes the new access token one for that API (`aud`). Choose the
+values on your server; do not copy them from the query string of
+`/auth/login`, which any site can link to.
+
+The middleware sets some parameters itself, and `authorizationParams` cannot name them:
+`response_type`, `client_id`, `redirect_uri`, `scope` (use the `scope` option), `state`,
+`code_challenge`, `code_challenge_method` and `response_mode`. An object that names one throws
+`LumoAuthConfigError` when the middleware is created. A function that returns one makes
+`/auth/login` pass a `LumoAuthConfigError` to your Express error handler.
 
 ### Guard routes with requireAuth()
 
@@ -307,6 +356,7 @@ app.listen(8787);
 | `requiredScope` | `string \| string[]` | none | The scopes that the route needs |
 | `resource` | `string` | none | The resource identifier of your service, when it takes only tokens issued for it |
 | `allowReplay` | `boolean` | `false` | `true` accepts a Session JWT that was verified before |
+| `onError` | `(err, req) => void` | one `console.error` line | Called when a request could not be verified, before the personal agent gets `503`. `err.cause` is the SDK error |
 | `baseUrl`, `organization`, `clientId`, `clientSecret` | `string` | required without `lumo` | The LumoAuth host, the organization slug, and the credentials of the application that holds `poppy:verify` |
 | `customDomain` | `string` | none | The organization's own domain. It replaces `baseUrl` and `organization`. |
 | `lumo` | `LumoAuthBackend` | none | A server client that is configured with `clientId` and `clientSecret`. It replaces the four options above. |
@@ -333,14 +383,16 @@ sends no cookie and no other header, and it does not read the request body.
   for a signed-out request. Find account data with `req.poppy.account.sub`, never with `userId`.
 - **Refused.** LumoAuth returns the exact response for the personal agent. The middleware relays
   its status, its headers and its body unchanged, and the next handler does not run.
-- **An SDK error.** LumoAuth could not be reached, or it rejected your own application (401,
-  403, 404 or 429). Such an error is about your service, so the middleware never relays it. It
-  calls `next(err)` with a `LumoAuthError` that has a fixed message and no status. Express then
-  answers `500`. The original error is `err.cause`, for your logs.
+- **Not verified.** LumoAuth could not be reached, or it rejected your own application (401,
+  403, 404 or 429; a 404 while the Personal Agent Protocol is switched off for the
+  organization). Such an answer is about your service, so the middleware never relays it. The
+  personal agent gets `503` with `{"error":"temporarily_unavailable"}`, and the next handler does
+  not run. The `onError(err, req)` option gets a `LumoAuthError` with a fixed message and no
+  status; the SDK error is `err.cause`. Without `onError`, the middleware writes one
+  `console.error` line that names the cause.
 
-The wrapped error matters with Express's default error handler. That handler answers with the
-`statusCode` of an error, and outside production it prints the stack. An SDK error carries
-LumoAuth's status and message, and neither may reach the personal agent.
+A configuration error found at the first request (for example a `lumo` without client
+credentials) and any other error go to `next(err)`, so your error handler sees them.
 
 To verify a request yourself, call `lumo.poppy.verifyRequest()` and relay a refusal with
 `relayPoppyRefusal()`:
@@ -439,7 +491,7 @@ app.use((err, req, res, next) => {
 | `LumoAuthBackend` | The server client from `@lumoauth/backend` |
 | `PoppyModule`, `buildPoppyVerifyBody()`, `buildPoppyRelay()` | The `poppy` namespace and its two pure functions, from `@lumoauth/backend` |
 | Error classes | The SDK error classes, listed in [Errors](#errors) |
-| Types | `LumoAuthMiddlewareOptions`, `RequireAuthOptions`, `SessionUser`, `LumoAuthRequestHandler`, `LumoAuthBackendConfig`, `PoppySessionOptions`, `PoppyVerifier`, `PoppyVerification`, `PoppyVerified`, `PoppyRefused`, `PoppySession`, `PoppyAccount`, `PoppySessionStatus`, `PoppyEndSessionResult`, `PoppyVerifyOptions`, `PoppyModuleConfig` |
+| Types | `LumoAuthMiddlewareOptions`, `AuthorizationParams`, `RequireAuthOptions`, `SessionUser`, `LumoAuthRequestHandler`, `LumoAuthBackendConfig`, `PoppySessionOptions`, `PoppyVerifier`, `PoppyVerification`, `PoppyVerified`, `PoppyRefused`, `PoppySession`, `PoppyAccount`, `PoppySessionStatus`, `PoppyEndSessionResult`, `PoppyVerifyOptions`, `PoppyModuleConfig` |
 
 ## Troubleshooting
 
@@ -448,11 +500,12 @@ app.use((err, req, res, next) => {
 | `500 session_middleware_missing` | `express-session` is mounted after LumoAuth, or not at all. | Mount it first. |
 | The callback answers `400 invalid_state` | The session was lost between sign-in and callback. This happens with a new memory store after a restart, a cookie that the browser did not send back, or several servers without a shared store. | Use a shared session store. Check the session cookie's `secure` and `sameSite` settings. |
 | LumoAuth rejects the redirect URI | The callback URL that was built does not match a registered one. This is common behind a proxy. | Set `app.set('trust proxy', true)` and register the exact URL. |
+| After sign-out, the user stays on LumoAuth's "signed out" page | The post-logout address is not registered on the OAuth client. | Register the absolute address, for example `https://app.example.com/` for `postLogoutRedirect: '/'`. |
 | `403 insufficient_scope` from `requireAuth({ scopes })` | The token was not granted that scope. | Add the scope to the middleware's `scope` option, allow it on the client, and sign in again. |
 | `LumoAuthBackend` calls fail with `401` while using an `lmk_…` key | Organization API keys only work on the admin API, client registration and the authorization checks. ABAC, agent and JIT routes reject them. | Use the key for permission and Zanzibar checks only. |
 | A permission check in a handler answers for the wrong user | No subject was named, so the check answered for the credential's owner. | Pass `{ userId: req.user.sub }` as the third argument. |
 | A check with `userId` gets `403` `INSUFFICIENT_PERMISSIONS` | The key lacks the `authz:check` scope. | Add the scope to the key. |
-| A route behind `poppySession()` answers `500` for every request | The middleware could not verify. `err.cause` in your error handler names the reason: a wrong client secret, a missing `poppy:verify` scope, or the protocol switched off for the organization. | Fix the application's credentials or scopes. |
+| A route behind `poppySession()` answers `503` for every request | The middleware could not verify. The log line (or `err.cause` in `onError`) names the reason: a wrong client secret, a missing `poppy:verify` scope, or the protocol switched off for the organization (404). | Fix the application's credentials or scopes, or switch the protocol on. |
 | Every personal agent gets `invalid_session` with "signed for another URL (htu)" | `publicOrigin` is not the address that personal agents call. | Set `publicOrigin` to the public address, with the base path if a proxy adds one. |
 
 ### Token refresh
@@ -476,16 +529,23 @@ this off.
    `post_logout_redirect_uri`. LumoAuth ends its own session and sends the user back to
    `postLogoutRedirect`.
 
-The end-session step needs an absolute `postLogoutRedirect`, such as
-`https://app.example.com/`. Register it as a post-logout redirect URI on the OAuth client. With a
-relative path, the middleware still revokes the token, but it redirects straight to that path.
-The LumoAuth session then stays open, so the next sign-in may skip the login screen.
-Set `endSessionOnLogout: false` to only clear the local session.
+The end-session step needs an absolute address. A path such as `/` is resolved against the
+request's origin, the same origin that the callback address uses: `postLogoutRedirect: '/'` on
+`https://app.example.com` sends `https://app.example.com/`. Register that exact address as a
+post-logout redirect URI on the OAuth client. LumoAuth sends the user back only to a registered
+address; for any other, it ends its session and shows its own "signed out" page. Behind a proxy,
+set `app.set('trust proxy', …)` so that the origin comes from `X-Forwarded-Proto` and
+`X-Forwarded-Host`, as Express does for `req.protocol` and `req.host`.
+
+Set `endSessionOnLogout: false` to only clear the local session. A path then stays a local
+redirect.
 
 ## Limitations
 
 - There is no session endpoint for `cookieStorageAdapter` from `@lumoauth/client`. If a browser
-  app needs the token, add a same-origin route that returns `{ accessToken, idToken, expiresAt }`.
+  app needs the token, add a same-origin route that returns `{ accessToken, expiresAt }` from
+  the session (never the refresh token or the ID token), and point the adapter's
+  `logoutEndpoint` at `/auth/logout`.
 
 ## Versioning and compatibility
 

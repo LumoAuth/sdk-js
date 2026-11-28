@@ -9,13 +9,13 @@
 //   │   ├── LumoAuthPermissionDeniedError    (403, PERMISSION_DENIED, requiredScopes)
 //   │   ├── LumoAuthNotFoundError            (404, NOT_FOUND)
 //   │   └── LumoAuthRateLimitError           (429, RATE_LIMITED)
+//   │       └── LumoAuthBudgetExceededError  (429, BUDGET_EXCEEDED: body code `budget_exceeded`)
 //   ├── LumoAuthValidationError               (VALIDATION_ERROR)
 //   ├── LumoAuthConfigError                   (CONFIG_ERROR)
 //   ├── LumoAuthNetworkError                  (NETWORK_ERROR)
 //   ├── LumoAuthApprovalDeniedError           (APPROVAL_DENIED)
 //   ├── LumoAuthApprovalTimeoutError          (APPROVAL_TIMEOUT)
-//   ├── LumoAuthApprovalNotDeliveredError     (APPROVAL_NOT_DELIVERED, reason)
-//   └── LumoAuthBudgetExceededError           (BUDGET_EXCEEDED)
+//   └── LumoAuthApprovalNotDeliveredError     (APPROVAL_NOT_DELIVERED, reason)
 
 /**
  * Base error for all LumoAuth SDK errors.
@@ -115,8 +115,9 @@ export class LumoAuthRateLimitError extends LumoAuthApiError {
     /** Seconds to wait before retrying, from the `Retry-After` header (if sent). */
     public readonly retryAfter?: number;
 
-    constructor(message = 'Rate limited.', retryAfter?: number, body?: unknown) {
-        super(message, 'RATE_LIMITED', 429, body);
+    /** `code` is for subclasses (`LumoAuthBudgetExceededError`). */
+    constructor(message = 'Rate limited.', retryAfter?: number, body?: unknown, code = 'RATE_LIMITED') {
+        super(message, code, 429, body);
         this.name = 'LumoAuthRateLimitError';
         this.retryAfter = retryAfter;
     }
@@ -210,14 +211,72 @@ export class LumoAuthApprovalNotDeliveredError extends LumoAuthError {
 }
 
 /**
- * Thrown when an agent's budget policy blocks the requested action.
+ * Thrown when an agent's budget policy blocks the requested action: the
+ * server answers 429 with the body code `budget_exceeded`. `retryAfter` is
+ * the number of seconds until the spent window ends (the `Retry-After`
+ * header).
+ *
+ * It extends {@link LumoAuthRateLimitError}, so code that catches the
+ * rate-limit error keeps working.
  */
-export class LumoAuthBudgetExceededError extends LumoAuthError {
+export class LumoAuthBudgetExceededError extends LumoAuthRateLimitError {
     constructor(
         message = 'Agent budget exceeded.',
-        public readonly budget?: unknown
+        public readonly budget?: unknown,
+        retryAfter?: number,
+        body?: unknown
     ) {
-        super(message, 'BUDGET_EXCEEDED');
+        super(message, retryAfter, body, 'BUDGET_EXCEEDED');
         this.name = 'LumoAuthBudgetExceededError';
     }
+}
+
+/**
+ * The body code of an error answer: `code`, else `error` (the contract's
+ * `api_error_body_fields.code`). `undefined` when the body has neither.
+ */
+export function errorBodyCode(body: unknown): string | undefined {
+    if (typeof body !== 'object' || body === null) return undefined;
+    const b = body as Record<string, unknown>;
+    if (typeof b.code === 'string' && b.code !== '') return b.code;
+    if (typeof b.error === 'string' && b.error !== '') return b.error;
+    return undefined;
+}
+
+/**
+ * `Retry-After` in whole seconds (RFC 9110 §10.2.3): the header holds either
+ * a number of seconds or an HTTP date, which becomes the seconds from now
+ * (0 for a date in the past). `undefined` when the header is missing or
+ * holds neither. The SDK never waits or retries by itself.
+ */
+export function retryAfterSeconds(headers: { get(name: string): string | null } | undefined): number | undefined {
+    const raw = headers?.get?.('Retry-After')?.trim();
+    if (!raw) return undefined;
+    if (/^\d+$/.test(raw)) return Number(raw);
+    // IMF-fixdate, RFC 850 and asctime all start with the day name.
+    if (/^(mon|tue|wed|thu|fri|sat|sun)[a-z]*,? /i.test(raw)) {
+        // asctime carries no zone; HTTP dates are always GMT.
+        const at = Date.parse(/(gmt|utc)$/i.test(raw) ? raw : `${raw} GMT`);
+        if (!Number.isNaN(at)) return Math.max(0, Math.ceil((at - Date.now()) / 1000));
+    }
+    return undefined;
+}
+
+/**
+ * The error that the contract's `body_code_map` names for an error answer,
+ * or `undefined` when the status mapping applies. Today one entry: a 429
+ * whose body code is `budget_exceeded` is a
+ * {@link LumoAuthBudgetExceededError}. Every SDK path that reads an error
+ * answer asks this first.
+ */
+export function errorFromBodyCode(
+    status: number,
+    body: unknown,
+    message: string,
+    retryAfter?: number,
+): LumoAuthError | undefined {
+    if (status === 429 && errorBodyCode(body) === 'budget_exceeded') {
+        return new LumoAuthBudgetExceededError(message, undefined, retryAfter, body);
+    }
+    return undefined;
 }

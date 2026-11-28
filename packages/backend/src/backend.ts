@@ -5,7 +5,6 @@ import {
     type PermissionsModuleOptions,
     ZanzibarModule,
     AbacModule,
-    AuthModule,
     type AuthModuleConfig,
     AgentsModule,
     ApprovalsModule,
@@ -18,11 +17,12 @@ import {
 } from '@lumoauth/shared';
 import { createRequire } from 'node:module';
 import { assertServerOnly } from './guard';
+import { BackendAuthModule } from './auth';
 
 export interface LumoAuthBackendConfig {
     /**
-     * Base URL of your LumoAuth instance. Required unless `customDomain`
-     * is set.
+     * Base URL of your LumoAuth instance. Defaults to `LUMOAUTH_URL`.
+     * Required unless a custom domain is set.
      * @example "https://app.lumoauth.dev"
      */
     baseUrl?: string;
@@ -31,7 +31,9 @@ export interface LumoAuthBackendConfig {
      * Your organization's custom domain: a host name or an `https://`
      * origin. When set, every request goes to it and `baseUrl` is not used.
      * No path carries the `/orgs/{orgId}` segment, so `orgId` is not needed,
-     * and the issuer is the bare domain.
+     * and the issuer is the bare domain. Defaults to
+     * `LUMOAUTH_CUSTOM_DOMAIN`; a custom domain from either source wins over
+     * `baseUrl`.
      * @example "auth.acme.com"
      */
     customDomain?: string;
@@ -59,9 +61,10 @@ export interface LumoAuthBackendConfig {
 
     /**
      * OAuth client secret for confidential flows — required by
-     * `delegation` for the consent-code exchange and revocation, and by
+     * `delegation` for the consent-code exchange and revocation, by
      * `poppy`, whose calls authenticate with the client id and this secret
-     * (the application needs the `poppy:verify` scope).
+     * (the application needs the `poppy:verify` scope), and by
+     * `auth.clientCredentials()` and `auth.introspectToken()`.
      */
     clientSecret?: string;
 
@@ -79,6 +82,10 @@ export interface LumoAuthBackendConfig {
 
     /** Permission cache configuration; `false` disables caching. */
     cache?: boolean | PermissionsModuleOptions['cache'];
+}
+
+function envVar(name: string): string | undefined {
+    return (typeof process !== 'undefined' && process.env?.[name]) || undefined;
 }
 
 /**
@@ -132,8 +139,13 @@ export class LumoAuthBackend {
     public readonly zanzibar: ZanzibarModule;
     /** ABAC policy evaluation and attribute management. */
     public readonly abac: AbacModule;
-    /** OAuth 2.0 — token exchange and refresh, including confidential clients. */
-    public readonly auth: AuthModule;
+    /**
+     * OAuth 2.0 — code exchange, refresh and revocation, plus the server-only
+     * client credentials grant (`clientCredentials()`) and token
+     * introspection (`introspectToken()`), which use `clientId` and
+     * `clientSecret`.
+     */
+    public readonly auth: BackendAuthModule;
     /** Agent identity — ask/isAllowed, self-inspection, registration. */
     public readonly agents: AgentsModule;
     /** Push-approval-for-agent-actions. */
@@ -158,8 +170,17 @@ export class LumoAuthBackend {
     private readonly secretProvider: () => string | Promise<string>;
     private apiInstance: LumoAuthApiEscapeHatch | null = null;
 
-    constructor(config: LumoAuthBackendConfig) {
+    constructor(options: LumoAuthBackendConfig) {
         assertServerOnly('LumoAuthBackend');
+
+        // The address settings fall back to the environment, as in the other
+        // SDKs (sdk-contract custom-domain rules). An option wins over the
+        // variable of the same setting; an empty variable counts as unset.
+        const config: LumoAuthBackendConfig = {
+            ...options,
+            baseUrl: options.baseUrl || envVar('LUMOAUTH_URL'),
+            customDomain: options.customDomain || envVar('LUMOAUTH_CUSTOM_DOMAIN'),
+        };
 
         // Checks `customDomain` now. A custom domain wins over `baseUrl`.
         this.address = new LumoAuthAddress(config);
@@ -223,18 +244,24 @@ export class LumoAuthBackend {
             clientId: config.clientId ?? '',
             clientSecret: config.clientSecret,
             redirectUri: config.redirectUri,
+            // The configured OAuth client is an application: the person
+            // consents to it, and it redeems, refreshes and revokes.
+            application: config.clientId
+                ? { clientId: config.clientId, clientSecret: config.clientSecret, redirectUri: config.redirectUri }
+                : undefined,
             agentToken: this.secretProvider,
             fetch: config.fetch,
         });
 
-        const authConfig: AuthModuleConfig = {
+        const authConfig: AuthModuleConfig & { clientSecret?: string } = {
             baseUrl: this.baseUrl,
             customDomain,
             orgId,
             clientId: config.clientId ?? '',
             fetch: config.fetch,
+            clientSecret: config.clientSecret,
         };
-        this.auth = new AuthModule(authConfig);
+        this.auth = new BackendAuthModule(authConfig);
     }
 
     /**

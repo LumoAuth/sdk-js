@@ -27,6 +27,7 @@ import {
     type UserInfo,
     LumoAuthError,
     LumoAuthApiError,
+    LumoAuthConfigError,
 } from '@lumoauth/shared';
 
 // Re-exported so an Express app needs only this one install: the server
@@ -165,10 +166,13 @@ export interface LumoAuthMiddlewareOptions {
   /**
    * Where to redirect the user after sign-out. Default: `/`.
    *
-   * Use an absolute URL (for example `https://app.example.com/`) that is
-   * registered as a post-logout redirect URI on the OAuth client. Then
-   * sign-out also ends the LumoAuth session (see `endSessionOnLogout`). A
-   * relative path only clears the local session.
+   * A path such as `/` is resolved against the request's origin, the same
+   * origin that the callback address uses (Express's `trust proxy` setting
+   * decides whether `X-Forwarded-Proto` and `X-Forwarded-Host` count). The
+   * resulting absolute URL must be registered as a post-logout redirect URI
+   * on the OAuth client: sign-out ends the LumoAuth session too (see
+   * `endSessionOnLogout`), and LumoAuth sends the user back only to a
+   * registered address.
    */
   postLogoutRedirect?: string;
   /**
@@ -189,9 +193,61 @@ export interface LumoAuthMiddlewareOptions {
    */
   scope?: string;
   /**
+   * More parameters for the authorization request, for example
+   * `{ organization: 'acme-eu' }`, `login_hint` or `prompt`. Either an
+   * object or a function of the request (called on each `/auth/login`). A
+   * value of `undefined` is left out.
+   *
+   * The parameters that the middleware sets itself are refused with
+   * `LumoAuthConfigError`: `response_type`, `client_id`, `redirect_uri`,
+   * `scope` (use the `scope` option), `state`, `code_challenge`,
+   * `code_challenge_method`, and `response_mode` (the callback reads the
+   * query string). An object is checked when the middleware is created; the
+   * result of a function on each sign-in, where the error goes to the app's
+   * error handler.
+   */
+  authorizationParams?: AuthorizationParams | ((req: any) => AuthorizationParams); // eslint-disable-line @typescript-eslint/no-explicit-any
+  /**
    * Optional fetch override (for tests, instrumentation, custom proxies).
    */
   fetch?: typeof globalThis.fetch;
+}
+
+/** Extra parameters of the authorization request; `undefined` values are left out. */
+export type AuthorizationParams = Record<string, string | undefined>;
+
+/**
+ * Authorization request parameters that the middleware sets itself. A caller
+ * value would replace the PKCE challenge, the CSRF `state` or the callback
+ * address, so `authorizationParams` may not name them.
+ */
+const RESERVED_AUTHORIZATION_PARAMS = [
+  'response_type',
+  'client_id',
+  'redirect_uri',
+  'scope',
+  'state',
+  'code_challenge',
+  'code_challenge_method',
+  'response_mode',
+] as const;
+
+function checkAuthorizationParams(params: AuthorizationParams): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(params ?? {})) {
+    if (value === undefined) continue;
+    if ((RESERVED_AUTHORIZATION_PARAMS as readonly string[]).includes(name)) {
+      throw new LumoAuthConfigError(
+        `authorizationParams may not set "${name}": the middleware sets it` +
+          (name === 'scope' ? '. Use the scope option.' : '.'),
+      );
+    }
+    if (typeof value !== 'string') {
+      throw new LumoAuthConfigError(`authorizationParams.${name} must be a string.`);
+    }
+    out[name] = value;
+  }
+  return out;
 }
 
 export interface SessionUser {
@@ -250,6 +306,11 @@ export function lumoAuthMiddleware(opts: LumoAuthMiddlewareOptions): LumoAuthReq
   const scope = opts.scope ?? 'openid profile email';
   const autoRefresh = opts.autoRefresh ?? true;
   const endSessionOnLogout = opts.endSessionOnLogout ?? true;
+  // An object is checked now, so a wrong option fails at start-up.
+  const authorizationParams: (req: Req) => Record<string, string> =
+    typeof opts.authorizationParams === 'function'
+      ? (req) => checkAuthorizationParams((opts.authorizationParams as (r: Req) => AuthorizationParams)(req))
+      : ((fixed) => () => fixed)(checkAuthorizationParams(opts.authorizationParams ?? {}));
 
   // One refresh per refresh token at a time. Parallel requests on the same
   // session share it, so a rotating refresh token is redeemed only once.
@@ -307,11 +368,18 @@ export function lumoAuthMiddleware(opts: LumoAuthMiddlewareOptions): LumoAuthReq
     }
 
     if (req.method === 'GET' && path === `${prefix}/login`) {
-      await handleLogin(req, res, auth, prefix, scope, sessionState, postLoginRedirect);
+      let extraParams: Record<string, string>;
+      try {
+        extraParams = authorizationParams(req);
+      } catch (err) {
+        next(err);
+        return;
+      }
+      await handleLogin(req, res, auth, prefix, scope, sessionState, postLoginRedirect, extraParams);
       return;
     }
     if (req.method === 'GET' && path === `${prefix}/callback`) {
-      await handleCallback(req, res, auth, sessionState, opts.clientSecret);
+      await handleCallback(req, res, next, auth, sessionState, opts.clientSecret);
       return;
     }
     if (
@@ -337,6 +405,7 @@ async function handleLogin(
   scope: string,
   sessionState: LumoAuthSessionState,
   defaultReturnTo: string,
+  extraParams: Record<string, string>,
 ): Promise<void> {
   const redirectUri = absoluteUrl(req, `${prefix}/callback`);
   const returnTo = sanitizeReturnTo(req.query.return_to, defaultReturnTo);
@@ -344,6 +413,7 @@ async function handleLogin(
   const flow = await auth.buildAuthorizationUrl({
     redirectUri,
     scope,
+    extraParams,
   });
 
   // Persist what we'll need on callback. SameSite session cookie is the
@@ -362,6 +432,7 @@ async function handleLogin(
 async function handleCallback(
   req: Req,
   res: Res,
+  next: Next,
   auth: AuthModule,
   sessionState: LumoAuthSessionState,
   clientSecret: string | undefined,
@@ -391,6 +462,7 @@ async function handleCallback(
     return;
   }
 
+  let signedIn: LumoAuthSessionState;
   try {
     const tokens: TokenResponse = await auth.exchangeCodeForTokens({
       code,
@@ -401,28 +473,38 @@ async function handleCallback(
 
     const user = await fetchUserInfo(auth, tokens.access_token);
 
-    sessionState.tokens = {
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token,
-      id_token: tokens.id_token,
-      token_type: tokens.token_type ?? 'Bearer',
-      expires_at: nowSeconds() + (tokens.expires_in ?? 3600),
-      scope: tokens.scope,
+    signedIn = {
+      tokens: {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        id_token: tokens.id_token,
+        token_type: tokens.token_type ?? 'Bearer',
+        expires_at: nowSeconds() + (tokens.expires_in ?? 3600),
+        scope: tokens.scope,
+      },
+      user,
     };
-    sessionState.user = user;
-    delete sessionState.flow;
-
-    // Migrate the session id on auth — defends against fixation attacks.
-    regenerateSession(req);
-    saveSession(req, sessionState);
-
-    res.redirect(flow.returnTo);
   } catch (err) {
     const message = err instanceof LumoAuthError ? err.message : 'Token exchange failed';
     const status =
       err instanceof LumoAuthApiError ? err.statusCode ?? 502 : 502;
     res.status(status).json({ error: 'token_exchange_failed', error_description: message });
+    return;
   }
+
+  // Session fixation defence: the signed-in state goes only into a session
+  // with a new ID. Wait for the store, then write to the new `req.session`.
+  // When the store fails, nobody is signed in and the error goes to the
+  // app's error handler.
+  try {
+    await regenerateSession(req);
+  } catch (err) {
+    next(err);
+    return;
+  }
+  saveSession(req, signedIn);
+
+  res.redirect(flow.returnTo);
 }
 
 async function handleLogout(
@@ -465,15 +547,22 @@ async function handleLogout(
 
   // End the LumoAuth session too. Otherwise the next /authorize signs the
   // user straight back in. The end-session endpoint needs an absolute
-  // post-logout redirect URI, so a relative one keeps the local redirect.
-  if (!isAbsoluteHttpUrl(postLogoutRedirect)) {
+  // post-logout redirect URI: a path is resolved against the request's
+  // origin. Only when the request names no host does a path stay local.
+  const origin = requestOrigin(req);
+  const postLogoutRedirectUri = isAbsoluteHttpUrl(postLogoutRedirect)
+    ? postLogoutRedirect
+    : origin
+      ? new URL(postLogoutRedirect, `${origin}/`).toString()
+      : undefined;
+  if (!postLogoutRedirectUri) {
     res.redirect(postLogoutRedirect);
     return;
   }
   res.redirect(
     auth.buildEndSessionUrl({
       idTokenHint: tokens?.id_token,
-      postLogoutRedirectUri: postLogoutRedirect,
+      postLogoutRedirectUri,
     }),
   );
 }
@@ -560,13 +649,42 @@ async function fetchUserInfo(auth: AuthModule, accessToken: string): Promise<Ses
 }
 
 function absoluteUrl(req: Req, path: string): string {
-  // Honour standard reverse-proxy headers when present so the redirect URI
-  // matches what the registered OAuth client allows. The host app is
-  // expected to set `app.set('trust proxy', true)` if behind one.
-  const reqWithProto = req as Req & { protocol?: string; get?: (h: string) => string | undefined };
-  const proto = reqWithProto.protocol ?? 'https';
-  const host = reqWithProto.get?.('host') ?? '';
-  return `${proto}://${host}${path}`;
+  return `${requestOrigin(req) ?? `${requestProtocol(req)}://`}${path}`;
+}
+
+type ExpressLikeRequest = Req & {
+  protocol?: string;
+  get?: (header: string) => string | undefined;
+  app?: { get?: (setting: string) => unknown };
+  socket?: { remoteAddress?: string };
+  connection?: { remoteAddress?: string };
+};
+
+function requestProtocol(req: Req): string {
+  // Express's `req.protocol` already honours `X-Forwarded-Proto` when
+  // `trust proxy` trusts the peer.
+  return (req as ExpressLikeRequest).protocol ?? 'https';
+}
+
+/**
+ * The origin that the browser used, by Express's rule: the `Host` header,
+ * or the first `X-Forwarded-Host` value when the app's `trust proxy`
+ * setting trusts the peer (as Express 5's `req.host`; Express 4's
+ * `req.hostname` follows the same rule but drops the port). An app behind a
+ * proxy sets `app.set('trust proxy', …)`, so that the callback and
+ * post-logout addresses match the registered ones. `undefined` when the
+ * request names no host.
+ */
+function requestOrigin(req: Req): string | undefined {
+  const r = req as ExpressLikeRequest;
+  let host = r.get?.('host');
+  const forwarded = r.get?.('x-forwarded-host');
+  const trust = r.app?.get?.('trust proxy fn');
+  const peer = (r.socket ?? r.connection)?.remoteAddress;
+  if (forwarded && typeof trust === 'function' && trust(peer, 0)) {
+    host = forwarded.split(',')[0].trim();
+  }
+  return host ? `${requestProtocol(req)}://${host}` : undefined;
 }
 
 function sanitizeReturnTo(raw: unknown, fallback: string): string {
@@ -593,15 +711,18 @@ function saveSession(req: Req, state: LumoAuthSessionState): void {
   // express-session writes on response end; we don't force a flush here.
 }
 
-function regenerateSession(req: Req): void {
-  // express-session exposes `regenerate(cb)` — call it if available so we
-  // get a fresh session id post-auth (mitigates session fixation).
+/**
+ * Give the session a new ID (express-session's `regenerate(cb)`). The store
+ * destroys the old session and `req.session` becomes a new, empty object
+ * when the callback runs, so the caller must wait before it writes. Data
+ * that the app kept on the old session does not carry over. A session
+ * without `regenerate` (for example cookie-session, which has no ID) is
+ * left as it is.
+ */
+function regenerateSession(req: Req): Promise<void> {
   const sess = req.session as unknown as { regenerate?: (cb: (err?: unknown) => void) => void };
-  if (typeof sess?.regenerate === 'function') {
-    // Synchronous-style usage; we don't await because express-session's
-    // regenerate is callback-based and most apps don't need the new id
-    // until the next response. The session.save() that express-session
-    // calls on res.end() will pick up the new state.
-    sess.regenerate(() => {});
-  }
+  if (typeof sess?.regenerate !== 'function') return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    sess.regenerate!((err) => (err ? reject(err) : resolve()));
+  });
 }

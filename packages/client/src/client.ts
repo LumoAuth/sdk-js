@@ -49,9 +49,11 @@ export interface LumoAuthConfig {
     token?: string | (() => string | Promise<string>);
 
     /**
-     * Authentication strategy.
-     * - `'pkce'` — OAuth 2.0 Authorization Code + PKCE (default, recommended for SPAs)
-     * - `'password'` — Resource Owner Password Credentials grant (legacy)
+     * Authentication strategy. The client reads it nowhere: it signs in with
+     * the authorization code flow and PKCE.
+     * - `'pkce'` — OAuth 2.0 Authorization Code + PKCE (default)
+     * - `'password'` — deprecated. LumoAuth does not offer the resource owner
+     *   password grant (`unsupported_grant_type`).
      *
      * @default 'pkce'
      */

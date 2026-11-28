@@ -44,7 +44,7 @@ test('clear() does not throw when the request fails', async () => {
     await inBrowser(() => storage.clear());
 });
 
-test('get() reads the session and never returns a refresh token', async () => {
+test('get() reads the session and never returns a refresh token or an ID token', async () => {
     const storage = cookieStorageAdapter({
         sessionEndpoint: '/api/auth/session',
         fetch: async () => ({
@@ -53,5 +53,15 @@ test('get() reads the session and never returns a refresh token', async () => {
         }),
     });
     const tokens = await inBrowser(() => storage.get());
-    assert.deepEqual(tokens, { accessToken: 'at', refreshToken: null, idToken: 'idt', expiresAt: 123 });
+    // An older route handler still sends the ID token; the sign-out goes
+    // through the server now, so the page never keeps it.
+    assert.deepEqual(tokens, { accessToken: 'at', refreshToken: null, idToken: null, expiresAt: 123 });
+});
+
+test('the cookie adapter names its sign-out address and is not a token-sharing store', () => {
+    const storage = cookieStorageAdapter({ logoutEndpoint: '/api/auth/logout' });
+    assert.equal(storage.signOutUrl, '/api/auth/logout');
+    assert.equal(storage.serverManaged, true);
+    assert.notEqual(storage.broadcastTokens, true);
+    assert.equal(storage.survivesReload, true);
 });

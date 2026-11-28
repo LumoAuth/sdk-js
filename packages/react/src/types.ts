@@ -70,8 +70,12 @@ export interface LumoAuthProviderProps {
     clientId: string;
     /**
      * Authentication strategy.
-     * - `'pkce'` — OAuth 2.0 Authorization Code + PKCE (default, recommended)
-     * - `'password'` — Resource Owner Password Credentials grant (legacy)
+     * - `'pkce'` — OAuth 2.0 Authorization Code + PKCE (default). The only
+     *   mode that signs anyone in.
+     * - `'password'` — deprecated. It uses the resource owner password grant,
+     *   which LumoAuth does not offer: `signIn(email, password)` fails with
+     *   `unsupported_grant_type`, and `signUp()` throws. The provider logs a
+     *   warning once. Kept only so that existing code still compiles.
      *
      * @default 'pkce'
      */
@@ -205,6 +209,14 @@ export interface ProtectProps {
 export interface AuthCallbackProps {
     /** URL to redirect after successful authentication (defaults to afterSignInUrl) */
     afterSignInUrl?: string;
+    /**
+     * Go to the page after sign-in with your router, for example
+     * `navigate={(to) => router.replace(to)}`, instead of a full page load.
+     * Without it, a store that survives a reload (the default) gets a full
+     * page load; the memory store gets `history.replaceState` plus a
+     * `popstate` event, so that its tokens are not lost.
+     */
+    navigate?: (url: string) => void;
     /** Custom loading component */
     loading?: React.ReactNode;
     /** Custom error component */
@@ -347,6 +359,39 @@ export interface TokenState {
 
 // ─── Context Value ────────────────────────────────────────────────────
 
+/** Options of `signInWithRedirect()`, sent as authorization request parameters. */
+export interface SignInWithRedirectOptions {
+    /**
+     * `login_hint`: the address (or username) to fill in on the sign-in page,
+     * for example the one that your own form collected.
+     */
+    loginHint?: string;
+    /**
+     * `prompt`, sent as it is: `'login'` (ask for the credentials again),
+     * `'consent'`, `'select_account'`, `'create'` (the sign-up page) or
+     * `'none'` (no page: the callback gets `login_required` when nobody is
+     * signed in). Several values are separated by spaces; `'none'` stands
+     * alone.
+     */
+    prompt?: string;
+    /**
+     * `acr_values`: the authentication level to ask for, for example
+     * `'urn:lumoauth:acr:mfa'` for a second factor. Use it for one sign-in,
+     * the step-up that an API asked for in its `WWW-Authenticate` challenge.
+     */
+    acrValues?: string;
+    /**
+     * `max_age`: the most seconds since the user last signed in. `0` asks for
+     * the credentials again now.
+     */
+    maxAge?: number;
+    /**
+     * `resource` (RFC 8707): the absolute URL of the API that the access
+     * token is for. It becomes the token's `aud`.
+     */
+    resource?: string;
+}
+
 export interface LumoAuthContextValue extends AuthState {
     /**
      * Sign in.
@@ -354,8 +399,13 @@ export interface LumoAuthContextValue extends AuthState {
      * - **Password mode:** Call with `(email, password)` for inline sign-in.
      */
     signIn: (email?: string, password?: string) => Promise<void> | void;
-    /** Sign in by redirecting to the LumoAuth authorization endpoint (PKCE). */
-    signInWithRedirect: () => void;
+    /**
+     * Sign in by redirecting to the LumoAuth authorization endpoint (PKCE).
+     * `loginHint` fills in the address on the sign-in page (`login_hint`);
+     * `prompt` is sent as it is, for example `'login'` to ask for the
+     * credentials again although a session exists.
+     */
+    signInWithRedirect: (options?: SignInWithRedirectOptions) => void;
     /** Sign in with a social provider using PKCE. */
     signInWithSocial: (provider: string) => void;
     /** Sign up with email, password, and optional name (password mode only). */
@@ -409,5 +459,10 @@ export interface LumoAuthContextValue extends AuthState {
         afterSignInUrl?: string;
         afterSignUpUrl?: string;
         afterSignOutUrl?: string;
+        /**
+         * `false` for a store that a page load empties (the memory store):
+         * `<AuthCallback>` then finishes without a reload.
+         */
+        tokensSurviveReload: boolean;
     };
 }

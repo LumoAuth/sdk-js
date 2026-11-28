@@ -171,14 +171,17 @@ export class AbacModule {
     // ── User attributes ───────────────────────────────────────────────
 
     /**
-     * Get all ABAC attributes for the currently authenticated user.
-     * Includes built-in attributes (roles, groups, email, etc.) and custom attributes.
+     * Get all ABAC attributes for the currently authenticated user. The
+     * answer is `{ user_id, attributes }`: `attributes` holds the built-in
+     * attributes (`email`, `roles`, `groups`, `permissions`, …), `trait_<key>`
+     * entries and the organization's custom attributes by slug.
      *
      * @example
      * ```ts
-     * const attrs = await client.abac.getMyAttributes();
-     * console.log(attrs.department);       // "engineering"
-     * console.log(attrs.clearance_level);  // 3
+     * const { user_id, attributes } = await client.abac.getMyAttributes();
+     * console.log(attributes.department);       // "engineering"
+     * console.log(attributes.clearance_level);  // 3
+     * console.log(attributes.roles);            // ["editor"]
      * ```
      */
     async getMyAttributes(): Promise<AbacUserAttributesResponse> {

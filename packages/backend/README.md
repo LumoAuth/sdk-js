@@ -20,6 +20,7 @@ sure that it is the package that you need? See
 - [Configuration](#configuration)
 - [Use a custom domain](#use-a-custom-domain)
 - [Namespaces](#namespaces)
+- [Tokens for the application itself](#tokens-for-the-application-itself)
 - [Verify requests from personal agents](#verify-requests-from-personal-agents)
 - [The `api` escape hatch](#the-api-escape-hatch)
 - [Security model](#security-model)
@@ -110,12 +111,12 @@ from `@lumoauth/agent`.
 
 | Option | Type | Required | Description |
 |---|---|---|---|
-| `baseUrl` | `string` | yes, unless `customDomain` is set | The LumoAuth host, for example `https://app.lumoauth.dev` |
-| `customDomain` | `string` | no | The organization's own domain, for example `auth.acme.com`. See [Use a custom domain](#use-a-custom-domain) |
+| `baseUrl` | `string` | yes, unless a custom domain is set; defaults to `LUMOAUTH_URL` | The LumoAuth host, for example `https://app.lumoauth.dev` |
+| `customDomain` | `string` | no; defaults to `LUMOAUTH_CUSTOM_DOMAIN` | The organization's own domain, for example `auth.acme.com`. See [Use a custom domain](#use-a-custom-domain) |
 | `secretKey` | `string \| () => string \| Promise<string>` | yes | The credential, as described above. A function is called before each request. Load secrets from the environment. Never put them in code or in `NEXT_PUBLIC_*` or `VITE_*` variables |
 | `orgId` | `string` | for org-scoped calls, unless `customDomain` is set | The organization slug. `abac`, `agents`, `approvals`, `jit`, `mcp`, `delegation` and `poppy` need it |
 | `clientId` | `string` | for `auth`, `delegation` and `poppy` | The OAuth client ID |
-| `clientSecret` | `string` | for `delegation` and `poppy` | The OAuth client secret. `delegation` uses it for the consent-code exchange and for revocation. `poppy` authenticates with the client ID and this secret, and the application needs the `poppy:verify` scope |
+| `clientSecret` | `string` | for `delegation`, `poppy`, `auth.clientCredentials()` and `auth.introspectToken()` | The OAuth client secret. `delegation` uses it for the consent-code exchange and for revocation. `poppy` authenticates with the client ID and this secret, and the application needs the `poppy:verify` scope. The two `auth` calls send it as `client_secret` |
 | `redirectUri` | `string` | for `delegation` | The callback URL of the delegation consent flow |
 | `timeout` | `number` | no | Request timeout in milliseconds. Default 30 000 |
 | `fetch` | `typeof fetch` | no | A custom `fetch` |
@@ -124,8 +125,12 @@ from `@lumoauth/agent`.
 
 The constructor throws `LumoAuthConfigError` when `secretKey` is missing,
 when both `baseUrl` and `customDomain` are missing, or when `customDomain` is
-malformed. Nothing is read from the environment. By convention the values
-come from `LUMOAUTH_URL`, `LUMOAUTH_CUSTOM_DOMAIN` and `LUMOAUTH_SECRET_KEY`.
+malformed. Two settings fall back to the environment, as in the other
+LumoAuth SDKs: `baseUrl` to `LUMOAUTH_URL` and `customDomain` to
+`LUMOAUTH_CUSTOM_DOMAIN`. An option wins over the variable of the same
+setting, an empty variable counts as unset, and a custom domain from either
+source wins over `baseUrl`. Every other value, the `secretKey` included, comes
+only from the configuration; by convention from `LUMOAUTH_SECRET_KEY`.
 
 ## Use a custom domain
 
@@ -166,10 +171,10 @@ it without the segment.
 | `permissions` | RBAC checks for the credential's subject | `check`, `checkDetailed`, `checkBulk`, `checkAny`, `checkAll`, `checkAnyDetailed`, `checkAllDetailed`, `list`, `listSlugs`, `clearCache` |
 | `zanzibar` | Relationship checks | `check`, `checkDetailed`, `expand`, `isViewer`, `isEditor`, `isOwner`, `isMember`, `isAdmin` |
 | `abac` | Attribute-based decisions and attributes | `check`, `isAllowed`, `checkBulk`, `getMyAttributes`, `setUserAttribute`, `getResourceAttributes`, `setResourceAttribute`, `getAttributeDefinitions` |
-| `auth` | OAuth 2.0 flows on the server | `buildAuthorizationUrl`, `exchangeCodeForTokens`, `refreshToken`, `revokeToken`, `getUserInfo`, `passwordGrant` |
+| `auth` | OAuth 2.0 flows on the server | `buildAuthorizationUrl`, `exchangeCodeForTokens`, `refreshToken`, `revokeToken`, `getUserInfo`, `clientCredentials`, `introspectToken`, `tokenExchange`. See [Tokens for the application itself](#tokens-for-the-application-itself). `passwordGrant` is deprecated: LumoAuth does not offer the password grant |
 | `agents` | Agent identity | `ask`, `isAllowed`, `me`, `getCurrentAgent`, `capabilities`, `budget`, `register` |
 | `approvals` | Push approval for agent actions (agent credentials only) | `require`, `create`, `getStatus`, `wait` |
-| `delegation` | Act for a user with RFC 8693 token exchange | `getConsentUrl`, `handleConsentCallback`, `setUserToken`, `exchange`, `request`, `delegateToSubAgent`, `revoke`, `revokeAll` |
+| `delegation` | Act for a user with RFC 8693 token exchange | `buildConsentUrl`, `handleConsentCallback`, `setUserToken`, `exchange`, `request`, `delegateToSubAgent`, `revoke`, `revokeAll`. The consent, the code redemption and `revoke()` use `clientId`, `clientSecret` and `redirectUri` of the configuration (the application). `getConsentUrl` is deprecated and throws |
 | `jit` | Just-in-time permissions | `createTask`, `requestPermission`, `getRequestStatus`, `getToken`, `evaluateTask`, `completeTask`, `listPendingRequests` |
 | `mcp` | Secured MCP servers | `getToken`, `getTokenDetailed`. The server ID is the MCP server's https URL, which becomes the token's `aud`. `authorizeTool({ serverId, subject, tool })` checks one tool call. The `secretKey` must be the MCP server's own client-credentials token with `mcp:authorize`. A deny returns `allowed: false` |
 | `poppy` | Requests from personal agents (Personal Agent Protocol) | `verifyRequest`, `getSessionStatus`, `endSession`. The calls send `clientId` and `clientSecret` with HTTP Basic, never `secretKey`. A refusal returns `active: false` with the response to relay |
@@ -184,6 +189,74 @@ the error classes:
 ```ts
 import { LumoAuthBackend, LumoAuthPermissionDeniedError } from '@lumoauth/backend';
 ```
+
+## Tokens for the application itself
+
+`lumo.auth.clientCredentials()` gets an access token for the application
+(the OAuth 2.0 client credentials grant). `lumo.auth.introspectToken()` asks
+LumoAuth whether a token is active (RFC 7662). Both authenticate with
+`clientId` and `clientSecret` from the configuration, never with
+`secretKey`.
+
+```ts
+const lumo = new LumoAuthBackend({
+  baseUrl: process.env.LUMOAUTH_URL!,
+  orgId: 'acme-corp',
+  secretKey: process.env.LUMOAUTH_SECRET_KEY!,
+  clientId: process.env.LUMOAUTH_CLIENT_ID!,
+  clientSecret: process.env.LUMOAUTH_CLIENT_SECRET!,
+});
+
+// A token for one API: `aud` is that address.
+const { access_token } = await lumo.auth.clientCredentials({
+  scope: 'reports:read',
+  resource: 'https://reports.example.com',
+});
+
+// Is a token still active?
+const info = await lumo.auth.introspectToken(access_token);
+if (!info.active) {
+  // Expired, revoked, unknown, or issued to another application.
+}
+```
+
+| Option | Of | Description |
+|---|---|---|
+| `scope` | `clientCredentials` | A space-separated string or a list. Without it the token carries the application's default scopes |
+| `resource` | `clientCredentials` | The address of the API that the token is for (RFC 8707). It becomes the token's `aud`. Without it `aud` is the client ID. One value only. When the application lists audience URIs, the address must be one of them or start with one, or the server answers `invalid_target` |
+| `tokenTypeHint` | `introspectToken` | `access_token` or `refresh_token` |
+| `clientSecret` | both | Another secret than the one in the configuration |
+
+`introspectToken()` returns the RFC 7662 answer: `active`, and for an active
+token `scope`, `client_id`, `sub`, `exp`, `aud` and the other members that
+are known. LumoAuth answers only about tokens that were issued to the calling
+application, or whose `aud` names it. Any other token is `{ active: false }`.
+
+Both calls throw `LumoAuthConfigError` without `clientId` or a client
+secret, and `LumoAuthApiError` when the server refuses. `code` is the
+server's `error`, for example `invalid_client` for a wrong secret or
+`invalid_scope`.
+
+`lumo.auth.tokenExchange()` exchanges a token as the application (RFC 8693),
+for example a user's token for a narrower one for another API. It
+authenticates the application with `client_secret_post` (the default),
+`client_secret_basic`, or `private_key_jwt` with a `clientAssertion`. The
+application needs token exchange switched on.
+
+```ts
+const { access_token } = await lumo.auth.tokenExchange({
+  subjectToken: userAccessToken,       // issued to this application
+  resource: 'https://inventory.example.com',
+  scope: 'inventory:read',
+  clientAuthentication: 'client_secret_basic',
+});
+```
+
+Without `actorToken` the new token names the same user, and its `client_id`
+is this application. With `actorToken` (a user or agent token) it also carries
+an `act` claim. An application's own client credentials token is refused as
+actor (`invalid_grant`). An agent that acts for a user uses
+`lumo.delegation.exchange()` instead.
 
 ## Verify requests from personal agents
 

@@ -159,16 +159,19 @@ The full scope table is in the [client README](../client/README.md#scopes).
 | `afterSignInUrl` | `string` | `'/'` | Where `<AuthCallback>` sends the user after sign-in |
 | `afterSignUpUrl` | `string` | none | Where to go after sign-up |
 | `afterSignOutUrl` | `string` | `'/'` | Where to go after sign-out. Register it as a post-logout redirect URI on the client. |
-| `authStrategy` | `'pkce' \| 'password'` | `'pkce'` | See [Sign-in strategies](#sign-in-strategies) |
+| `authStrategy` | `'pkce' \| 'password'` | `'pkce'` | Keep `'pkce'`. `'password'` is deprecated and cannot sign in. See [Sign-in strategies](#sign-in-strategies) |
 | `storage` | `TokenStorage` | `sessionStorage` in a browser, memory on a server | Where tokens are stored. Import an adapter from `@lumoauth/client`. |
-| `crossTab` | `boolean` | `true` | Share the session across tabs. One tab does each refresh, and the others receive the result. |
+| `crossTab` | `boolean` | `true` | Share the session across tabs. A sign-out signs every tab out, and one tab does each refresh. Tokens cross only with the web-storage adapters. See the [client README](../client/README.md#choose-where-tokens-are-stored). |
 | `children` | `ReactNode` | required | Your app |
 
 **Where tokens are stored.** The default, `sessionStorage`, keeps one session per tab and clears
 it when the tab closes. `localStorageAdapter()` shares the session across tabs and browser
-restarts. `cookieStorageAdapter()` keeps tokens in an httpOnly cookie that scripts cannot read,
-which is the only option that protects them from cross-site scripting. It needs a same-origin
-server that serves a session endpoint, such as the one in `@lumoauth/nextjs`. The
+restarts. `memoryStorageAdapter()` keeps the tokens in this tab only; a reload signs the user
+out, and `<AuthCallback>` finishes the sign-in without a reload (pass `navigate` to use your
+router). `cookieStorageAdapter()` keeps the refresh token and the ID token in an httpOnly cookie
+on your server, and the server's session endpoint gives the page the access token. It needs a
+same-origin server with that endpoint, such as `createRouteHandler()` of `@lumoauth/nextjs`.
+With it, `signOut()` goes to the server's logout route. The
 [client README](../client/README.md#choose-where-tokens-are-stored) compares the adapters.
 
 ```tsx
@@ -216,8 +219,8 @@ addresses of your app, so a custom domain does not change them.
 ### Sign-in and sign-up
 
 **`<SignIn>`** renders a sign-in card. In PKCE mode it shows social buttons, if you list any, and
-a button that redirects to the LumoAuth sign-in page. In password mode it shows an email and
-password form.
+a button that redirects to the LumoAuth sign-in page. In the deprecated password mode it shows an
+email and password form, which cannot sign in (see [Sign-in strategies](#sign-in-strategies)).
 
 ```tsx
 <SignIn afterSignInUrl="/dashboard" signUpUrl="/sign-up" socialProviders={['google', 'github']} />
@@ -261,7 +264,10 @@ code for tokens, loads the user and redirects.
 ### User
 
 **`<UserButton>`** shows the user's avatar with a menu for the account and sign-out. It renders
-nothing when nobody is signed in.
+nothing when nobody is signed in. **Manage account** opens the hosted account page. On the LumoAuth
+host the link carries `?orgId=<orgId>` (as does the **Forgot password?** link of `<SignIn>`), so that
+a person whose LumoAuth session has ended reaches your organization's sign-in page there. On a custom
+domain the domain names the organization, and the links carry no parameter.
 
 ```tsx
 <UserButton showName afterSignOutUrl="/" />
@@ -389,8 +395,8 @@ return <button onClick={() => signOut()}>Sign out {user!.displayName}</button>;
 | `status` | `'loading' \| 'authenticated' \| 'unauthenticated'` | Session status |
 | `isLoaded` | `boolean` | The first session check has finished |
 | `isSignedIn` | `boolean` | A user is signed in |
-| `signIn(email?, password?)` | function | PKCE mode: call with no arguments to redirect to LumoAuth. Password mode: pass the email and password. |
-| `signInWithRedirect()` | function | Starts the PKCE redirect in either mode |
+| `signIn(email?, password?)` | function | PKCE mode: call with no arguments to redirect to LumoAuth. The deprecated password mode sends the password grant, which LumoAuth refuses. |
+| `signInWithRedirect(options?)` | function | Starts the PKCE redirect in either mode. `loginHint` and `prompt` become `login_hint` and `prompt`; see [Sign-in strategies](#sign-in-strategies) |
 | `signInWithSocial(provider)` | function | Starts the PKCE redirect straight to a social provider, such as `'google'` |
 | `signUp(params)` | function | PKCE mode: sends the user to the registration page. Password mode: throws, because inline registration is not available. |
 | `signOut({ afterSignOutUrl? })` | function | Revokes the access token, clears local tokens, and ends the LumoAuth session through the logout endpoint |
@@ -654,16 +660,42 @@ const appearance = {
 route. This is the right choice for browser apps. LumoAuth handles passwords, passkeys, social
 sign-in and MFA on that page.
 
-**Password.** `authStrategy="password"` shows an email and password form in `<SignIn>` and uses
-the older resource-owner password grant. The organization must allow it. Use PKCE for new apps.
+**Password (deprecated, does not work).** `authStrategy="password"` uses the resource owner
+password grant, which LumoAuth does not offer. `signIn(email, password)` fails with
+`unsupported_grant_type`, and `signUp()` throws. The provider logs a warning once. The mode is
+kept only so that existing code still compiles: use PKCE.
+
+**Your own email field.** Collect the address in your app and pass it to the sign-in page with
+`signInWithRedirect({ loginHint })`. The user goes on with the hosted page, which already has
+the address:
 
 ```tsx
-<LumoAuthProvider domain="https://app.lumoauth.dev" orgId="acme-corp" clientId="abc" authStrategy="password">
+const { signInWithRedirect } = useSignIn();
+<button onClick={() => signInWithRedirect({ loginHint: email })}>Continue</button>
 ```
 
-To keep your own form but still use PKCE, call `useLumoAuth().auth.loginWithPassword()` and then
-`signIn()`. The [client README](../client/README.md#passwordless-email-first-and-embedded-sign-in)
-explains the flow, and the example app shows it on its `/embedded` page.
+`signInWithRedirect()` takes these options. They become parameters of the authorization request:
+
+| Option | Parameter | Description |
+|---|---|---|
+| `loginHint` | `login_hint` | The address or username to fill in on the sign-in page |
+| `prompt` | `prompt` | Sent as it is: `'login'` asks for the credentials again although a session exists, `'consent'` shows the consent page, `'select_account'`, `'create'` opens the sign-up page, `'none'` shows no page (the callback gets `login_required` when nobody is signed in) |
+| `acrValues` | `acr_values` | The authentication level, for example `'urn:lumoauth:acr:mfa'` for a second factor |
+| `maxAge` | `max_age` | The most seconds since the user last signed in; `0` asks again now |
+| `resource` | `resource` | The absolute URL of the API that the access token is for (RFC 8707). It becomes the token's `aud` |
+
+The options apply to that one redirect. For a step-up, pass what the API named in its `401`
+`insufficient_user_authentication` challenge:
+
+```tsx
+signInWithRedirect({ acrValues: 'urn:lumoauth:acr:mfa', maxAge: 300, resource: 'https://api.example.com' });
+```
+
+A password form on your own page cannot sign in through LumoAuth from another origin:
+`useLumoAuth().auth.loginWithPassword()` works only from a page on LumoAuth's own origin, such as
+your organization's custom domain. The
+[client README](../client/README.md#passwordless-email-first-and-embedded-sign-in) explains that
+flow.
 
 ## Errors
 
@@ -712,6 +744,7 @@ The prop and return types are exported too, for example `LumoAuthProviderProps`,
 | The callback fails with a redirect URI error | `redirectUri` does not match a registered redirect URI exactly. | Register `<origin>/auth/callback`, or pass the registered value as `redirectUri`. |
 | After sign-out, the user is signed straight back in | `afterSignOutUrl` is not a registered post-logout redirect URI, so the LumoAuth session did not end. | Register the URL on the OAuth client. |
 | `signUp()` throws in password mode | Inline registration is not available. | Use PKCE mode, which sends the user to the registration page. |
+| `signIn(email, password)` fails with `unsupported_grant_type`, and the console warns about `authStrategy="password"` | LumoAuth does not offer the password grant. | Remove `authStrategy="password"`. Use `signInWithRedirect({ loginHint: email })` to keep your own email field. |
 | The page shows signed-out content first, then the user | A client-side provider must load the session after the page renders. | Use `@lumoauth/nextjs` for server-rendered sessions. |
 
 ## Versioning and compatibility

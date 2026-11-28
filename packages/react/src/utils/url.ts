@@ -40,3 +40,46 @@ export function sanitizeRedirectUrl(url: string | null | undefined, defaultUrl =
         return defaultUrl;
     }
 }
+
+/**
+ * Go to the page after sign-in. With `navigate` (the app's router), use it.
+ * For a store that a page load empties (memory), change the address in place
+ * and send `popstate`, so that a client router renders the page and the
+ * tokens stay. Otherwise a full page load, as before.
+ */
+export function goAfterSignIn(
+    target: string,
+    options: { navigate?: (url: string) => void; tokensSurviveReload: boolean },
+): void {
+    if (options.navigate) {
+        options.navigate(target);
+        return;
+    }
+    if (!options.tokensSurviveReload) {
+        window.history.replaceState(window.history.state, '', target);
+        window.dispatchEvent(
+            typeof PopStateEvent === 'function'
+                ? new PopStateEvent('popstate', { state: window.history.state })
+                : new Event('popstate'),
+        );
+        return;
+    }
+    window.location.href = target;
+}
+
+/**
+ * The address of a hosted account page (`/account/profile`,
+ * `/account/forgot-password`). On the LumoAuth host it carries
+ * `?orgId=<organization>`, so that a person who is not signed in there is
+ * sent to the organization's sign-in page, not the platform one. A custom
+ * domain names the organization by itself and gets no parameter (its
+ * `/orgs/…` addresses do not exist).
+ */
+export function accountPageUrl(
+    config: { domain: string; orgId: string; customDomain?: string },
+    path: string,
+): string {
+    const url = `${config.domain.replace(/\/+$/, '')}${path}`;
+    if (config.customDomain || !config.orgId) return url;
+    return `${url}?${new URLSearchParams({ orgId: config.orgId }).toString()}`;
+}

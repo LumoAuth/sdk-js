@@ -676,9 +676,11 @@ try {
 ```
 
 To send the request without waiting, call `approvals.create()`. It returns
-`status: 'pending'` with a `token` to poll. When no prompt was sent, it
-returns `status: 'email_fallback_sent'` and `token: null`, and it does not
-throw.
+`status: 'pending'` with a `token` to poll, and `delivery`, the places where
+the request went (`push` for the LumoAuth app, `slack`, `discord`), so that
+you can tell the person where to look. When no prompt was sent, it returns
+`status: 'email_fallback_sent'`, `token: null` and `delivery: []`, and it
+does not throw.
 
 Only agent credentials can create or read approvals. A portal test token gets
 403 `test_token_not_accepted`.
@@ -727,11 +729,16 @@ sub-agent. It uses RFC 8693 token exchange. Every delegated token carries an
 `act` claim that records the chain of actors.
 
 ```ts
-const agent = new LumoAgent({ orgId: 'acme-corp', redirectUri: 'https://agent.example.com/callback' });
+const agent = new LumoAgent({
+  orgId: 'acme-corp',
+  // The application that the person consents to: never the agent's own ID.
+  application: { clientId: APP_CLIENT_ID, clientSecret: APP_CLIENT_SECRET, redirectUri: 'https://app.example.com/consent/callback' },
+});
 
-// 1. Send the user to consent, then handle the callback.
-const consentUrl = agent.delegation.getConsentUrl('session-1', ['documents:read']);
-await agent.delegation.handleConsentCallback('session-1', authorizationCode);
+// 1. Send the person to consent to the application (PKCE), then redeem the
+//    code as the application.
+const { url } = await agent.delegation.buildConsentUrl('session-1', { scopes: ['documents:read'], offlineAccess: true });
+await agent.delegation.handleConsentCallback('session-1', authorizationCode, state);
 
 // Or, when you already hold a user access token:
 agent.delegation.setUserToken('session-1', userAccessToken);
@@ -758,10 +765,24 @@ subject must still be active, and a JIT token is never accepted as a subject.
 
 For a chain of user, agent and sub-agent, call
 `delegation.delegateToSubAgent(sessionId, subAgentToken, scopes)`. LumoAuth
-allows at most three levels (`MAX_DELEGATION_DEPTH`).
+allows at most five actors in a chain (`MAX_DELEGATION_DEPTH`). A deeper
+chain is refused with `400 invalid_request`, which the SDK throws as a
+`LumoAuthApiError` with the code `delegation_depth_exceeded`.
+
+The exchange sends no client authentication by default: an agent's exchange
+is authenticated by its actor token. A confidential application that builds
+its own `DelegationModule` sets `clientAuthentication` to
+`'client_secret_basic'` or `'client_secret_post'` (with `clientSecret`), or
+to `'private_key_jwt'` with `clientAssertion`, a function that returns a new
+client assertion. The application needs token exchange switched on. An
+application that exchanges a user's token without an actor uses
+`lumo.auth.tokenExchange()` of `@lumoauth/backend`.
 `DelegationModule.parseActorChain(token)` and
 `DelegationModule.getSubject(token)` decode a token for display. They do not
-verify it. Clean up with `revoke(sessionId)` or `revokeAll()`.
+verify it. Clean up with `revoke(sessionId)` or `revokeAll()`. `revoke()` revokes the person's
+refresh token as the application (which ends every delegated token of that grant) and returns
+`true`; without `application` or a refresh token it only forgets the local state and returns
+`false`.
 
 ### Get a token for an MCP server
 
@@ -1088,14 +1109,14 @@ LumoAuthError
 │   ├── LumoAuthAuthenticationError    401: the credential is missing, invalid or expired
 │   ├── LumoAuthPermissionDeniedError  403: the caller is not allowed; see requiredScopes
 │   ├── LumoAuthNotFoundError          404
-│   └── LumoAuthRateLimitError         429; see retryAfter
+│   └── LumoAuthRateLimitError         429; see retryAfter (the SDK does not retry by itself)
+│       └── LumoAuthBudgetExceededError 429 with the body code budget_exceeded: the agent's budget is spent
 ├── LumoAuthValidationError            a response did not match its schema; see issues
 ├── LumoAuthConfigError                a required option is missing or invalid
 ├── LumoAuthNetworkError               the request failed or timed out before a response
 ├── LumoAuthApprovalDeniedError        a person declined an approval
 ├── LumoAuthApprovalTimeoutError       nobody answered an approval in time
-├── LumoAuthApprovalNotDeliveredError  the approval prompt reached no device; see reason
-└── LumoAuthBudgetExceededError        the agent ran out of budget
+└── LumoAuthApprovalNotDeliveredError  the approval prompt reached no device; see reason
 ```
 
 API errors also carry `statusCode` and the parsed response `body`. Handle
@@ -1200,7 +1221,7 @@ says which credential the server accepts; see [Credentials](#credentials).
 | Method | Returns |
 |---|---|
 | `require({ taskId, reason, onBehalfOf, impact?, meta?, pollIntervalMs?, timeoutMs? })` | `ApprovalResult`. Throws `LumoAuthApprovalNotDeliveredError` when no prompt was sent |
-| `create({ taskId, reason, onBehalfOf, impact?, meta? })` | `{ status: 'pending' \| 'email_fallback_sent', token, taskId, impact, expiresAt, message }`. `token` is `null` when no prompt was sent |
+| `create({ taskId, reason, onBehalfOf, impact?, meta? })` | `{ status: 'pending' \| 'email_fallback_sent', token, taskId, impact, expiresAt, message, delivery }`. `token` is `null` when no prompt was sent; `delivery` lists `push`, `slack`, `discord` |
 | `getStatus(approvalToken)` | `ApprovalResult` |
 | `wait(approvalToken, { pollIntervalMs?, timeoutMs? })` | `ApprovalResult` |
 
@@ -1220,13 +1241,14 @@ says which credential the server accepts; see [Credentials](#credentials).
 
 | Method | Returns |
 |---|---|
-| `getConsentUrl(sessionId, scopes?, state?)` | `string` |
-| `handleConsentCallback(sessionId, code)` | `boolean` |
+| `buildConsentUrl(sessionId, { scopes?, offlineAccess?, state? })` | `{ url, state, codeVerifier }`; needs `application` |
+| `handleConsentCallback(sessionId, code, state)` | `boolean`; the application redeems the code |
+| `getConsentUrl(sessionId, scopes?, state?)` | deprecated: throws `LumoAuthConfigError` |
 | `setUserToken(sessionId, accessToken)` | `void` |
 | `exchange(sessionId, scopes?, { subjectTokenType?, actorTokenType?, resource? })` | the delegated token |
 | `request(sessionId, method, endpoint, { body?, headers? })` | `Response` |
 | `delegateToSubAgent(sessionId, subAgentToken, scopes?, options?)` | the nested token |
-| `revoke(sessionId)`, `revokeAll()` | `boolean`, `void` |
+| `revoke(sessionId)`, `revokeAll()` | `boolean` (`true` when LumoAuth revoked the grant), `void` |
 | `hasDelegation(sessionId)`, `activeSessions` | `boolean`, `string[]` |
 | `DelegationModule.parseActorChain(token)`, `DelegationModule.getSubject(token)` | `string[]`, `string \| null` |
 
